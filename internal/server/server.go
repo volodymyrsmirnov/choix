@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -39,7 +40,14 @@ type Config struct {
 	ScanRoot  string // absolute path to the folder being curated
 	Port      int    // 0 = pick free
 	IdleAfter time.Duration
-	Pipeline  PipelineRunner // optional; nil disables /api/scan
+	Pipeline  PipelineRunner   // optional; nil disables /api/scan
+	Installer *local.Installer // optional; nil disables /setup wizard
+	// BackgroundContext is the long-lived parent context for work that
+	// must outlive a single HTTP request — e.g. /api/setup/finalize
+	// kicking off a pipeline re-analyze. Optional; defaults to
+	// context.Background() when nil. The CLI passes its SIGINT-aware
+	// rootCtx so Ctrl-C cancels background work cleanly.
+	BackgroundContext context.Context
 }
 
 // Server is the HTTP front-end. The zero value is not usable; construct
@@ -59,6 +67,8 @@ type Server struct {
 	pipe       PipelineRunner
 	Now        func() time.Time // injectable for tests
 	liveCfg    atomic.Pointer[config.Config]
+	detector   *installerStateDetector // nil when cfg.Installer == nil
+	ready      atomic.Bool             // latched true once Detect reports ready
 }
 
 // New builds a Server with embedded static assets. It does not start
@@ -87,6 +97,9 @@ func New(cfg Config) (*Server, error) {
 		undo:       newUndoLog(64),
 		pipe:       cfg.Pipeline,
 		Now:        time.Now,
+	}
+	if cfg.Installer != nil {
+		s.detector = &installerStateDetector{r: pathResolver{}, installer: cfg.Installer}
 	}
 	// One-shot KV→TOML migration: carry pre-upgrade Settings (which used
 	// to live in the per-folder KV table) into the machine-wide
@@ -273,7 +286,23 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter 
 
 // serveIndex writes the SPA's index.html to w. Used for every non-API
 // page route so client-side routing can resolve /, /focus/{id}, /settings.
-func (s *Server) serveIndex(w http.ResponseWriter, _ *http.Request) {
+//
+// When the first-run wizard is wired (Config.Installer non-nil) and
+// prerequisites are missing, redirect to /setup so the wizard runs
+// before the SPA starts polling /api/library. We latch s.ready once
+// Detect reports IsReady so subsequent page loads skip the syscalls
+// (exec.LookPath × 2 + os.Stat).
+func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
+	if s.detector != nil && !s.ready.Load() {
+		if st, err := s.detector.Detect(r.Context()); err == nil {
+			if st.IsReady() {
+				s.ready.Store(true)
+			} else {
+				http.Redirect(w, r, "/setup", http.StatusSeeOther)
+				return
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(s.indexHTML)

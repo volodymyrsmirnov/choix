@@ -66,7 +66,7 @@ type Downloader interface {
 }
 
 // ModelStore manages on-disk model files under a single directory
-// (typically ~/Library/Application Support/choix/models/).
+// (typically ~/.choix/models/).
 type ModelStore struct {
 	dir        string
 	downloader Downloader

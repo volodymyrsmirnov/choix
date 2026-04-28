@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
+
+	"github.com/volodymyrsmirnov/choix/internal/appdir"
 )
 
 // initOnce guards the global ONNX runtime initialization.
@@ -17,13 +18,7 @@ var initErr error
 // runtimeDylibPath returns the user-level path where libonnxruntime.dylib
 // is expected. The first-run wizard / install path drops it here, so we
 // point onnxruntime_go straight at it instead of relying on DYLD search.
-func runtimeDylibPath() string {
-	cfg, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(cfg, "choix", "lib", "libonnxruntime.dylib")
-}
+func runtimeDylibPath() string { return appdir.RuntimeDylib() }
 
 func ensureRuntime() error {
 	initOnce.Do(func() {

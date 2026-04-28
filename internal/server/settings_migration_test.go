@@ -14,10 +14,11 @@ import (
 func stubConfigDirToTemp(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir) // Linux fallback path; macOS ignores
-	// On macOS os.UserConfigDir reads ~/Library/Application Support, so
-	// also override HOME to keep this test isolated from the real config.
+	// appdir.Root reads HOME, so overriding HOME is the whole gate.
+	// XDG_CONFIG_HOME is set as a defensive bonus for any future Linux
+	// build, but is not what choix reads today.
 	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
 	return dir
 }
 
@@ -170,20 +171,8 @@ func TestStubConfigDirRedirectsWrites(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	// On macOS the path is $HOME/Library/Application Support/choix/config.toml.
-	// On Linux it is $XDG_CONFIG_HOME/choix/config.toml.
-	candidates := []string{
-		filepath.Join(dir, "Library", "Application Support", "choix", "config.toml"),
-		filepath.Join(dir, "choix", "config.toml"),
-	}
-	found := false
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("config.toml not written under %q (tried %v)", dir, candidates)
+	want := filepath.Join(dir, ".choix", "config.toml")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("config.toml not at %q: %v", want, err)
 	}
 }

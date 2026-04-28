@@ -157,12 +157,22 @@ func runServe(cmd *cobra.Command, root string) error {
 		return err
 	}
 
+	// Single signal-aware context governs both the HTTP server and the
+	// background pipeline. SIGINT cancels both. Built before server.New
+	// so handlers that kick off background work (e.g. /api/setup/finalize
+	// re-analyze) can inherit it instead of tying long-lived work to a
+	// single request.
+	rootCtx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	srv, err := server.New(server.Config{
-		Store:     st,
-		ScanRoot:  absRoot,
-		Port:      port,
-		IdleAfter: idle,
-		Pipeline:  pipe,
+		Store:             st,
+		ScanRoot:          absRoot,
+		Port:              port,
+		IdleAfter:         idle,
+		Pipeline:          pipe,
+		Installer:         local.NewInstaller(modelsDir()),
+		BackgroundContext: rootCtx,
 	})
 	if err != nil {
 		return err
@@ -178,11 +188,6 @@ func runServe(cmd *cobra.Command, root string) error {
 			fmt.Fprintln(os.Stderr, "warning: could not auto-open browser:", openErr)
 		}
 	}
-
-	// Single signal-aware context governs both the HTTP server and the
-	// background pipeline. SIGINT cancels both.
-	rootCtx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	// Trigger an initial scan automatically.
 	go func() {

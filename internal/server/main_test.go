@@ -7,7 +7,7 @@ import (
 )
 
 // TestMain sets up a process-wide isolation against the real
-// ~/Library/Application Support/choix/config.toml. Any test in this
+// ~/.choix/config.toml. Any test in this
 // package that ends up calling config.Save (directly, or transitively
 // via /api/settings) would otherwise overwrite the developer's actual
 // settings — that's how the picks_dir="exported" pollution happened

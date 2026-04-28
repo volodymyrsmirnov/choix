@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/volodymyrsmirnov/choix/internal/firstrun"
 )
 
 // hashedAsset matches files whose name embeds a content hash, e.g.
@@ -39,6 +41,16 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/recluster", s.handleReclusterPost)
 	r.Get("/api/settings", s.handleSettingsGet)
 	r.Post("/api/settings", s.handleSettingsPost)
+
+	// First-run wizard — only registered when an installer was passed
+	// in Config. Tests that construct Servers without one (the majority)
+	// continue to see /setup return 404.
+	if s.detector != nil {
+		r.Method(http.MethodGet, "/setup", firstrun.NewSetupHandler(s.detector))
+		r.Method(http.MethodPost, "/api/setup/install-model", firstrun.NewInstallModelHandler(s.cfg.Installer))
+		r.Get("/api/setup/state", s.handleSetupState)
+		r.Post("/api/setup/finalize", s.handleSetupFinalize)
+	}
 
 	// Media — path-keyed. The relative file path inside the scan root is
 	// the URL identifier, with optional ?v=<content-hash> for cache

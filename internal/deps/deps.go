@@ -1,6 +1,6 @@
 // Package deps locates external command-line tools (exiftool, ffmpeg) used by
 // choix. Resolution order: system $PATH, then the choix support directory
-// (~/Library/Application Support/choix/bin/), then auto-fetch on demand.
+// (~/.choix/bin/), then auto-fetch on demand.
 package deps
 
 import (
@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/volodymyrsmirnov/choix/internal/appdir"
 )
 
 // Source identifies where a resolved Tool was found.
@@ -64,32 +66,20 @@ type Resolver struct {
 	// LookPath looks a binary up on $PATH. Defaults to exec.LookPath.
 	LookPath func(string) (string, error)
 	// SupportDir is the directory checked after $PATH (e.g.
-	// ~/Library/Application Support/choix/bin). Empty disables that step.
+	// ~/.choix/bin). Empty disables that step.
 	SupportDir string
 	// Fetcher downloads missing tools. Nil disables auto-fetch.
 	Fetcher Fetcher
 }
 
 // NewResolver returns a Resolver with production defaults: exec.LookPath for
-// $PATH, ~/Library/Application Support/choix/bin for the support dir, and no
-// fetcher (callers wire one in via the Fetcher field once they want
-// auto-fetch behavior).
+// $PATH, ~/.choix/bin for the support dir, and no fetcher (callers wire one
+// in via the Fetcher field once they want auto-fetch behavior).
 func NewResolver() *Resolver {
 	return &Resolver{
 		LookPath:   exec.LookPath,
-		SupportDir: defaultSupportDir(),
+		SupportDir: appdir.Bin(),
 	}
-}
-
-// defaultSupportDir returns ~/Library/Application Support/choix/bin or "" on
-// platforms where os.UserConfigDir fails (which on macOS effectively never
-// happens — kept defensive so a misconfigured environment doesn't panic).
-func defaultSupportDir() string {
-	cfg, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(cfg, "choix", "bin")
 }
 
 // ErrToolMissing is returned by callers that want a hard error when Resolve

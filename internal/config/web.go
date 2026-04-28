@@ -7,19 +7,16 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/volodymyrsmirnov/choix/internal/appdir"
 )
 
-// configFilePath returns the path to the global config file.
-// On macOS this is ~/Library/Application Support/choix/config.toml.
-// The location is injectable via the configDirFunc seam for tests.
-var configDirFunc = os.UserConfigDir
+// configFilePathFunc is the seam tests override to redirect Load/Save to
+// a tmp file. Production points it at appdir.Config (~/.choix/config.toml).
+var configFilePathFunc = appdir.Config
 
 func configFilePath() (string, error) {
-	dir, err := configDirFunc()
-	if err != nil {
-		return "", fmt.Errorf("config dir: %w", err)
-	}
-	return filepath.Join(dir, "choix", "config.toml"), nil
+	return configFilePathFunc()
 }
 
 // Load reads the global config file and returns the fully-resolved Config.

@@ -5,15 +5,16 @@ import (
 	"testing"
 )
 
-// stubConfigDir replaces configDirFunc for the duration of a test, ensuring
-// Save/Load round-trip against a temporary directory rather than the user's
-// actual ~/Library/Application Support/choix.
+// stubConfigDir replaces configFilePathFunc for the duration of a test,
+// ensuring Save/Load round-trip against a temporary directory rather
+// than the user's actual ~/.choix.
 func stubConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	prev := configDirFunc
-	configDirFunc = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { configDirFunc = prev })
+	path := filepath.Join(dir, "config.toml")
+	prev := configFilePathFunc
+	configFilePathFunc = func() (string, error) { return path, nil }
+	t.Cleanup(func() { configFilePathFunc = prev })
 	return dir
 }
 
@@ -93,7 +94,7 @@ func TestSavedFilePathIsExpected(t *testing.T) {
 	if err := Save(&Config{BucketSizeSec: 1, VisualClusterThreshold: 0.5, PicksDir: "x"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	want := filepath.Join(dir, "choix", "config.toml")
+	want := filepath.Join(dir, "config.toml")
 	got, err := configFilePath()
 	if err != nil {
 		t.Fatalf("configFilePath: %v", err)

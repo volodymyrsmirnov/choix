@@ -179,7 +179,7 @@ choix /path/to/folder --port 8080 --no-open --idle-after 60m
 
 The web UI is the only interface — picks, rejects, scans, settings, and CLIP-model installs all live in the SPA. There are no subcommands.
 
-State lives at `<folder>/.choix/state.db`. Picks are copied to `<folder>/picks/` (configurable). User-level config and downloaded tools/models live under `~/Library/Application Support/choix/`.
+State lives at `<folder>/.choix/state.db`. Picks are copied to `<folder>/picks/` (configurable). User-level config and downloaded tools/models live under `~/.choix/`.
 
 ---
 
@@ -254,7 +254,7 @@ Cache layout: `<scanRoot>/.choix/thumbs/<bucket>/<file_id>-<tier>.jpg`, where `<
 
 ## CLIP embeddings (the only AI signal)
 
-Located in `internal/ai/local/clip.go`. Uses `github.com/yalue/onnxruntime_go` with the **CoreML execution provider** for ANE/Metal acceleration. Models are NOT bundled in the binary — they're downloaded into `~/Library/Application Support/choix/models/` by the first-run wizard.
+Located in `internal/ai/local/clip.go`. Uses `github.com/yalue/onnxruntime_go` with the **CoreML execution provider** for ANE/Metal acceleration. Models are NOT bundled in the binary — they're downloaded into `~/.choix/models/` by the first-run wizard.
 
 When the CLIP model is absent, the `analyze` stage skips the file's embedding (the column stays NULL) and the grouper drops the file into the bucket-level fallback cluster — time proximity does the work alone. Without a model, near-identical bursts won't collapse into a single cluster, but the pipeline never fails the analyze step.
 
@@ -266,7 +266,7 @@ The "AI" — whatever that meant in earlier drafts — is **advisory only**. The
 
 ## Configuration precedence
 
-CLI flags > environment variables > `~/Library/Application Support/choix/config.toml` > built-in defaults.
+CLI flags > environment variables > `~/.choix/config.toml` > built-in defaults.
 
 Loaded by `internal/config`. Settings of note:
 
@@ -317,7 +317,7 @@ These are the source of truth for *intent*. If you're adding a feature, find it 
 ## Known caveats / pitfalls
 
 - **`make build` always rebuilds the SPA.** That's intentional; bun + tailwind CLI are fast and deterministic. If you really need a no-bundle build for an experiment, run `go build ./cmd/choix` directly — but be aware `internal/ui/web/dist/` must contain a non-empty `index.html` for `//go:embed all:web/dist` to compile. The `dist/` directory is gitignored, so a fresh clone has no SPA bundle until you run `make webui` (or `make build`) at least once; bare `go build ./cmd/choix` on a fresh clone fails with an empty-embed error.
-- **`exiftool` and `ffmpeg` must be on `$PATH` or `~/Library/Application Support/choix/bin/`.** First-run wizard handles the latter. `brew install exiftool ffmpeg` is the simplest setup.
+- **`exiftool` and `ffmpeg` must be on `$PATH` or `~/.choix/bin/`.** First-run wizard handles the latter. `brew install exiftool ffmpeg` is the simplest setup.
 - **HEIC-only folders show 1-file clusters by default.** That's because the pipeline can't compute CLIP embeddings without the model installed; the visual-cluster step has nothing to merge. Install the CLIP ONNX model via the first-run wizard, and same-scene shots will collapse into one cluster.
 - **`SetMaxOpenConns(1)` is load-bearing.** Removing it brings back "database is locked" under heavy worker contention. If you need parallel reads, profile first.
 - **`r.Path` in `internal/deps/runner.go` is trusted input** (resolved via PATH or pinned download) — not user-supplied. The `//nolint:gosec G204` annotation reflects that.

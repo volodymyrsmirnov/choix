@@ -2,47 +2,290 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>choix — Setup</title>
-  <link rel="stylesheet" href="/static/tailwind.css">
-  <script src="/static/vendor/htmx.min.js" defer></script>
-  <script src="/static/vendor/alpine.min.js" defer></script>
+  <title>choix · first-run setup</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg-1: oklch(0.18 0.005 240);
+      --bg-2: oklch(0.22 0.005 240);
+      --bg-3: oklch(0.26 0.005 240);
+      --line-1: oklch(0.32 0.005 240);
+      --line-2: oklch(0.40 0.005 240);
+      --fg-0: oklch(0.96 0 0);
+      --fg-1: oklch(0.78 0 0);
+      --fg-2: oklch(0.62 0 0);
+      --fg-3: oklch(0.48 0 0);
+      --pick: oklch(0.72 0.18 145);
+      --pick-ink: oklch(0.16 0.06 145);
+      --reject: oklch(0.66 0.20 25);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg-1);
+      color: var(--fg-0);
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      min-height: 100vh;
+    }
+    main {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 64px 24px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin: 0 0 6px;
+    }
+    p.lede {
+      color: var(--fg-2);
+      margin: 0 0 32px;
+    }
+    section.card {
+      background: var(--bg-2);
+      border: 1px solid var(--line-1);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0 0 4px;
+    }
+    .hint {
+      color: var(--fg-2);
+      font-size: 12px;
+      margin: 0 0 14px;
+    }
+    .ok {
+      color: var(--fg-1);
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ok::before {
+      content: "";
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--pick);
+    }
+    button.btn {
+      background: var(--pick);
+      color: var(--pick-ink);
+      border: 0;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    a.btn-cta {
+      display: block;
+      text-align: center;
+      background: var(--pick);
+      color: var(--pick-ink);
+      padding: 10px 16px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 24px;
+    }
+    a.btn-cta[aria-disabled="true"] {
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .progress-wrap {
+      margin-top: 14px;
+    }
+    .progress-rail {
+      height: 4px;
+      background: var(--bg-3);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0;
+      background: var(--pick);
+      transition: width 120ms ease-out;
+    }
+    .progress-text {
+      margin-top: 6px;
+      color: var(--fg-2);
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .err {
+      color: var(--reject);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    code.path {
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--fg-1);
+      background: var(--bg-3);
+      padding: 1px 6px;
+      border-radius: 3px;
+    }
+  </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
-  <main class="mx-auto max-w-2xl p-8 space-y-10">
-    <header>
-      <h1 class="text-2xl font-semibold">Welcome to choix</h1>
-      <p class="text-slate-600">A couple of quick installs before we can scan your folder.</p>
-    </header>
+<body>
+  <main>
+    <h1>Welcome to choix</h1>
+    <p class="lede">A one-time setup before we can group your photos visually.</p>
 
-    <section id="step-tools" data-required="{{ if or .RequiresExifTool .RequiresFFmpeg }}true{{ else }}false{{ end }}" class="rounded border bg-white p-6">
-      <h2 class="font-semibold">1. External tools</h2>
+    <section class="card">
+      <h2>External tools</h2>
+      <p class="hint">choix shells out to <code class="path">exiftool</code> for metadata and <code class="path">ffmpeg</code> for video frames. Install both via Homebrew before continuing.</p>
       {{ if .RequiresExifTool }}
-        <button hx-post="/api/setup/install-tool" hx-vals='{"name":"exiftool"}' hx-target="#tool-progress-exiftool" hx-swap="innerHTML">
-          Install exiftool
-        </button>
-        <div id="tool-progress-exiftool"></div>
-      {{ else }}<p>exiftool is ready.</p>{{ end }}
-      {{ if .RequiresFFmpeg }}
-        <button hx-post="/api/setup/install-tool" hx-vals='{"name":"ffmpeg"}' hx-target="#tool-progress-ffmpeg" hx-swap="innerHTML">
-          Install ffmpeg
-        </button>
-        <div id="tool-progress-ffmpeg"></div>
-      {{ else }}<p>ffmpeg is ready.</p>{{ end }}
-    </section>
-
-    <section id="step-models" class="rounded border bg-white p-6">
-      <h2 class="font-semibold">2. CLIP visual-similarity model</h2>
-      {{ range .RequiresModels }}
-        <button hx-post="/api/setup/install-model" hx-vals='{"kind":"{{.}}"}' hx-target="#model-progress-{{.}}" hx-swap="innerHTML">
-          Install {{.}}
-        </button>
-        <div id="model-progress-{{.}}"></div>
+        <p class="err">exiftool is missing. Install it with <code class="path">brew install exiftool</code> and reload this page.</p>
       {{ else }}
-        <p>The CLIP model is already installed.</p>
+        <span class="ok">exiftool is ready</span>
+      {{ end }}
+      {{ if .RequiresFFmpeg }}
+        <p class="err" style="margin-top:8px">ffmpeg is missing. Install it with <code class="path">brew install ffmpeg</code> and reload this page.</p>
+      {{ else }}
+        <span class="ok" style="margin-left:12px">ffmpeg is ready</span>
       {{ end }}
     </section>
 
-    <a href="/" class="block rounded bg-slate-900 px-4 py-2 text-center font-medium text-white">Continue to Library</a>
+    <section class="card">
+      <h2>Visual-similarity model</h2>
+      <p class="hint">choix uses a CLIP ViT-B/32 ONNX model (~340 MB) on-device to group near-identical bursts. Without it, photos are grouped by time only.</p>
+      {{ range .RequiresModels }}
+        <button id="install-{{.}}" class="btn" data-kind="{{.}}">Install {{.}} model</button>
+        <div class="progress-wrap" id="prog-{{.}}" hidden>
+          <div class="progress-rail"><div class="progress-fill" id="fill-{{.}}"></div></div>
+          <div class="progress-text" id="text-{{.}}">Starting…</div>
+        </div>
+      {{ else }}
+        <span class="ok">CLIP model is installed</span>
+      {{ end }}
+    </section>
+
+    {{ $needsTools := or .RequiresExifTool .RequiresFFmpeg }}
+    <a id="continue" class="btn-cta"
+       href="/"
+       data-needs-tools="{{ if $needsTools }}true{{ else }}false{{ end }}"
+       data-needs-models="{{ if .RequiresModels }}true{{ else }}false{{ end }}"
+       aria-disabled="true">
+      {{ if $needsTools }}Install missing tools to continue{{ else }}Finish model install to continue{{ end }}
+    </a>
   </main>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll('button.btn[data-kind]');
+      buttons.forEach(btn => btn.addEventListener('click', () => install(btn)));
+
+      const cont = document.getElementById('continue');
+      // Both prerequisites already satisfied (e.g. user landed on /setup
+      // after the wizard finished and re-detection still flagged a stale
+      // condition) — unlock immediately. Otherwise the per-install
+      // success handler unlocks once the last model finishes.
+      if (cont.dataset.needsModels === 'false' && cont.dataset.needsTools === 'false') {
+        unlockContinue();
+      }
+      cont.addEventListener('click', async (e) => {
+        if (cont.getAttribute('aria-disabled') === 'true') {
+          e.preventDefault();
+          return;
+        }
+        e.preventDefault();
+        try {
+          await fetch('/api/setup/finalize', { method: 'POST' });
+        } catch (_) { /* best effort — server falls back on next /api/scan */ }
+        window.location.href = '/';
+      });
+
+      function unlockContinue() {
+        if (cont.dataset.needsTools === 'true') return; // tools still missing
+        cont.removeAttribute('aria-disabled');
+        cont.textContent = 'Continue to Library';
+      }
+
+      function install(btn) {
+        const kind = btn.dataset.kind;
+        btn.disabled = true;
+        const wrap = document.getElementById('prog-' + kind);
+        const fill = document.getElementById('fill-' + kind);
+        const text = document.getElementById('text-' + kind);
+        wrap.hidden = false;
+
+        // Pure POST + EventSource isn't a thing; we open a streaming POST
+        // by hand using fetch + ReadableStream. The handler emits SSE-shaped
+        // frames separated by blank lines.
+        fetch('/api/setup/install-model?kind=' + encodeURIComponent(kind), { method: 'POST' })
+          .then(async (r) => {
+            if (!r.ok || !r.body) {
+              throw new Error('server error: ' + r.status);
+            }
+            const reader = r.body.getReader();
+            const dec = new TextDecoder();
+            let buf = '';
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buf += dec.decode(value, { stream: true });
+              const frames = buf.split('\n\n');
+              buf = frames.pop() || '';
+              for (const frame of frames) {
+                const lines = frame.split('\n');
+                let event = 'message';
+                let data = '';
+                for (const line of lines) {
+                  if (line.startsWith('event:')) event = line.slice(6).trim();
+                  else if (line.startsWith('data:')) data += line.slice(5).trim();
+                }
+                if (event === 'progress' && data) {
+                  try {
+                    const ev = JSON.parse(data);
+                    const pct = Math.max(0, Math.min(1, ev.percent_done || 0));
+                    fill.style.width = (pct * 100).toFixed(1) + '%';
+                    if (ev.message) {
+                      text.textContent = ev.message;
+                    } else {
+                      text.textContent = ev.stage + ' · ' + (pct * 100).toFixed(0) + '%';
+                    }
+                  } catch (e) { console.warn('progress frame parse', e); }
+                } else if (event === 'done' && data) {
+                  try {
+                    const payload = JSON.parse(data);
+                    if (payload.ok) {
+                      fill.style.width = '100%';
+                      text.textContent = 'Installed.';
+                      btn.style.display = 'none';
+                      unlockContinue();
+                    } else {
+                      btn.disabled = false;
+                      text.textContent = '';
+                      const err = document.createElement('div');
+                      err.className = 'err';
+                      err.textContent = payload.error || 'install failed';
+                      wrap.appendChild(err);
+                    }
+                  } catch (e) { console.warn('done frame parse', e); }
+                }
+              }
+            }
+          })
+          .catch((e) => {
+            btn.disabled = false;
+            text.textContent = '';
+            const err = document.createElement('div');
+            err.className = 'err';
+            err.textContent = e.message || String(e);
+            wrap.appendChild(err);
+          });
+      }
+    })();
+  </script>
 </body>
 </html>

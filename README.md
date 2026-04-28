@@ -80,7 +80,7 @@ State for each scan root is kept under `.choix/` next to your photos:
 ```
 
 User-level config and downloaded ML models live under
-`~/Library/Application Support/choix/`.
+`~/.choix/`.
 
 ## How it works
 
@@ -116,12 +116,12 @@ Without a CLIP model installed, the analyze stage skips embeddings and the
 grouper falls back to time proximity alone — same-scene bursts won't
 collapse into a single cluster. Install the model from the Settings page
 (first-run wizard), and the model lands in
-`~/Library/Application Support/choix/models/`.
+`~/.choix/models/`.
 
 ## Configuration
 
 Settings are machine-wide and live in
-`~/Library/Application Support/choix/config.toml`. Most can be edited live
+`~/.choix/config.toml`. Most can be edited live
 from the Settings page in the UI.
 
 | Key                        | Default | What                                                  |

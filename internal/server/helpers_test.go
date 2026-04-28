@@ -30,8 +30,8 @@ func newTestServer(t *testing.T) *testEnv {
 	// Redirect the global config.toml to a per-test directory so server
 	// startup (which runs migrateLegacyKVSettings + config.Load) cannot
 	// read or write the user's real settings.
-	t.Setenv("HOME", dir)            // macOS: ~/Library/Application Support/choix/...
-	t.Setenv("XDG_CONFIG_HOME", dir) // Linux fallback
+	t.Setenv("HOME", dir)            // ~/.choix/config.toml resolves under the tmp HOME
+	t.Setenv("XDG_CONFIG_HOME", dir) // Linux fallback (legacy; harmless)
 	dbPath := filepath.Join(dir, ".choix", "state.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

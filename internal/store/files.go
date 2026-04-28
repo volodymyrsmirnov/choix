@@ -161,6 +161,24 @@ func (r *FilesRepo) UpdateStatus(id int64, status, errMsg string) error {
 	return err
 }
 
+// BumpAnalyzedMissingEmbedding rewinds every 'analyzed' file row that
+// lacks a CLIP embedding back to 'thumbed' (the analyze stage's input
+// status). The first-run wizard calls this after installing the CLIP
+// model so files that were analyzed without one get re-processed on the
+// next pipeline run.
+func (r *FilesRepo) BumpAnalyzedMissingEmbedding() (int64, error) {
+	res, err := r.db.ExecContext(context.Background(), `
+		UPDATE files
+		   SET scan_status = 'thumbed', error = NULL
+		 WHERE scan_status = 'analyzed'
+		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL)`)
+	if err != nil {
+		return 0, fmt.Errorf("BumpAnalyzedMissingEmbedding: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // CountByStatus returns the number of files at the given scan_status.
 // Used by the pipeline to stabilize progress denominators.
 func (r *FilesRepo) CountByStatus(status string) (int, error) {

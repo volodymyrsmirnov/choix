@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/appdir"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
@@ -48,12 +49,4 @@ func resolveTier1ThumbPath(s *store.Store, root string, fileID int64) (string, e
 // modelsDir returns the user-level ONNX models directory. The directory is
 // created on first use; missing model files are tolerated by local.Analyzer
 // (it skips signals it has no model for).
-func modelsDir() string {
-	cfg, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	dir := filepath.Join(cfg, "choix", "models")
-	_ = os.MkdirAll(dir, 0o750)
-	return dir
-}
+func modelsDir() string { return appdir.Models() }

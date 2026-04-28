@@ -75,7 +75,7 @@ var DefaultSources = map[string]ToolSource{
 // httptest fixtures.
 type Downloader struct {
 	// SupportDir is where verified binaries land. Must already exist (or be
-	// creatable). Typically ~/Library/Application Support/choix/bin.
+	// creatable). Typically ~/.choix/bin.
 	SupportDir string
 	// Sources is the pinned URL+hash table indexed by tool name.
 	Sources map[string]ToolSource
