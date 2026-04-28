@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/go-chi/chi/v5 v5.1.0
+	github.com/go-chi/chi/v5 v5.2.2
 	github.com/r3labs/sse/v2 v2.10.0
 	github.com/spf13/cobra v1.8.0
 	github.com/yalue/onnxruntime_go v1.28.0
