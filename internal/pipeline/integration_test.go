@@ -70,8 +70,6 @@ type stubAnalyzer struct{ s *store.Store }
 func (a *stubAnalyzer) Analyze(ctx context.Context, fileID int64) error {
 	if err := a.s.AISignals().Upsert(store.AISignals{
 		FileID:        fileID,
-		Sharpness:     sql.NullFloat64{Float64: 0.5, Valid: true},
-		NIMAScore:     sql.NullFloat64{Float64: 6.0, Valid: true},
 		ClipEmbedding: make([]byte, 512*4), // zero embedding ok for cluster smoke test
 		ComputedAt:    sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
 	}); err != nil {

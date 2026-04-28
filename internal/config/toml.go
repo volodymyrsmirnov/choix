@@ -15,7 +15,6 @@ type fileSchema struct {
 	BucketSizeSec          *int     `toml:"bucket_size_sec"`
 	VisualClusterThreshold *float64 `toml:"visual_cluster_threshold"`
 	PicksDir               *string  `toml:"picks_dir"`
-	ScanRoot               *string  `toml:"scan_root"`
 	AdvanceOnAction        *bool    `toml:"advance_on_action"`
 	HideRejectedPhotos     *bool    `toml:"hide_rejected_photos"`
 	CrossDeviceMerging     *bool    `toml:"cross_device_merging"`
@@ -50,9 +49,6 @@ func ApplyTOML(dst *Config, src *fileSchema) {
 	}
 	if src.PicksDir != nil {
 		dst.PicksDir = *src.PicksDir
-	}
-	if src.ScanRoot != nil {
-		dst.ScanRoot = *src.ScanRoot
 	}
 	if src.AdvanceOnAction != nil {
 		dst.AdvanceOnAction = *src.AdvanceOnAction

@@ -18,8 +18,8 @@ import (
 )
 
 // fullStub is a single in-memory implementation of every interface the
-// /setup wizard needs. It transitions from "needs everything" to
-// "ready" as Install* are called.
+// /setup wizard needs. It assumes the user installs missing tools out of
+// band (homebrew etc.) and only models go through the install endpoint.
 type fullStub struct {
 	exif, ff bool
 	models   map[local.ModelKind]bool
@@ -34,18 +34,6 @@ func (s *fullStub) Resolve(_ context.Context, name string) (string, error) {
 
 func (s *fullStub) Has(_ context.Context, k local.ModelKind) (bool, error) { return s.models[k], nil }
 
-func (s *fullStub) Fetch(_ context.Context, name string, ch chan<- deps.ProgressEvent) error {
-	ch <- deps.ProgressEvent{Stage: "fetch", PercentDone: 1}
-	close(ch)
-	switch name {
-	case "exiftool":
-		s.exif = true
-	case "ffmpeg":
-		s.ff = true
-	}
-	return nil
-}
-
 func (s *fullStub) Install(_ context.Context, k local.ModelKind, ch chan<- deps.ProgressEvent) error {
 	ch <- deps.ProgressEvent{Stage: "fetch", PercentDone: 1}
 	close(ch)
@@ -58,15 +46,13 @@ func (s *fullStub) Detect(ctx context.Context) (firstrun.SetupState, error) {
 }
 
 func TestColdStart_WizardCompletesAndRedirects(t *testing.T) {
-	st := &fullStub{models: map[local.ModelKind]bool{}}
+	st := &fullStub{exif: true, ff: true, models: map[local.ModelKind]bool{}}
 	mux := http.NewServeMux()
 	mux.Handle("/setup", firstrun.NewSetupHandler(st))
-	mux.Handle("/api/setup/install-tool", firstrun.NewInstallToolHandler(st))
 	mux.Handle("/api/setup/install-model", firstrun.NewInstallModelHandler(st))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	// 1. Initial GET /setup should render the wizard, not redirect.
 	resp, err := http.Get(srv.URL + "/setup")
 	if err != nil {
 		t.Fatalf("GET /setup: %v", err)
@@ -76,22 +62,12 @@ func TestColdStart_WizardCompletesAndRedirects(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// 2. Install tools.
-	for _, tool := range []string{"exiftool", "ffmpeg"} {
-		r, err := http.Post(srv.URL+"/api/setup/install-tool?name="+tool, "", nil)
-		if err != nil {
-			t.Fatalf("install %s: %v", tool, err)
-		}
-		r.Body.Close()
-	}
-	// 3. Install the only model the wizard cares about now.
 	r, err := http.Post(srv.URL+"/api/setup/install-model?kind="+local.ModelCLIP.String(), "", nil)
 	if err != nil {
 		t.Fatalf("install model: %v", err)
 	}
 	r.Body.Close()
 
-	// 4. /setup should now redirect.
 	cli := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp2, err := cli.Get(srv.URL + "/setup")
 	if err != nil {

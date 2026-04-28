@@ -1,7 +1,5 @@
 // First-run wizard HTTP handlers. Designed to be mounted by the main
-// server. The wizard now only covers tool + model installs; cloud-AI
-// provider configuration was removed when the AI top-pick flow was
-// retired.
+// server.
 
 package firstrun
 
@@ -78,46 +76,6 @@ func (h *SetupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tpl.Execute(w, st); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// InstallToolHandler serves POST /api/setup/install-tool. The
-// response is text/event-stream with a "progress" event per chunk and
-// a final "done" event.
-type InstallToolHandler struct{ d Downloader }
-
-// NewInstallToolHandler constructs a handler using the given Downloader.
-func NewInstallToolHandler(d Downloader) *InstallToolHandler {
-	return &InstallToolHandler{d: d}
-}
-
-func (h *InstallToolHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		r.Body = http.MaxBytesReader(w, r.Body, 1024)
-		_ = r.ParseForm() //nolint:gosec // G120: MaxBytesReader is set above
-		name = r.Form.Get("name")
-	}
-	if name != "exiftool" && name != "ffmpeg" {
-		http.Error(w, "unknown tool", http.StatusBadRequest)
-		return
-	}
-
-	flusher, _ := w.(http.Flusher)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-
-	cb := func(ev deps.ProgressEvent) {
-		_ = WriteProgressEvent(w, ev)
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-	err := InstallTool(r.Context(), h.d, name, cb)
-	_ = WriteDoneEvent(w, err)
-	if flusher != nil {
-		flusher.Flush()
 	}
 }
 

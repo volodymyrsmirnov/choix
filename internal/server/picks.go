@@ -39,10 +39,6 @@ func (s *Server) handlePicksPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capture previous state for undo before mutation.
-	prev, prevErr := s.cfg.Store.Picks().GetByFileID(req.FileID)
-	hadPrev := prevErr == nil
-
 	svc := picks.New(s.cfg.Store, s.cfg.ScanRoot, s.effectivePicksDir())
 	var (
 		state string
@@ -77,17 +73,6 @@ func (s *Server) handlePicksPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry := undoEntry{FileID: req.FileID}
-	if hadPrev {
-		entry.PrevState = prev.State
-		if prev.ExportedPath.Valid {
-			entry.PrevExportedPath = prev.ExportedPath.String
-		}
-	} else {
-		entry.PrevState = "unmarked"
-	}
-	s.undo.Push(entry)
-
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(picksResponse{
 		FileID: req.FileID, State: state, ExportedPath: exp,
@@ -112,37 +97,4 @@ func (s *Server) handlePicksList(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"picks": out})
-}
-
-func (s *Server) handleUndoPost(w http.ResponseWriter, r *http.Request) {
-	entry, ok := s.undo.Pop()
-	if !ok {
-		http.Error(w, "nothing to undo", http.StatusNoContent)
-		return
-	}
-
-	svc := picks.New(s.cfg.Store, s.cfg.ScanRoot, s.effectivePicksDir())
-	var err error
-	switch entry.PrevState {
-	case "unmarked":
-		unpickErr := svc.Unpick(entry.FileID)
-		unrejectErr := svc.Unreject(entry.FileID)
-		if unpickErr != nil && unrejectErr != nil {
-			err = errors.Join(unpickErr, unrejectErr)
-		}
-	case "picked":
-		err = svc.Pick(entry.FileID)
-	case "rejected":
-		err = svc.Reject(entry.FileID)
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"undone":  true,
-		"file_id": entry.FileID,
-		"state":   entry.PrevState,
-	})
 }

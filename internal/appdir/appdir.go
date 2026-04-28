@@ -46,7 +46,7 @@ func Models() string {
 }
 
 // Bin returns ~/.choix/bin or "" if the home dir is unavailable. The
-// directory is not created here — deps.Resolver only reads it.
+// directory is not created here — callers only read it.
 func Bin() string {
 	r, err := Root()
 	if err != nil {

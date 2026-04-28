@@ -16,9 +16,6 @@ type Config struct {
 	// Behaviour
 	AdvanceOnAction    bool // cycle to next photo after Pick/Reject in Focus
 	HideRejectedPhotos bool // hide rejected photos from the Library
-
-	// Scan target
-	ScanRoot string // absolute filesystem path; empty means "current working dir"
 }
 
 // Defaults returns the built-in default configuration. Callers layer TOML, env,

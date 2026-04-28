@@ -34,6 +34,11 @@ type PipelineRunner interface {
 	Running() bool
 }
 
+// ErrPipelineAlreadyRunning is returned by PipelineRunner.Start when a
+// pipeline is already in progress. Setup finalization treats this as a
+// no-op rather than an error.
+var ErrPipelineAlreadyRunning = errors.New("pipeline already running")
+
 // Config configures a Server. Fields are required unless noted.
 type Config struct {
 	Store     *store.Store
@@ -63,7 +68,6 @@ type Server struct {
 	lastReq    time.Time
 	idleStopCh chan struct{}
 	progress   *progressHub
-	undo       *undoLog
 	pipe       PipelineRunner
 	Now        func() time.Time // injectable for tests
 	liveCfg    atomic.Pointer[config.Config]
@@ -94,7 +98,6 @@ func New(cfg Config) (*Server, error) {
 		lastReq:    time.Now(),
 		idleStopCh: make(chan struct{}),
 		progress:   newProgressHub(),
-		undo:       newUndoLog(64),
 		pipe:       cfg.Pipeline,
 		Now:        time.Now,
 	}

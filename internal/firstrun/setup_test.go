@@ -52,51 +52,6 @@ func TestSetupHandler_RedirectsWhenReady(t *testing.T) {
 	}
 }
 
-type stubDownloader struct{ events []deps.ProgressEvent }
-
-func (s stubDownloader) Fetch(_ context.Context, _ string, ch chan<- deps.ProgressEvent) error {
-	for _, ev := range s.events {
-		ch <- ev
-	}
-	close(ch)
-	return nil
-}
-
-func TestInstallToolEndpoint_StreamsSSE(t *testing.T) {
-	d := stubDownloader{events: []deps.ProgressEvent{
-		{Stage: "fetch", PercentDone: 0.5},
-		{Stage: "verify", PercentDone: 1.0},
-	}}
-	h := NewInstallToolHandler(d)
-	req := httptest.NewRequest(http.MethodPost, "/api/setup/install-tool?name=exiftool", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-
-	if got := rr.Header().Get("Content-Type"); got != "text/event-stream" {
-		t.Errorf("Content-Type = %q, want text/event-stream", got)
-	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "event: progress") {
-		t.Errorf("missing progress event: %q", body)
-	}
-	if !strings.Contains(body, `"percent_done":1`) {
-		t.Errorf("missing 100%% event: %q", body)
-	}
-	if !strings.Contains(body, "event: done") {
-		t.Errorf("missing done event: %q", body)
-	}
-}
-
-func TestInstallToolEndpoint_RejectsUnknownTool(t *testing.T) {
-	h := NewInstallToolHandler(stubDownloader{})
-	req := httptest.NewRequest(http.MethodPost, "/api/setup/install-tool?name=evil", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rr.Code)
-	}
-}
-
 type stubModelInstaller struct{ events []deps.ProgressEvent }
 
 func (s stubModelInstaller) Install(_ context.Context, _ local.ModelKind, ch chan<- deps.ProgressEvent) error {

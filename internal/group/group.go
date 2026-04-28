@@ -35,8 +35,7 @@ func NewGrouper(s *store.Store, bucketSec int64, threshold float64, crossDevice 
 // RebuildBucket recomputes clusters for the given (device_key, time_bucket).
 // The delete of old clusters and the insert of new ones happen inside a single
 // transaction (via Store.WriteBucket) so the bucket is never left partially
-// rebuilt if an insert fails mid-way. ai_top_file_id is left NULL — the
-// ranker fills it later (see ranker.ApplyTopPicks).
+// rebuilt if an insert fails mid-way.
 func (g *Grouper) RebuildBucket(ctx context.Context, deviceKey string, timeBucket sql.NullInt64) error {
 	files, err := g.s.Files().ListAnalyzedInBucket(deviceKey, timeBucket, g.bucketSec)
 	if err != nil {

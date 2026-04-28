@@ -19,12 +19,7 @@ func requireTools(t *testing.T) (*meta.ExifTool, *deps.Runner) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH; skipping")
 	}
-	et, err := meta.NewExifTool("exiftool")
-	if err != nil {
-		t.Fatalf("NewExifTool: %v", err)
-	}
-	t.Cleanup(func() { _ = et.Close() })
-	return et, deps.NewRunner("ffmpeg")
+	return meta.New("exiftool"), deps.NewRunner("ffmpeg")
 }
 
 func fixturePath(t *testing.T, name string) string {

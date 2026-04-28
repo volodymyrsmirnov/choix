@@ -122,11 +122,6 @@ export async function postRecluster(): Promise<void> {
   if (!r.ok) throw new Error(`recluster: ${r.status} ${await r.text()}`)
 }
 
-export async function postScan(): Promise<void> {
-  const r = await fetch('/api/scan', { method: 'POST' })
-  if (!r.ok && r.status !== 409) throw new Error(`scan: ${r.status} ${await r.text()}`)
-}
-
 export function subscribeProgress(onEvent: (ev: ProgressEvent) => void): () => void {
   const es = new EventSource('/api/progress')
   es.onmessage = (m) => {

@@ -36,8 +36,6 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/progress", s.handleProgressSSE)
 	r.Get("/api/picks", s.handlePicksList)
 	r.Post("/api/picks", s.handlePicksPost)
-	r.Post("/api/picks/undo", s.handleUndoPost)
-	r.Post("/api/scan", s.handleScanPost)
 	r.Post("/api/recluster", s.handleReclusterPost)
 	r.Get("/api/settings", s.handleSettingsGet)
 	r.Post("/api/settings", s.handleSettingsPost)

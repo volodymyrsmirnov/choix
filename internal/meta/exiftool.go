@@ -15,10 +15,8 @@ type Runner interface {
 
 // ExifTool runs the exiftool binary and returns its raw JSON output.
 //
-// The path to the binary is resolved by the deps package (Phase 2). Internally
-// we delegate execution to a Runner so production code can swap a $PATH
-// shim for a support-dir binary transparently, and tests can substitute a
-// fake without spawning a process.
+// Execution is delegated to a Runner so tests can substitute a fake without
+// spawning a process.
 type ExifTool struct {
 	path   string
 	runner Runner
@@ -29,19 +27,6 @@ type ExifTool struct {
 func New(toolPath string) *ExifTool {
 	return &ExifTool{path: toolPath, runner: pathRunner{path: toolPath}}
 }
-
-// NewExifTool constructs an ExifTool that invokes the binary at toolPath,
-// validating that path is non-empty. Returns an error if toolPath is empty.
-func NewExifTool(toolPath string) (*ExifTool, error) {
-	if toolPath == "" {
-		return nil, fmt.Errorf("exiftool: empty tool path")
-	}
-	return New(toolPath), nil
-}
-
-// Close is a no-op for ExifTool (the binary is spawned per-call, not persistent).
-// It exists to satisfy lifecycle interfaces in the thumb pipeline.
-func (e *ExifTool) Close() error { return nil }
 
 // ExtractPreviewImage runs `exiftool -b -PreviewImage <src>` and returns the
 // raw JPEG bytes. Returns a nil slice (not an error) when no preview is embedded.
@@ -92,9 +77,6 @@ func (e *ExifTool) Run(ctx context.Context, filePath string) ([]byte, error) {
 }
 
 // pathRunner is the default Runner used when callers go through New.
-// In production, deps.Resolve returns a richer Runner that knows about the
-// support dir; this fallback covers the common "binary on PATH" case so the
-// meta package does not import deps internals.
 type pathRunner struct{ path string }
 
 func (p pathRunner) Run(ctx context.Context, args ...string) ([]byte, error) {

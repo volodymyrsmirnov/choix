@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
 func TestDefaults(t *testing.T) {
@@ -19,9 +17,6 @@ func TestDefaults(t *testing.T) {
 	}
 	if c.PicksDir != "picks" {
 		t.Errorf("PicksDir = %q, want \"picks\"", c.PicksDir)
-	}
-	if c.ScanRoot != "" {
-		t.Errorf("ScanRoot = %q, want empty", c.ScanRoot)
 	}
 }
 
@@ -49,7 +44,6 @@ func TestLoadFileParsesValues(t *testing.T) {
 bucket_size_sec = 300
 visual_cluster_threshold = 0.85
 picks_dir = "selected"
-scan_root = "/tmp/photos"
 advance_on_action = true
 hide_rejected_photos = true
 cross_device_merging = true
@@ -75,9 +69,6 @@ cross_device_merging = true
 	}
 	if cfg.PicksDir != "selected" {
 		t.Errorf("PicksDir = %q", cfg.PicksDir)
-	}
-	if cfg.ScanRoot != "/tmp/photos" {
-		t.Errorf("ScanRoot = %q", cfg.ScanRoot)
 	}
 	if !cfg.AdvanceOnAction {
 		t.Error("AdvanceOnAction false, want true")
@@ -195,50 +186,7 @@ func TestApplyEnvBadIntFails(t *testing.T) {
 	}
 }
 
-func TestFlagsApplySetValues(t *testing.T) {
-	cmd := &cobra.Command{Use: "test"}
-	Flags(cmd)
-
-	if err := cmd.ParseFlags([]string{
-		"--bucket-size=42",
-		"--picks-dir=outpicks",
-	}); err != nil {
-		t.Fatalf("ParseFlags: %v", err)
-	}
-
-	c := Defaults()
-	if err := ApplyFlags(&c, cmd); err != nil {
-		t.Fatalf("ApplyFlags: %v", err)
-	}
-	if c.BucketSizeSec != 42 {
-		t.Errorf("BucketSizeSec = %d, want 42", c.BucketSizeSec)
-	}
-	if c.PicksDir != "outpicks" {
-		t.Errorf("PicksDir = %q", c.PicksDir)
-	}
-}
-
-func TestFlagsUnsetLeavesValuesAlone(t *testing.T) {
-	cmd := &cobra.Command{Use: "test"}
-	Flags(cmd)
-	if err := cmd.ParseFlags(nil); err != nil {
-		t.Fatalf("ParseFlags: %v", err)
-	}
-
-	c := Defaults()
-	c.PicksDir = "from-toml"
-	if err := ApplyFlags(&c, cmd); err != nil {
-		t.Fatalf("ApplyFlags: %v", err)
-	}
-	if c.PicksDir != "from-toml" {
-		t.Errorf("PicksDir clobbered: %q", c.PicksDir)
-	}
-	if c.BucketSizeSec != 600 {
-		t.Errorf("BucketSizeSec = %d", c.BucketSizeSec)
-	}
-}
-
-func TestPrecedenceCLIBeatsEnvBeatsTOMLBeatsDefaults(t *testing.T) {
+func TestPrecedenceEnvBeatsTOMLBeatsDefaults(t *testing.T) {
 	dir := t.TempDir()
 	tomlPath := filepath.Join(dir, "config.toml")
 	tomlBody := `
@@ -250,15 +198,7 @@ picks_dir = "from-toml"
 	}
 
 	t.Setenv("CHOIX_BUCKET_SIZE", "200")
-	// CHOIX_PICKS_DIR is intentionally NOT set so PicksDir falls through
-	// from TOML.
 	t.Setenv("CHOIX_PICKS_DIR", "")
-
-	cmd := &cobra.Command{Use: "test"}
-	Flags(cmd)
-	if err := cmd.ParseFlags([]string{"--bucket-size=300"}); err != nil {
-		t.Fatalf("ParseFlags: %v", err)
-	}
 
 	cfg := Defaults()
 	raw, err := LoadFile(tomlPath)
@@ -269,21 +209,13 @@ picks_dir = "from-toml"
 	if err := ApplyEnv(&cfg); err != nil {
 		t.Fatalf("ApplyEnv: %v", err)
 	}
-	if err := ApplyFlags(&cfg, cmd); err != nil {
-		t.Fatalf("ApplyFlags: %v", err)
-	}
 
-	// CLI wins for the fields it set.
-	if cfg.BucketSizeSec != 300 {
-		t.Errorf("BucketSizeSec = %d, want 300 (CLI wins)", cfg.BucketSizeSec)
+	if cfg.BucketSizeSec != 200 {
+		t.Errorf("BucketSizeSec = %d, want 200 (env wins)", cfg.BucketSizeSec)
 	}
-
-	// TOML wins over defaults where neither env nor CLI was set.
 	if cfg.PicksDir != "from-toml" {
 		t.Errorf("PicksDir = %q, want from-toml", cfg.PicksDir)
 	}
-
-	// Untouched defaults remain.
 	if cfg.VisualClusterThreshold != 0.92 {
 		t.Errorf("VisualClusterThreshold = %v, want 0.92 (default)", cfg.VisualClusterThreshold)
 	}

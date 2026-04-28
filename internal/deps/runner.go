@@ -8,11 +8,10 @@ import (
 	"os/exec"
 )
 
-// Runner executes a single resolved tool. Construct via Runner{Path: tool.Path}
-// where tool was returned by Resolver.Resolve, or use NewRunner for tools
-// resolved at runtime via $PATH.
+// Runner executes a single resolved tool.
 type Runner struct {
-	// Path is the absolute path to the executable.
+	// Path is the absolute path to the executable, or a bare name to be
+	// resolved at exec time via $PATH.
 	Path string
 	// Env, if non-nil, replaces the child process environment. nil inherits.
 	Env []string
@@ -32,9 +31,8 @@ func (r *Runner) Run(ctx context.Context, args ...string) ([]byte, error) {
 	if r.Path == "" {
 		return nil, fmt.Errorf("deps: Runner.Path is empty")
 	}
-	// r.Path comes from a Resolver.Resolve() result (PATH lookup, support dir,
-	// or hash-pinned download), not from arbitrary user input — gosec G204 is
-	// not applicable here.
+	// r.Path is a name resolved by the binary (PATH lookup or app support
+	// dir), not arbitrary user input — gosec G204 is not applicable here.
 	cmd := exec.CommandContext(ctx, r.Path, args...) //nolint:gosec // resolved tool path, not user input
 	if r.Env != nil {
 		cmd.Env = r.Env
