@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
@@ -67,6 +69,10 @@ func (s *Scanner) Walk(ctx context.Context) error {
 	}
 
 	s.seen = make(map[string]int64)
+	start := time.Now()
+	slog.Info("scanner walk start", "root", s.root, "picks_dir", s.picksDir)
+	var dirCount, fileCount int
+	const logEveryFiles = 250
 
 	walkFn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -98,6 +104,7 @@ func (s *Scanner) Walk(ctx context.Context) error {
 			if filepath.ToSlash(rel) == s.picksDir {
 				return fs.SkipDir
 			}
+			dirCount++
 			return nil
 		}
 
@@ -130,15 +137,28 @@ func (s *Scanner) Walk(ctx context.Context) error {
 		if err := s.upsert(rec); err != nil {
 			return fmt.Errorf("upsert %s: %w", rec.Path, err)
 		}
+		fileCount++
+		if fileCount%logEveryFiles == 0 {
+			slog.Info("scanner walk progress", "files", fileCount, "dirs", dirCount)
+		}
 		return nil
 	}
 
 	if err := filepath.WalkDir(s.root, walkFn); err != nil {
+		slog.Warn("scanner walk failed", "root", s.root, "files", fileCount, "err", err)
 		return fmt.Errorf("scanner: %w", err)
 	}
-	if _, err := s.store.Files().MarkMissingExcept(s.seen); err != nil {
+	missing, err := s.store.Files().MarkMissingExcept(s.seen)
+	if err != nil {
 		return fmt.Errorf("scanner: mark missing: %w", err)
 	}
+	slog.Info("scanner walk done",
+		"root", s.root,
+		"files", fileCount,
+		"dirs", dirCount,
+		"missing", missing,
+		"elapsed_ms", time.Since(start).Milliseconds(),
+	)
 	return nil
 }
 

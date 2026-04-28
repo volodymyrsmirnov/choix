@@ -182,9 +182,12 @@ func runServe(cmd *cobra.Command, root string) error {
 	}
 
 	fmt.Println("choix serving at", srv.URL())
+	slog.Info("choix serving", "url", srv.URL(), "root", absRoot, "idle_after", idle.String(), "no_open", noOpen)
 	if !noOpen {
+		slog.Info("opening browser", "url", srv.URL())
 		if openErr := server.OpenBrowser(srv.URL()); openErr != nil {
 			// Non-fatal: the user can copy/paste the URL.
+			slog.Warn("auto-open browser failed", "err", openErr)
 			fmt.Fprintln(os.Stderr, "warning: could not auto-open browser:", openErr)
 		}
 	}

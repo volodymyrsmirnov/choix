@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
@@ -115,26 +117,49 @@ type runFile struct {
 //
 // Picks live in a separate table and are unaffected by this rebuild.
 func (g *Grouper) RebuildAll(ctx context.Context) error {
+	start := time.Now()
+	slog.Info("cluster rebuild start",
+		"bucket_sec", g.bucketSec,
+		"threshold", g.threshold,
+		"cross_device", g.crossDevice,
+	)
 	files, err := g.s.Files().ListAllAnalyzed()
 	if err != nil {
+		slog.Warn("cluster rebuild failed", "phase", "list_files", "err", err)
 		return fmt.Errorf("list analyzed files: %w", err)
 	}
 	if len(files) == 0 {
+		slog.Info("cluster rebuild done", "files", 0, "embeddings", 0, "mode", "empty", "elapsed_ms", time.Since(start).Milliseconds())
 		return g.s.WriteClusters(ctx, nil)
 	}
 
 	embeds, err := g.s.AISignals().AllEmbeddings()
 	if err != nil {
+		slog.Warn("cluster rebuild failed", "phase", "load_embeddings", "err", err)
 		return fmt.Errorf("load embeddings: %w", err)
 	}
 
 	// Cross-device mode requires at least one embedding to anchor the
 	// timelines. Without any, fall back to per-device behavior — merging
 	// adjacent devices on time alone would mix unrelated scenes.
+	mode := "per_device"
 	if g.crossDevice && len(embeds) > 0 {
-		return g.rebuildAllCrossDevice(ctx, files, embeds)
+		mode = "cross_device"
+		err = g.rebuildAllCrossDevice(ctx, files, embeds)
+	} else {
+		err = g.rebuildAllPerDevice(ctx, files, embeds)
 	}
-	return g.rebuildAllPerDevice(ctx, files, embeds)
+	if err != nil {
+		slog.Warn("cluster rebuild failed", "phase", "rebuild", "mode", mode, "err", err)
+		return err
+	}
+	slog.Info("cluster rebuild done",
+		"files", len(files),
+		"embeddings", len(embeds),
+		"mode", mode,
+		"elapsed_ms", time.Since(start).Milliseconds(),
+	)
+	return nil
 }
 
 // rebuildAllPerDevice is the original, device-partitioned path.

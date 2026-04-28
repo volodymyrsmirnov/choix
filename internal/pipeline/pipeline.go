@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"sync/atomic"
+	"time"
 )
 
 // Scanner abstracts the filesystem walker (internal/scanner).
@@ -87,14 +89,25 @@ func (p *Pipeline) Run(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	slog.Info("pipeline run start")
+	start := time.Now()
 	p.Reporter.Update(Progress{Stage: "discover", Phase: "starting"})
+	slog.Info("pipeline stage start", "stage", "discover")
+	walkStart := time.Now()
 	if err := p.Scanner.Walk(ctx); err != nil {
 		p.Reporter.Update(Progress{Stage: "discover", Phase: "failed"})
+		slog.Warn("pipeline stage failed", "stage", "discover", "err", err)
 		return fmt.Errorf("discover: %w", err)
 	}
 	p.Reporter.Update(Progress{Stage: "discover", Phase: "done"})
+	slog.Info("pipeline stage done", "stage", "discover", "elapsed_ms", time.Since(walkStart).Milliseconds())
 
-	return p.runStagesAndCluster(ctx)
+	if err := p.runStagesAndCluster(ctx); err != nil {
+		slog.Warn("pipeline run failed", "elapsed_ms", time.Since(start).Milliseconds(), "err", err)
+		return err
+	}
+	slog.Info("pipeline run done", "elapsed_ms", time.Since(start).Milliseconds())
+	return nil
 }
 
 // Resume is equivalent to Run but skips the discover step. It assumes the
@@ -115,11 +128,15 @@ func (p *Pipeline) runStagesAndCluster(ctx context.Context) error {
 		}
 	}
 	p.Reporter.Update(Progress{Stage: "cluster", Phase: "starting"})
+	slog.Info("pipeline stage start", "stage", "cluster")
+	clusterStart := time.Now()
 	if err := p.Grouper.RebuildAll(ctx); err != nil {
 		p.Reporter.Update(Progress{Stage: "cluster", Phase: "failed"})
+		slog.Warn("pipeline stage failed", "stage", "cluster", "err", err)
 		return fmt.Errorf("cluster: %w", err)
 	}
 	p.Reporter.Update(Progress{Stage: "cluster", Phase: "done"})
+	slog.Info("pipeline stage done", "stage", "cluster", "elapsed_ms", time.Since(clusterStart).Milliseconds())
 	return nil
 }
 
@@ -145,10 +162,14 @@ func (p *Pipeline) runStage(ctx context.Context, st Stage) error {
 	}
 
 	var (
-		totalOK   int64
-		totalFail int64
+		totalOK    int64
+		totalFail  int64
+		lastLogged int64
+		stageStart = time.Now()
+		logEvery   = stageLogInterval(totalQueue)
 	)
 	p.Reporter.Update(Progress{Stage: st.Name(), Total: totalQueue, Phase: "starting"})
+	slog.Info("pipeline stage start", "stage", st.Name(), "queue", totalQueue, "workers", workers)
 
 	progress := func(okDelta, failDelta int) {
 		ok := atomic.AddInt64(&totalOK, int64(okDelta))
@@ -160,11 +181,26 @@ func (p *Pipeline) runStage(ctx context.Context, st Stage) error {
 			Failed: int(fail),
 			Phase:  "running",
 		})
+		// Periodic INFO progress so the console shows movement on long
+		// stages — every logEvery completions, racy but cheap; the lossy
+		// CAS means we may skip a tick under heavy contention, which is
+		// fine for human-readable progress.
+		done := ok + fail
+		prev := atomic.LoadInt64(&lastLogged)
+		if done-prev >= int64(logEvery) && atomic.CompareAndSwapInt64(&lastLogged, prev, done) {
+			slog.Info("pipeline stage progress",
+				"stage", st.Name(),
+				"done", ok,
+				"failed", fail,
+				"total", totalQueue,
+			)
+		}
 	}
 
 	for {
 		if err := ctx.Err(); err != nil {
 			p.Reporter.Update(Progress{Stage: st.Name(), Done: int(totalOK), Total: totalQueue, Failed: int(totalFail), Phase: "failed"})
+			slog.Warn("pipeline stage cancelled", "stage", st.Name(), "done", totalOK, "failed", totalFail, "total", totalQueue)
 			return err
 		}
 
@@ -193,6 +229,7 @@ func (p *Pipeline) runStage(ctx context.Context, st Stage) error {
 			// because per-item failures are isolated by the workers.
 			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
 				p.Reporter.Update(Progress{Stage: st.Name(), Done: int(totalOK), Total: totalQueue, Failed: int(totalFail), Phase: "failed"})
+				slog.Warn("pipeline stage cancelled", "stage", st.Name(), "done", totalOK, "failed", totalFail, "total", totalQueue)
 				return runErr
 			}
 			// Per-item error: log it via the failed count and keep going.
@@ -208,9 +245,34 @@ func (p *Pipeline) runStage(ctx context.Context, st Stage) error {
 		}
 		if countAfter >= countBefore {
 			p.Reporter.Update(Progress{Stage: st.Name(), Done: int(totalOK), Total: totalQueue, Failed: int(totalFail), Phase: "failed"})
+			slog.Warn("pipeline stage stuck", "stage", st.Name(), "batch", len(ids), "done", totalOK, "failed", totalFail, "total", totalQueue)
 			return fmt.Errorf("pipeline %s: stage made no progress on %d items", st.Name(), len(ids))
 		}
 	}
 	p.Reporter.Update(Progress{Stage: st.Name(), Done: int(totalOK), Total: totalQueue, Failed: int(totalFail), Phase: "done"})
+	slog.Info("pipeline stage done",
+		"stage", st.Name(),
+		"done", totalOK,
+		"failed", totalFail,
+		"total", totalQueue,
+		"elapsed_ms", time.Since(stageStart).Milliseconds(),
+	)
 	return nil
+}
+
+// stageLogInterval picks how often the per-stage progress callback emits an
+// INFO log line — small queues log on every file, big queues log every ~5%.
+// The result is always at least 1.
+func stageLogInterval(total int) int {
+	if total <= 25 {
+		return 1
+	}
+	step := total / 20
+	if step < 5 {
+		step = 5
+	}
+	if step > 100 {
+		step = 100
+	}
+	return step
 }

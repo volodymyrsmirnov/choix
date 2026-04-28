@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/volodymyrsmirnov/choix/internal/picks"
@@ -69,9 +70,11 @@ func (s *Server) handlePicksPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Warn("pick action failed", "action", req.Action, "file_id", req.FileID, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog.Info("pick action", "action", req.Action, "file_id", req.FileID, "state", state, "exported_path", exp)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(picksResponse{

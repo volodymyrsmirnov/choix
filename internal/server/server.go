@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,6 +140,7 @@ func (s *Server) Start() error {
 		Handler:           s.routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	slog.Info("server listening", "url", s.url, "idle_after", s.cfg.IdleAfter.String())
 	return nil
 }
 
@@ -168,12 +170,15 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		slog.Info("server shutdown", "reason", "context_cancelled")
 		idleCancel()
 		return s.Shutdown(context.Background())
 	case <-s.idleStopCh:
+		slog.Info("server shutdown", "reason", "idle_timeout", "idle_after", s.cfg.IdleAfter.String())
 		idleCancel()
 		return s.Shutdown(context.Background())
 	case err := <-errCh:
+		slog.Info("server shutdown", "reason", "serve_returned", "err", err)
 		idleCancel()
 		return err
 	}
@@ -251,13 +256,23 @@ func (s *Server) idleResetMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// requestLogMiddleware logs each request via slog.
+// requestLogMiddleware logs each request via slog. State-changing requests
+// (non-GET to /api/*) and any non-2xx response are logged at INFO so the
+// console reflects user actions without drowning in /thumb/ + /api/library
+// chatter; quiet successful reads stay at DEBUG.
 func (s *Server) requestLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rw, r)
-		slog.Debug("http", //nolint:gosec // path is from request URL, not injected into shell
+		level := slog.LevelDebug
+		switch {
+		case rw.status >= 400:
+			level = slog.LevelWarn
+		case r.Method != http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/"):
+			level = slog.LevelInfo
+		}
+		slog.Log(r.Context(), level, "http", //nolint:gosec // path is from request URL, not injected into shell
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,

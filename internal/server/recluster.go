@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/volodymyrsmirnov/choix/internal/group"
 )
@@ -37,11 +38,14 @@ func (s *Server) recluster(ctx context.Context) error {
 }
 
 func (s *Server) handleReclusterPost(w http.ResponseWriter, r *http.Request) {
+	slog.Info("recluster requested")
+	start := time.Now()
 	if err := s.recluster(r.Context()); err != nil {
 		slog.Error("recluster failed", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog.Info("recluster done", "elapsed_ms", time.Since(start).Milliseconds())
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"reclustered":true}`))
 }

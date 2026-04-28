@@ -7,6 +7,7 @@ import (
 	"image"
 	_ "image/jpeg" // decoder
 	_ "image/png"  // decoder
+	"log/slog"
 	"math"
 	"os"
 	"sync"
@@ -103,11 +104,16 @@ func (a *Analyzer) lockedClipSession() (*OrtSession, error) {
 	if a.clipSess != nil {
 		return a.clipSess, nil
 	}
-	s, err := NewSession(a.models.Path(ModelCLIP))
+	modelPath := a.models.Path(ModelCLIP)
+	slog.Info("loading CLIP session", "model", modelPath)
+	start := time.Now()
+	s, err := NewSession(modelPath)
 	if err != nil {
+		slog.Warn("CLIP session load failed", "model", modelPath, "err", err)
 		return nil, err
 	}
 	a.clipSess = s
+	slog.Info("CLIP session ready", "elapsed_ms", time.Since(start).Milliseconds())
 	return s, nil
 }
 

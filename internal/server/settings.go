@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -116,21 +117,37 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := config.Save(cfg); err != nil {
+		slog.Warn("settings save failed", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := s.ReloadConfig(); err != nil {
-		_ = err
+		slog.Warn("settings reload failed", "err", err)
 	}
 
 	reclustered := false
 	if clusteringChanged {
+		slog.Info("settings save triggers recluster",
+			"bucket_sec", cfg.BucketSizeSec,
+			"threshold", cfg.VisualClusterThreshold,
+			"cross_device", cfg.CrossDeviceMerging,
+		)
 		if err := s.recluster(r.Context()); err != nil {
+			slog.Error("settings recluster failed", "err", err)
 			http.Error(w, "saved settings, recluster failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		reclustered = true
 	}
+	slog.Info("settings saved",
+		"bucket_sec", cfg.BucketSizeSec,
+		"threshold", cfg.VisualClusterThreshold,
+		"picks_dir", cfg.PicksDir,
+		"advance_on_action", cfg.AdvanceOnAction,
+		"hide_rejected", cfg.HideRejectedPhotos,
+		"cross_device", cfg.CrossDeviceMerging,
+		"reclustered", reclustered,
+	)
 
 	writeJSON(w, map[string]any{"saved": true, "reclustered": reclustered})
 }

@@ -42,7 +42,7 @@ func (h *progressHub) Attach(events <-chan pipeline.Event) {
 }
 
 func (h *progressHub) pump(events <-chan pipeline.Event) {
-	slog.Debug("progress hub pump started")
+	slog.Info("progress hub pump started")
 	count := 0
 	for ev := range events {
 		body, err := json.Marshal(ev)
@@ -50,10 +50,23 @@ func (h *progressHub) pump(events <-chan pipeline.Event) {
 			slog.Error("progress hub: marshal failed", "err", err)
 			continue
 		}
+		// Phase transitions ("starting" / "done" / "failed") are useful
+		// landmarks for humans watching the console; the per-file
+		// "running" updates are too noisy and already logged at INFO by
+		// the pipeline at a coarser cadence.
+		if ev.Phase != "" && ev.Phase != "running" {
+			slog.Info("progress",
+				"stage", ev.Stage,
+				"phase", ev.Phase,
+				"done", ev.Done,
+				"total", ev.Total,
+				"failed", ev.Failed,
+			)
+		}
 		h.server.Publish(progressStreamID, &sse.Event{Data: body})
 		count++
 	}
-	slog.Debug("progress hub pump finished", "total_events", count)
+	slog.Info("progress hub pump finished", "total_events", count)
 }
 
 // ServeHTTP wraps the inner SSE server. The SSE library expects the
