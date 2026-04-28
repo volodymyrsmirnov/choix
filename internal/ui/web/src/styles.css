@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+  html, body, #root {
+    height: 100%;
+  }
+  html, body {
+    @apply bg-bg-1 text-fg-0 font-sans antialiased;
+    letter-spacing: -0.005em;
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background: theme('colors.bg.4');
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: theme('colors.bg.5');
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md
+           text-xs font-medium border border-line-1 bg-bg-3 text-fg-0
+           transition-colors whitespace-nowrap cursor-pointer;
+    letter-spacing: -0.005em;
+  }
+  .btn:hover { @apply bg-bg-4 border-line-2; }
+  .btn:active { @apply bg-bg-2; }
+  .btn:disabled { @apply opacity-40 cursor-not-allowed; }
+
+  .btn-ghost { @apply bg-transparent border-transparent text-fg-1; }
+  .btn-ghost:hover { @apply bg-bg-3 text-fg-0; }
+
+  .btn-primary {
+    @apply bg-pick border-pick text-pick-ink font-semibold;
+  }
+  .btn-primary:hover { background: theme('colors.pick.hover'); }
+
+  .btn-pick-active { @apply bg-pick-bg border-pick text-pick; }
+  .btn-reject-active { @apply bg-reject-bg border-reject text-reject; }
+
+  .input {
+    @apply h-[30px] bg-bg-2 border border-line-1 rounded-md px-2.5
+           text-xs text-fg-0;
+  }
+  .input:focus { @apply outline-none border-pick; box-shadow: 0 0 0 3px theme('colors.pick.bg'); }
+
+  .kbd {
+    @apply inline-flex items-center justify-center align-middle font-mono
+           text-[10px] text-fg-1 px-[5px] h-[16px] rounded-sm border border-line-1
+           leading-none;
+    background: oklch(1 0 0 / 0.05);
+    letter-spacing: 0;
+  }
+  .btn .kbd { @apply ml-0.5 text-fg-2 border-line-1; background: oklch(1 0 0 / 0.06); }
+
+  .eyebrow {
+    @apply font-mono text-[10px] uppercase tracking-[0.08em] text-fg-2 font-medium;
+  }
+
+  .imgph {
+    @apply relative flex items-center justify-center overflow-hidden font-mono;
+    color: oklch(0.5 0.005 240);
+    font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+    background: repeating-linear-gradient(135deg,
+      oklch(0.30 0.005 240) 0 12px,
+      oklch(0.27 0.005 240) 12px 24px);
+  }
+
+  .thumb {
+    @apply relative rounded-md overflow-hidden transition-all bg-bg-2 border border-line-1;
+  }
+  .thumb,
+  .thumb:focus {
+    outline: none;
+  }
+  .thumb img {
+    @apply w-full h-full object-cover block;
+  }
+  .thumb[data-state="picked"] {
+    border-color: theme('colors.pick.DEFAULT');
+    box-shadow: theme('boxShadow.pick-glow');
+  }
+  .thumb[data-state="rejected"] {
+    border-color: theme('colors.reject.DEFAULT');
+    filter: saturate(0.4) brightness(0.7);
+  }
+  .thumb[data-state="selected"] {
+    border-color: theme('colors.sel.DEFAULT');
+    box-shadow: 0 0 0 3px theme('colors.sel.bg');
+  }
+  .thumb[data-state="active"] {
+    border-color: theme('colors.fg.0');
+  }
+
+  .dot { @apply inline-block w-1.5 h-1.5 rounded-full bg-fg-2; }
+  .dot[data-tone="pick"]   { background: theme('colors.pick.DEFAULT'); box-shadow: 0 0 8px theme('colors.pick.DEFAULT'); }
+  .dot[data-tone="reject"] { background: theme('colors.reject.DEFAULT'); }
+  .dot[data-tone="active"] { background: theme('colors.fg.0'); }
+
+  .progress-rail { @apply relative h-[3px] bg-bg-3 rounded-full overflow-hidden; }
+  .progress-rail .fill {
+    @apply absolute inset-y-0 left-0 rounded-[inherit];
+    background: linear-gradient(90deg, theme('colors.pick.DEFAULT'), oklch(0.78 0.18 145));
+  }
+  .progress-rail .fill[data-indet="true"] {
+    width: 30%;
+    animation: choix-indet 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes choix-indet {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(370%); }
+}
+@keyframes choix-spin {
+  to { transform: rotate(360deg); }
+}
+.choix-spin { animation: choix-spin 1s linear infinite; }

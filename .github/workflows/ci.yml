@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  ci:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build embedded SPA
+        run: make webui
+
+      - name: Check formatting
+        run: |
+          gofmt -s -l . | tee fmt.diff
+          test ! -s fmt.diff
+
+      - name: Check go.mod tidiness
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.1
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@v1.12.0
+
+      - name: Test with coverage
+        run: gotestsum --junitfile test-results.xml -- -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Test report
+        uses: dorny/test-reporter@v1
+        if: always() && hashFiles('test-results.xml') != ''
+        with:
+          name: Test Results
+          path: test-results.xml
+          reporter: java-junit
+
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Generate coverage report
+        id: coverage
+        if: always()
+        run: |
+          if [ ! -f coverage.out ]; then exit 0; fi
+          REPORT=$(go tool cover -func=coverage.out)
+          TOTAL=$(echo "$REPORT" | grep ^total: | awk '{print $3}')
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "report<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REPORT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "## Test Coverage: ${TOTAL}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post coverage comment
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage
+          message: |
+            ## Test Coverage: ${{ steps.coverage.outputs.total }}
+
+            <details><summary>Per-package breakdown</summary>
+
+            ```
+            ${{ steps.coverage.outputs.report }}
+            ```
+
+            </details>

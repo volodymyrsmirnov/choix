@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>choix — Setup</title>
+  <link rel="stylesheet" href="/static/tailwind.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/vendor/alpine.min.js" defer></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-2xl p-8 space-y-10">
+    <header>
+      <h1 class="text-2xl font-semibold">Welcome to choix</h1>
+      <p class="text-slate-600">A couple of quick installs before we can scan your folder.</p>
+    </header>
+
+    <section id="step-tools" data-required="{{ if or .RequiresExifTool .RequiresFFmpeg }}true{{ else }}false{{ end }}" class="rounded border bg-white p-6">
+      <h2 class="font-semibold">1. External tools</h2>
+      {{ if .RequiresExifTool }}
+        <button hx-post="/api/setup/install-tool" hx-vals='{"name":"exiftool"}' hx-target="#tool-progress-exiftool" hx-swap="innerHTML">
+          Install exiftool
+        </button>
+        <div id="tool-progress-exiftool"></div>
+      {{ else }}<p>exiftool is ready.</p>{{ end }}
+      {{ if .RequiresFFmpeg }}
+        <button hx-post="/api/setup/install-tool" hx-vals='{"name":"ffmpeg"}' hx-target="#tool-progress-ffmpeg" hx-swap="innerHTML">
+          Install ffmpeg
+        </button>
+        <div id="tool-progress-ffmpeg"></div>
+      {{ else }}<p>ffmpeg is ready.</p>{{ end }}
+    </section>
+
+    <section id="step-models" class="rounded border bg-white p-6">
+      <h2 class="font-semibold">2. CLIP visual-similarity model</h2>
+      {{ range .RequiresModels }}
+        <button hx-post="/api/setup/install-model" hx-vals='{"kind":"{{.}}"}' hx-target="#model-progress-{{.}}" hx-swap="innerHTML">
+          Install {{.}}
+        </button>
+        <div id="model-progress-{{.}}"></div>
+      {{ else }}
+        <p>The CLIP model is already installed.</p>
+      {{ end }}
+    </section>
+
+    <a href="/" class="block rounded bg-slate-900 px-4 py-2 text-center font-medium text-white">Continue to Library</a>
+  </main>
+</body>
+</html>

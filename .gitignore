@@ -1,0 +1,17 @@
+.superpowers/
+
+# build artifacts
+/choix
+/dist/
+*.test
+*.out
+internal/ui/web/dist/
+!internal/ui/web/dist/index.html
+
+# build tools cache
+build/.tools/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

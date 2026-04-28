@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Makefile'
+      - 'internal/ui/web/**'
+      - '.github/workflows/release.yml'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: bump
+        run: |
+          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ -z "$latest" ]; then
+            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+          else
+            patch=$(echo "$latest" | cut -d. -f3)
+            prefix=$(echo "$latest" | cut -d. -f1-2)
+            echo "tag=${prefix}.$((patch + 1))" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build embedded SPA
+        run: make webui
+
+      - name: Build darwin/amd64
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: amd64
+          CC: "clang -arch x86_64"
+        run: |
+          VERSION="${{ needs.version.outputs.tag }}"
+          LDFLAGS="-s -w -X github.com/volodymyrsmirnov/choix/internal/cli.Version=$VERSION"
+          go build -ldflags="$LDFLAGS" -o choix-darwin-amd64 ./cmd/choix
+
+      - name: Build darwin/arm64
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          GOARCH: arm64
+          CC: "clang -arch arm64"
+        run: |
+          VERSION="${{ needs.version.outputs.tag }}"
+          LDFLAGS="-s -w -X github.com/volodymyrsmirnov/choix/internal/cli.Version=$VERSION"
+          go build -ldflags="$LDFLAGS" -o choix-darwin-arm64 ./cmd/choix
+
+      - name: Create universal binary
+        run: lipo -create -output choix-osx-universal choix-darwin-amd64 choix-darwin-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: choix-osx-universal
+          path: choix-osx-universal
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    outputs:
+      sha_osx: ${{ steps.checksums.outputs.sha_osx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute checksums
+        id: checksums
+        run: |
+          echo "sha_osx=$(sha256sum artifacts/choix-osx-universal | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ needs.version.outputs.tag }}" \
+            --title "${{ needs.version.outputs.tag }}" \
+            --generate-notes \
+            artifacts/*
+
+  homebrew:
+    needs: [version, release]
+    uses: volodymyrsmirnov/homebrew-tap/.github/workflows/update.yml@main
+    with:
+      type: formula
+      name: choix
+      version: ${{ needs.version.outputs.tag }}
+      desc: "Photo and video culling tool"
+      homepage: "https://github.com/volodymyrsmirnov/choix"
+      macos_url: "https://github.com/volodymyrsmirnov/choix/releases/download/${{ needs.version.outputs.tag }}/choix-osx-universal"
+      macos_sha256: ${{ needs.release.outputs.sha_osx }}
+      formula_install: |-
+        binary = Dir["choix-*"].first
+            bin.install binary => "choix"
+    secrets:
+      tap_token: ${{ secrets.TAP_GITHUB_TOKEN }}
