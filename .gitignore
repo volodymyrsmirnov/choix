@@ -6,7 +6,6 @@
 *.test
 *.out
 internal/ui/web/dist/
-!internal/ui/web/dist/index.html
 
 # build tools cache
 build/.tools/

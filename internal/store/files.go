@@ -262,6 +262,29 @@ func (r *FilesRepo) MarkMissing(path string) error {
 	return err
 }
 
+// DeleteUnderPath removes every files row whose path equals dir or lives
+// underneath it. Used by the scanner to evict picks-dir contents that an
+// earlier build may have ingested as originals. The match is
+// case-insensitive to align with the LOWER(path) identity rules. Returns
+// the number of rows deleted.
+//
+// Picks/rejects/cluster_members rows referencing those files are removed
+// by ON DELETE CASCADE. Empty dir is a no-op.
+func (r *FilesRepo) DeleteUnderPath(ctx context.Context, dir string) (int64, error) {
+	if dir == "" {
+		return 0, nil
+	}
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM files
+		  WHERE LOWER(path) = LOWER(?)
+		     OR LOWER(path) LIKE LOWER(?) || '/%'`,
+		dir, dir)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // UpsertOnRescan inserts a new files row for path, or updates the existing
 // row's size/mtime/content_hash/kind/format atomically. When the content
 // hash matches, scan_status and existing metadata are preserved (so a

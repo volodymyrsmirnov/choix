@@ -100,6 +100,23 @@ func Parse(jsonBytes []byte) (Metadata, error) {
 		FocalLength:  asFloat(get("EXIF:FocalLength", "Composite:FocalLength")),
 	}
 
+	// DJI drone MP4s and some action cams (GoPro, Insta360) omit the standard
+	// Make/Model tags but stamp `QuickTime:Encoder = "<Brand> <Model>"`. When
+	// neither field came back from the proper tags, fall back to splitting the
+	// Encoder string. Requires two whitespace-separated tokens so single-token
+	// software encoders like "Lavf60.16.100" or "x264" don't pollute the device key.
+	if strings.TrimSpace(m.Make) == "" && strings.TrimSpace(m.Model) == "" {
+		if enc := strings.TrimSpace(asString(get("QuickTime:Encoder"))); enc != "" {
+			if i := strings.IndexAny(enc, " \t"); i > 0 {
+				rest := strings.TrimSpace(enc[i+1:])
+				if rest != "" {
+					m.Make = enc[:i]
+					m.Model = rest
+				}
+			}
+		}
+	}
+
 	if exposure, ok := asFloatOK(get("EXIF:ExposureTime", "Composite:ShutterSpeed")); ok {
 		m.Shutter = formatShutter(exposure)
 	}

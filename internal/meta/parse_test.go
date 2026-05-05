@@ -93,6 +93,51 @@ func TestParseDroneMOV(t *testing.T) {
 	}
 }
 
+func TestParseEncoderFallback(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantMake  string
+		wantModel string
+	}{
+		{
+			name:      "dji air3s mp4",
+			body:      `[{"QuickTime:Encoder": "DJI Air3s"}]`,
+			wantMake:  "DJI",
+			wantModel: "Air3s",
+		},
+		{
+			name:      "gopro hero11",
+			body:      `[{"QuickTime:Encoder": "GoPro HERO11 Black"}]`,
+			wantMake:  "GoPro",
+			wantModel: "HERO11 Black",
+		},
+		{
+			name:      "single-token software encoder ignored",
+			body:      `[{"QuickTime:Encoder": "Lavf60.16.100"}]`,
+			wantMake:  "",
+			wantModel: "",
+		},
+		{
+			name:      "explicit make/model wins over encoder",
+			body:      `[{"EXIF:Make": "Apple", "EXIF:Model": "iPhone 15", "QuickTime:Encoder": "DJI Air3s"}]`,
+			wantMake:  "Apple",
+			wantModel: "iPhone 15",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, err := Parse([]byte(c.body))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if m.Make != c.wantMake || m.Model != c.wantModel {
+				t.Errorf("make/model = %q / %q, want %q / %q", m.Make, m.Model, c.wantMake, c.wantModel)
+			}
+		})
+	}
+}
+
 func TestParseGPS(t *testing.T) {
 	cases := []struct {
 		name       string

@@ -72,6 +72,8 @@ const CrossfadeImage: React.FC<{
         src={fullURL(member)}
         controls
         draggable={false}
+        tabIndex={-1}
+        onFocus={(e) => e.currentTarget.blur()}
         onCanPlay={() => setFullReady(true)}
         className={variant === 'compare'
           ? 'absolute inset-0 w-full h-full object-contain bg-bg-0'
@@ -274,6 +276,18 @@ export const Focus: React.FC<{
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      // The native <video controls> intercepts Space (play/pause) and the
+      // arrow keys (seek/volume) when its play button or the element itself
+      // holds focus. We listen on the capture phase and blur any focused
+      // video sub-control so the shortcuts always reach our handlers — and
+      // call stopImmediatePropagation on the keys we care about so the
+      // browser's UA shadow-DOM handlers never run.
+      const focused = document.activeElement as HTMLElement | null
+      if (focused && (focused.tagName === 'VIDEO' || focused.closest('video'))) {
+        focused.blur()
+      }
+      const member = members[current]
+      const isVideoMember = member?.kind === 'video'
       if (e.key === 'Escape') {
         e.preventDefault()
         if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }); return }
@@ -282,37 +296,38 @@ export const Focus: React.FC<{
         return
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault()
+        e.preventDefault(); e.stopImmediatePropagation()
         if (members.length > 0) setCurrent(c => (c - 1 + members.length) % members.length)
         return
       }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-        e.preventDefault()
+        e.preventDefault(); e.stopImmediatePropagation()
         if (members.length > 0) setCurrent(c => (c + 1) % members.length)
         return
       }
-      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggle('picked'); return }
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); toggle('picked'); return }
       if (e.key === 'x' || e.key === 'X') { e.preventDefault(); toggle('rejected'); return }
       if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setShowInfo(v => !v); return }
       if (e.key === 'z' || e.key === 'Z') {
         e.preventDefault()
+        if (isVideoMember) return // videos render at native size; zoom is hidden in the toolbar too
         // Toggle: if already zoomed, snap back to 1×; otherwise jump to 2×.
         if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) }
         return
       }
       if (e.key === 'c' || e.key === 'C') { e.preventDefault(); toggleCompare(); return }
-      if (e.key === '+' || e.key === '=') { e.preventDefault(); stepZoom(1); return }
-      if (e.key === '-' || e.key === '_') { e.preventDefault(); stepZoom(-1); return }
-      if (e.key === '0') { e.preventDefault(); setZoom(1); setPan({ x: 0, y: 0 }); return }
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); if (!isVideoMember) stepZoom(1); return }
+      if (e.key === '-' || e.key === '_') { e.preventDefault(); if (!isVideoMember) stepZoom(-1); return }
+      if (e.key === '0') { e.preventDefault(); if (!isVideoMember) { setZoom(1); setPan({ x: 0, y: 0 }) } ; return }
       if (e.key === 'Enter') {
         e.preventDefault()
         if (data?.next_cluster_id) onCluster(data.next_cluster_id)
         return
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [members.length, toggle, onBack, onCluster, data, zoom, stepZoom, comparing, toggleCompare])
+    window.addEventListener('keydown', handler, { capture: true })
+    return () => window.removeEventListener('keydown', handler, { capture: true } as unknown as EventListenerOptions)
+  }, [members, current, toggle, onBack, onCluster, data, zoom, stepZoom, comparing, toggleCompare])
 
   // Smooth pinch-to-zoom inside the photo stage. The App-level handler
   // preventDefaults pinch gestures everywhere else; here we re-handle them so
@@ -531,12 +546,14 @@ export const Focus: React.FC<{
           </div>
 
           <div className="absolute top-3 right-3 flex items-center gap-1.5">
-            <div className="flex items-center gap-1 h-[34px] px-2 rounded-md border border-white/5 backdrop-blur-md font-mono"
-                 style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-              <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(-1)} disabled={zoom <= MIN_ZOOM} title="Zoom out (-)">−</button>
-              <span className="text-[11px] text-fg-0 min-w-[40px] text-center">{Math.round(zoom * 100)}%</span>
-              <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(1)} disabled={zoom >= MAX_ZOOM} title="Zoom in (+)">+</button>
-            </div>
+            {member.kind !== 'video' && (
+              <div className="flex items-center gap-1 h-[34px] px-2 rounded-md border border-white/5 backdrop-blur-md font-mono"
+                   style={{ background: 'oklch(0 0 0 / 0.5)' }}>
+                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(-1)} disabled={zoom <= MIN_ZOOM} title="Zoom out (-)">−</button>
+                <span className="text-[11px] text-fg-0 min-w-[40px] text-center">{Math.round(zoom * 100)}%</span>
+                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(1)} disabled={zoom >= MAX_ZOOM} title="Zoom in (+)">+</button>
+              </div>
+            )}
             {!comparing && (
               <button onClick={() => setShowInfo(!showInfo)} title="Toggle info panel (I)"
                       className={`btn h-[34px] ${showInfo ? '' : 'btn-ghost'} backdrop-blur-md`}
@@ -601,9 +618,11 @@ export const Focus: React.FC<{
         <button className={`btn ${comparing ? 'btn-pick-active' : 'btn-ghost'}`} onClick={toggleCompare} data-testid="compare-btn">
           <CompareIcon /> Compare <span className="kbd">C</span>
         </button>
-        <button className={`btn ${zoom > 1 ? 'btn-pick-active' : 'btn-ghost'}`} onClick={() => { if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) } }} data-testid="zoom-btn" disabled={comparing || member.kind === 'video'} title={member.kind === 'video' ? 'Zoom not available for videos' : undefined}>
-          <ZoomIcon /> Pixel-peep <span className="kbd">Z</span>
-        </button>
+        {member.kind !== 'video' && (
+          <button className={`btn ${zoom > 1 ? 'btn-pick-active' : 'btn-ghost'}`} onClick={() => { if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) } }} data-testid="zoom-btn" disabled={comparing}>
+            <ZoomIcon /> Pixel-peep <span className="kbd">Z</span>
+          </button>
+        )}
         <span className="flex-1" />
         <span className="font-mono text-[11px] text-fg-2">
           {String(current + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}

@@ -152,6 +152,17 @@ func runServe(cmd *cobra.Command, root string) error {
 		slog.Info("gps backfill", "rows", n)
 	}
 
+	// Re-derive device_key for rows that landed as "Unknown" before the
+	// parser grew its current fallbacks (e.g. QuickTime:Encoder for DJI
+	// MP4s and similar action-cam files). The pipeline's cluster stage
+	// rebuilds groups from scratch on every run, so any rows fixed here
+	// land in the right device bucket without further intervention.
+	if n, err := meta.BackfillDeviceKey(cmd.Context(), st); err != nil {
+		slog.Warn("device_key backfill failed", "err", err)
+	} else if n > 0 {
+		slog.Info("device_key backfill", "rows", n)
+	}
+
 	pipe, err := buildServePipeline(st, absRoot)
 	if err != nil {
 		return err

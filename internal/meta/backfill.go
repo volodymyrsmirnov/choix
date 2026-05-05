@@ -83,6 +83,75 @@ func BackfillGPS(ctx context.Context, st *store.Store) (int, error) {
 	return len(todo), nil
 }
 
+// BackfillDeviceKey re-derives device_key for files whose stored device_key
+// is "Unknown" by re-parsing the cached raw_exif blob. Useful after the
+// parser learns a new fallback (e.g. QuickTime:Encoder for DJI MP4s) — the
+// bytes on disk haven't changed, only our interpretation of them, so
+// re-running exiftool would be wasteful.
+//
+// Idempotent: rows with a non-Unknown device_key are skipped, and so are
+// rows whose re-parse still resolves to "Unknown". Per-row decode failures
+// are logged at debug level and the loop continues.
+//
+// Returns the number of rows whose device_key was updated. Callers should
+// trigger a re-cluster afterwards because clusters are keyed by device_key.
+func BackfillDeviceKey(ctx context.Context, st *store.Store) (int, error) {
+	db := st.DB()
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, raw_exif FROM files
+		 WHERE device_key = 'Unknown' AND raw_exif IS NOT NULL AND length(raw_exif) > 0`)
+	if err != nil {
+		return 0, fmt.Errorf("scan rows for device_key backfill: %w", err)
+	}
+	type pending struct {
+		id  int64
+		key string
+	}
+	var todo []pending
+	for rows.Next() {
+		var id int64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan row: %w", err)
+		}
+		plain, err := gunzip(raw)
+		if err != nil {
+			slog.Debug("device_key backfill: gunzip failed", "id", id, "err", err)
+			continue
+		}
+		m, err := Parse(plain)
+		if err != nil {
+			slog.Debug("device_key backfill: parse failed", "id", id, "err", err)
+			continue
+		}
+		k := DeviceKey(m)
+		if k == "Unknown" {
+			continue
+		}
+		todo = append(todo, pending{id: id, key: k})
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	for _, p := range todo {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		_, err := db.ExecContext(ctx,
+			`UPDATE files SET device_key = ? WHERE id = ? AND device_key = 'Unknown'`,
+			p.key, p.id)
+		if err != nil {
+			return 0, fmt.Errorf("update device_key for %d: %w", p.id, err)
+		}
+	}
+	return len(todo), nil
+}
+
 func gunzip(in []byte) ([]byte, error) {
 	zr, err := gzip.NewReader(bytes.NewReader(in))
 	if err != nil {

@@ -71,6 +71,18 @@ func (s *Scanner) Walk(ctx context.Context) error {
 	s.seen = make(map[string]int64)
 	start := time.Now()
 	slog.Info("scanner walk start", "root", s.root, "picks_dir", s.picksDir)
+
+	// Evict any rows previously indexed from inside the picks dir. Earlier
+	// builds (or a picks_dir reconfiguration) may have ingested copies as
+	// originals; once that's happened the user sees their own picks come
+	// back as duplicate clusters every time the visual clusterer runs. Drop
+	// them outright so a scan starts from a clean slate.
+	if n, err := s.store.Files().DeleteUnderPath(ctx, s.picksDir); err != nil {
+		return fmt.Errorf("scanner: evict picks rows: %w", err)
+	} else if n > 0 {
+		slog.Info("scanner evicted picks-dir rows", "picks_dir", s.picksDir, "rows", n)
+	}
+
 	var dirCount, fileCount int
 	const logEveryFiles = 250
 
@@ -100,8 +112,9 @@ func (s *Scanner) Walk(ctx context.Context) error {
 			}
 			// Configured picks export dir at any depth under root. Match
 			// the slash-normalized rel path so nested overrides like
-			// "exports/luminar" work too.
-			if filepath.ToSlash(rel) == s.picksDir {
+			// "exports/luminar" work too. Case-insensitive to align with
+			// the file-identity rules (LOWER(path) UNIQUE in migration 003).
+			if strings.EqualFold(filepath.ToSlash(rel), s.picksDir) {
 				return fs.SkipDir
 			}
 			dirCount++
@@ -111,6 +124,13 @@ func (s *Scanner) Walk(ctx context.Context) error {
 		// Regular file — must have a recognized media extension.
 		fi, ok := DetectFromExt(d.Name())
 		if !ok {
+			return nil
+		}
+
+		// Defensive: if a regular file's relative path falls under the
+		// configured picks dir (e.g. picks_dir was changed at runtime and
+		// the directory wasn't yet skipped above), don't ingest it.
+		if relSlash := filepath.ToSlash(rel); isUnderDir(relSlash, s.picksDir) {
 			return nil
 		}
 
@@ -170,6 +190,23 @@ func (s *Scanner) Scan(ctx context.Context) (int, error) {
 		return len(s.seen), err
 	}
 	return len(s.seen), nil
+}
+
+// isUnderDir reports whether the slash-separated path lives at or under the
+// given directory. The comparison is case-insensitive to match the project's
+// file-identity rules. Empty dir matches nothing.
+func isUnderDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if strings.EqualFold(path, dir) {
+		return true
+	}
+	prefix := dir + "/"
+	if len(path) <= len(prefix) {
+		return false
+	}
+	return strings.EqualFold(path[:len(prefix)], prefix)
 }
 
 // upsert calls UpsertOnRescan and records the file's id in s.seen so that

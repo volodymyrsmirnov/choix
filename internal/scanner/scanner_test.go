@@ -137,6 +137,58 @@ func TestScannerWalkSkipsConfiguredPicksDir(t *testing.T) {
 	}
 }
 
+func TestScannerWalkEvictsRowsAlreadyIndexedFromPicksDir(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root, "keep.jpg", []byte("a"))
+	mustWrite(t, root, "picks/leftover.jpg", []byte("b"))
+	mustWrite(t, root, "picks/sub/leftover.jpg", []byte("c"))
+
+	s := newScannerStore(t)
+
+	// Simulate an earlier build that ingested the picks dir as originals.
+	for _, p := range []string{"picks/leftover.jpg", "picks/sub/leftover.jpg"} {
+		if _, err := s.Files().Insert(store.File{
+			Path:        p,
+			Size:        1,
+			Mtime:       1,
+			ContentHash: p,
+			Kind:        "photo",
+			Format:      "jpg",
+			ScanStatus:  "analyzed",
+		}); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+
+	sc := New(root, s)
+	if err := sc.Walk(context.Background()); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	got := listPaths(t, s)
+	if len(got) != 1 || got[0] != "keep.jpg" {
+		t.Fatalf("expected only keep.jpg after picks eviction, got %v", got)
+	}
+}
+
+func TestScannerWalkSkipsPicksDirCaseInsensitive(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root, "keep.jpg", []byte("a"))
+	mustWrite(t, root, "Picks/exported.jpg", []byte("b"))
+
+	s := newScannerStore(t)
+	sc := New(root, s) // default picks_dir = "picks"
+
+	if err := sc.Walk(context.Background()); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	got := listPaths(t, s)
+	if len(got) != 1 || got[0] != "keep.jpg" {
+		t.Fatalf("Picks/ should be skipped case-insensitively, got %v", got)
+	}
+}
+
 func TestScannerWalkSkipsNestedPicksDir(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, root, "keep.jpg", []byte("a"))
