@@ -6,7 +6,11 @@ import {
 import { fetchCluster, postPick, thumbURL, fullURL, type FocusResponse, type Member } from '../api'
 import { toast } from './Toaster'
 
-const ZOOM_LEVELS = [1, 1.5, 2, 3, 4]
+const MIN_ZOOM = 1
+const MAX_ZOOM = 8
+const ZOOM_STEP = 1.5 // multiplicative step for the +/- buttons and Z key
+
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
 
 // CrossfadeImage stacks a thumbnail and full-resolution image in the same
 // bounding box and crossfades when the full version finishes loading. Both
@@ -152,6 +156,9 @@ export const Focus: React.FC<{
   const dragState = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
   const railRef = useRef<HTMLElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const zoomRef = useRef(1)
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
 
   // Persist Info panel toggle across sessions.
   useEffect(() => {
@@ -236,9 +243,11 @@ export const Focus: React.FC<{
 
   const stepZoom = useCallback((dir: 1 | -1) => {
     setZoom(z => {
-      const idx = ZOOM_LEVELS.findIndex(v => v >= z - 0.001)
-      const next = ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, (idx === -1 ? 0 : idx) + dir))]
-      if (next === 1) setPan({ x: 0, y: 0 })
+      const next = clampZoom(dir === 1 ? z * ZOOM_STEP : z / ZOOM_STEP)
+      if (next <= MIN_ZOOM + 0.001) {
+        setPan({ x: 0, y: 0 })
+        return MIN_ZOOM
+      }
       return next
     })
   }, [])
@@ -272,12 +281,25 @@ export const Focus: React.FC<{
         onBack()
         return
       }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); setCurrent(c => Math.max(0, c - 1)); return }
-      if (e.key === 'ArrowRight') { e.preventDefault(); setCurrent(c => Math.min(members.length - 1, c + 1)); return }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (members.length > 0) setCurrent(c => (c - 1 + members.length) % members.length)
+        return
+      }
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        if (members.length > 0) setCurrent(c => (c + 1) % members.length)
+        return
+      }
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); toggle('picked'); return }
       if (e.key === 'x' || e.key === 'X') { e.preventDefault(); toggle('rejected'); return }
       if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setShowInfo(v => !v); return }
-      if (e.key === 'z' || e.key === 'Z') { e.preventDefault(); stepZoom(zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1] ? -1 : 1); return }
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault()
+        // Toggle: if already zoomed, snap back to 1×; otherwise jump to 2×.
+        if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) }
+        return
+      }
       if (e.key === 'c' || e.key === 'C') { e.preventDefault(); toggleCompare(); return }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); stepZoom(1); return }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); stepZoom(-1); return }
@@ -291,6 +313,60 @@ export const Focus: React.FC<{
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [members.length, toggle, onBack, onCluster, data, zoom, stepZoom, comparing, toggleCompare])
+
+  // Smooth pinch-to-zoom inside the photo stage. The App-level handler
+  // preventDefaults pinch gestures everywhere else; here we re-handle them so
+  // the photo zooms instead of the browser scaling the page. Three sources:
+  //
+  //   1. macOS trackpad pinch → wheel events with ctrlKey set, deltaY in
+  //      "lines" (~tens of units per pinch tick). exp() maps it to a smooth
+  //      multiplicative scale change.
+  //   2. ⌘+wheel → same path via metaKey for users who prefer the modifier.
+  //   3. Safari touch pinch → gesturestart/gesturechange with `scale`
+  //      relative to the gesture's origin. We snapshot the zoom on start and
+  //      multiply by `scale` on each change.
+  //
+  // Videos don't zoom; bail out early so the gesture falls through to the
+  // browser's media controls.
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    const isVideo = () => member?.kind === 'video'
+    const wheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      e.preventDefault()
+      if (isVideo()) return
+      const next = clampZoom(zoomRef.current * Math.exp(-e.deltaY * 0.01))
+      if (next <= MIN_ZOOM + 0.001) { setPan({ x: 0, y: 0 }); setZoom(MIN_ZOOM) }
+      else setZoom(next)
+    }
+    let gestureBase = 1
+    const gestureStart = (e: Event) => {
+      e.preventDefault()
+      if (isVideo()) return
+      gestureBase = zoomRef.current
+    }
+    const gestureChange = (e: Event) => {
+      e.preventDefault()
+      if (isVideo()) return
+      const scale = (e as unknown as { scale: number }).scale
+      if (!isFinite(scale) || scale <= 0) return
+      const next = clampZoom(gestureBase * scale)
+      if (next <= MIN_ZOOM + 0.001) { setPan({ x: 0, y: 0 }); setZoom(MIN_ZOOM) }
+      else setZoom(next)
+    }
+    const gestureEnd = (e: Event) => { e.preventDefault() }
+    el.addEventListener('wheel', wheel, { passive: false })
+    el.addEventListener('gesturestart', gestureStart as EventListener)
+    el.addEventListener('gesturechange', gestureChange as EventListener)
+    el.addEventListener('gestureend', gestureEnd as EventListener)
+    return () => {
+      el.removeEventListener('wheel', wheel)
+      el.removeEventListener('gesturestart', gestureStart as EventListener)
+      el.removeEventListener('gesturechange', gestureChange as EventListener)
+      el.removeEventListener('gestureend', gestureEnd as EventListener)
+    }
+  }, [member])
 
   // Counted once per members change instead of on every render — the parent's
   // pointermove handlers re-render this component dozens of times per second.
@@ -397,7 +473,7 @@ export const Focus: React.FC<{
           })}
         </aside>
 
-        <main className="flex-1 relative bg-bg-0 overflow-hidden">
+        <main ref={stageRef} className="flex-1 relative bg-bg-0 overflow-hidden">
           {comparing ? (
             <div className="absolute inset-0 grid p-3 gap-3"
                  style={{
@@ -457,9 +533,9 @@ export const Focus: React.FC<{
           <div className="absolute top-3 right-3 flex items-center gap-1.5">
             <div className="flex items-center gap-1 h-[34px] px-2 rounded-md border border-white/5 backdrop-blur-md font-mono"
                  style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-              <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(-1)} disabled={zoom <= 1} title="Zoom out (-)">−</button>
+              <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(-1)} disabled={zoom <= MIN_ZOOM} title="Zoom out (-)">−</button>
               <span className="text-[11px] text-fg-0 min-w-[40px] text-center">{Math.round(zoom * 100)}%</span>
-              <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(1)} disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]} title="Zoom in (+)">+</button>
+              <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(1)} disabled={zoom >= MAX_ZOOM} title="Zoom in (+)">+</button>
             </div>
             {!comparing && (
               <button onClick={() => setShowInfo(!showInfo)} title="Toggle info panel (I)"
@@ -508,10 +584,10 @@ export const Focus: React.FC<{
       </div>
 
       <footer className="h-12 px-3 border-t border-line-1 bg-bg-2 flex items-center gap-1.5">
-        <button className="btn btn-ghost" onClick={() => setCurrent(Math.max(0, current - 1))} disabled={current === 0 || comparing}>
+        <button className="btn btn-ghost" onClick={() => setCurrent(c => (c - 1 + members.length) % members.length)} disabled={members.length <= 1 || comparing}>
           <ArrowL /> <span className="kbd">←</span>
         </button>
-        <button className="btn btn-ghost" onClick={() => setCurrent(Math.min(members.length - 1, current + 1))} disabled={current >= members.length - 1 || comparing}>
+        <button className="btn btn-ghost" onClick={() => setCurrent(c => (c + 1) % members.length)} disabled={members.length <= 1 || comparing}>
           <span className="kbd">→</span> <ArrowR />
         </button>
         <div className="w-px h-[22px] bg-line-1 mx-1.5" />
@@ -525,7 +601,7 @@ export const Focus: React.FC<{
         <button className={`btn ${comparing ? 'btn-pick-active' : 'btn-ghost'}`} onClick={toggleCompare} data-testid="compare-btn">
           <CompareIcon /> Compare <span className="kbd">C</span>
         </button>
-        <button className={`btn ${zoom > 1 ? 'btn-pick-active' : 'btn-ghost'}`} onClick={() => stepZoom(zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1] ? -1 : 1)} data-testid="zoom-btn" disabled={comparing || member.kind === 'video'} title={member.kind === 'video' ? 'Zoom not available for videos' : undefined}>
+        <button className={`btn ${zoom > 1 ? 'btn-pick-active' : 'btn-ghost'}`} onClick={() => { if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) } }} data-testid="zoom-btn" disabled={comparing || member.kind === 'video'} title={member.kind === 'video' ? 'Zoom not available for videos' : undefined}>
           <ZoomIcon /> Pixel-peep <span className="kbd">Z</span>
         </button>
         <span className="flex-1" />

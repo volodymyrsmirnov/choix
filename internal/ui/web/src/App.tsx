@@ -79,6 +79,25 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
+  // Block browser-level pinch-zoom (trackpad pinch, Safari gestures, ⌘+wheel)
+  // app-wide. Focus mode re-enables the gesture inside its hero/compare area
+  // by attaching its own non-passive listeners that update the photo zoom
+  // instead of letting the browser scale the page.
+  useEffect(() => {
+    const wheel = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault() }
+    const gesture = (e: Event) => e.preventDefault()
+    document.addEventListener('wheel', wheel, { passive: false })
+    document.addEventListener('gesturestart', gesture)
+    document.addEventListener('gesturechange', gesture)
+    document.addEventListener('gestureend', gesture)
+    return () => {
+      document.removeEventListener('wheel', wheel)
+      document.removeEventListener('gesturestart', gesture)
+      document.removeEventListener('gesturechange', gesture)
+      document.removeEventListener('gestureend', gesture)
+    }
+  }, [])
+
   const navigate = useCallback((path: string, r: Route) => {
     if (window.location.pathname + window.location.search !== path) {
       window.history.pushState(null, '', path)
