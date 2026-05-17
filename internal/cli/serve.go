@@ -168,6 +168,15 @@ func runServe(cmd *cobra.Command, root string) error {
 		return err
 	}
 
+	// Resolve exiftool + ffmpeg once for the server's on-demand /full/
+	// transcode path. Pipeline build already requires exiftool; the same
+	// lookup here keeps the server's fast path available even though
+	// buildPipelineCore keeps its own copies inside the pipeline.
+	etool, ffRunner, err := resolveMediaTools()
+	if err != nil {
+		return err
+	}
+
 	// Single signal-aware context governs both the HTTP server and the
 	// background pipeline. SIGINT cancels both. Built before server.New
 	// so handlers that kick off background work (e.g. /api/setup/finalize
@@ -184,6 +193,8 @@ func runServe(cmd *cobra.Command, root string) error {
 		Pipeline:          pipe,
 		Installer:         local.NewInstaller(modelsDir()),
 		BackgroundContext: rootCtx,
+		Exiftool:          etool,
+		Ffmpeg:            ffRunner,
 	})
 	if err != nil {
 		return err

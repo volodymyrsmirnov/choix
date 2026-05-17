@@ -32,10 +32,44 @@ const CrossfadeImage: React.FC<{
 }> = ({ member, pan, zoom, dragging, variant }) => {
   const [thumbReady, setThumbReady] = useState(false)
   const [fullReady, setFullReady] = useState(false)
+  // fullSrc is a Blob URL once the fetch completes. Using fetch+AbortController
+  // (instead of binding fullURL straight to <img src>) lets us *actually*
+  // cancel the request when the user navigates away — browser <img> load
+  // cancellation on element removal is unreliable, and at the network layer
+  // those orphaned requests pin the per-origin connection limit. The server
+  // keeps transcoding on its BackgroundContext, so coming back to the same
+  // photo hits the warm cache.
+  const [fullSrc, setFullSrc] = useState<string>('')
   const isVideo = member.kind === 'video'
   const cacheKey = `${member.file_id}-${member.content_hash}`
 
-  useEffect(() => { setThumbReady(false); setFullReady(false) }, [cacheKey])
+  useEffect(() => { setThumbReady(false); setFullReady(false); setFullSrc('') }, [cacheKey])
+
+  // Fetch the full-resolution image as a Blob with AbortController so
+  // navigation cancels the HTTP request mid-flight. Videos keep their own
+  // load lifecycle on the <video> element.
+  useEffect(() => {
+    if (isVideo) return
+    const ctrl = new AbortController()
+    let createdURL: string | null = null
+    let cancelled = false
+    fetch(fullURL(member), { signal: ctrl.signal })
+      .then(r => {
+        if (!r.ok) throw new Error(`full ${r.status}`)
+        return r.blob()
+      })
+      .then(b => {
+        if (cancelled) return
+        createdURL = URL.createObjectURL(b)
+        setFullSrc(createdURL)
+      })
+      .catch(() => { /* abort or fetch failure — leave the thumb visible */ })
+    return () => {
+      cancelled = true
+      ctrl.abort()
+      if (createdURL) URL.revokeObjectURL(createdURL)
+    }
+  }, [cacheKey, isVideo, member])
 
   // Videos never use pan/zoom — always render at natural size.
   const transform = isVideo ? 'none' : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
@@ -99,21 +133,23 @@ const CrossfadeImage: React.FC<{
           pointerEvents: 'none',
         }}
       />
-      <img
-        key={`full-${cacheKey}`}
-        src={fullURL(member)}
-        alt={member.path}
-        draggable={false}
-        onLoad={() => setFullReady(true)}
-        className={`${imgCls.replace('transition-transform', 'transition-opacity')}`}
-        style={{
-          transform, transformOrigin: 'center center',
-          transitionDuration: '180ms',
-          opacity: fullReady ? 1 : 0,
-          pointerEvents: 'none',
-        }}
-        data-testid={variant === 'hero' ? 'hero' : undefined}
-      />
+      {fullSrc && (
+        <img
+          key={`full-${cacheKey}`}
+          src={fullSrc}
+          alt={member.path}
+          draggable={false}
+          onLoad={() => setFullReady(true)}
+          className={`${imgCls.replace('transition-transform', 'transition-opacity')}`}
+          style={{
+            transform, transformOrigin: 'center center',
+            transitionDuration: '180ms',
+            opacity: fullReady ? 1 : 0,
+            pointerEvents: 'none',
+          }}
+          data-testid={variant === 'hero' ? 'hero' : undefined}
+        />
+      )}
       {variant === 'compare' && spinner}
     </>
   )
@@ -176,6 +212,33 @@ export const Focus: React.FC<{
       target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
   }, [current])
+
+  // Warm the /full/ cache for nearby members so the next ←/→ keypress hits
+  // an already-built JPEG instead of waiting on a fresh sips/ffmpeg pass.
+  // We only prefetch photos whose format the browser can't render directly
+  // (HEIC, RAF, TIFF, …) — for jpeg/png the /full/ handler just streams the
+  // original, and for videos a full prefetch would eat tens of MB for no
+  // perceptible win. Using fetch+AbortController gives us deterministic
+  // cancellation when the user moves on; the server-side singleflight
+  // collapses any race with the user's actual click into a single transcode.
+  useEffect(() => {
+    if (members.length === 0) return
+    const offsets = [1, -1, 2, -2]
+    const ctrl = new AbortController()
+    for (const off of offsets) {
+      const idx = current + off
+      if (idx < 0 || idx >= members.length) continue
+      const m = members[idx]
+      if (m.kind !== 'photo') continue
+      const fmt = (m.format || '').toLowerCase()
+      if (fmt === 'jpeg' || fmt === 'jpg' || fmt === 'png') continue
+      // Fire and forget. The browser HTTP cache holds the response so the
+      // active fetch in CrossfadeImage will dedupe (or, failing that, the
+      // server-side singleflight will).
+      fetch(fullURL(m), { signal: ctrl.signal }).catch(() => { /* aborted or failed */ })
+    }
+    return () => { ctrl.abort() }
+  }, [current, members])
 
   const load = useCallback(async () => {
     // Cancel any previous in-flight fetch so stale responses don't overwrite

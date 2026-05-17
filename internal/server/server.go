@@ -22,6 +22,8 @@ import (
 
 	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/config"
+	"github.com/volodymyrsmirnov/choix/internal/deps"
+	"github.com/volodymyrsmirnov/choix/internal/meta"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/ui"
@@ -48,6 +50,13 @@ type Config struct {
 	IdleAfter time.Duration
 	Pipeline  PipelineRunner   // optional; nil disables /api/scan
 	Installer *local.Installer // optional; nil disables /setup wizard
+	// Exiftool + Ffmpeg power the on-demand /full/ transcode path for
+	// formats browsers can't render (HEIC, RAF). When nil the handler
+	// falls back to a sips-only conversion, which is correct but slower
+	// for camera RAW (sips demosaics the sensor; exiftool can extract a
+	// large embedded preview JPEG in a fraction of the time).
+	Exiftool *meta.ExifTool
+	Ffmpeg   *deps.Runner
 	// BackgroundContext is the long-lived parent context for work that
 	// must outlive a single HTTP request — e.g. /api/setup/finalize
 	// kicking off a pipeline re-analyze. Optional; defaults to

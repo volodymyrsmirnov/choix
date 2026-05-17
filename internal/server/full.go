@@ -1,17 +1,34 @@
 package server
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
+
+// fullTranscodeGroup deduplicates concurrent /full/ transcode work: keyed by
+// the absolute cache path so two requests for the same file (e.g. a prefetch
+// racing the user's click) share a single sips/ffmpeg invocation. The
+// cache-path key also collapses case-insensitive path variants because the
+// CachePath is derived from the DB-resolved file ID.
+var fullTranscodeGroup singleflight.Group
+
+// fullTranscodeSem caps concurrent /full/ transcodes. Each sips/ffmpeg pass
+// can saturate multiple cores; without a cap, four prefetched neighbours
+// plus an on-demand click would spawn five concurrent processes and starve
+// each other (and the rest of the server). 2 is the smallest value that lets
+// the next-photo prefetch start while the current photo is still rendering.
+var fullTranscodeSem = make(chan struct{}, 2)
 
 // browserRenderableFormat reports whether the source format can be served
 // as-is to a browser. HEIC and RAF cannot — Chrome and Firefox refuse to
@@ -45,7 +62,7 @@ func (s *Server) handleFull(w http.ResponseWriter, r *http.Request) {
 	// JPEG (sized for retina pixel-peep). Videos and renderable photos go
 	// straight to the original bytes.
 	if rec.Kind == "photo" && !browserRenderableFormat(rec.Format) {
-		jpegPath, jerr := s.ensureFullJPEG(r, &rec)
+		jpegPath, jerr := s.ensureFullJPEG(&rec)
 		if jerr == nil {
 			s.serveFile(w, r, jpegPath, "image/jpeg")
 			return
@@ -77,7 +94,14 @@ func (s *Server) handleFull(w http.ResponseWriter, r *http.Request) {
 // ensureFullJPEG returns the absolute path to a cached high-resolution JPEG
 // transcode of the source file, building it on first request. The cache key
 // is the deterministic CachePath layout under .choix/thumbs/<bucket>/<id>-full.jpg.
-func (s *Server) ensureFullJPEG(r *http.Request, rec *store.File) (string, error) {
+//
+// Concurrent requests for the same file share a single transcode via
+// singleflight (keyed on the cache path), so a prefetch racing a user click
+// only spawns one sips/ffmpeg process. Transcodes run with the server's
+// long-lived BackgroundContext rather than r.Context(): a client navigating
+// away mid-render shouldn't kill the work and force the *next* request to
+// start over.
+func (s *Server) ensureFullJPEG(rec *store.File) (string, error) {
 	dst := thumb.CachePath(s.cfg.ScanRoot, rec.ID, thumb.TierFullJPEG)
 	if st, err := os.Stat(dst); err == nil && st.Size() > 0 { //nolint:gosec // dst is built from rec.ID (DB PK) and ScanRoot, no user input
 		return dst, nil
@@ -87,10 +111,55 @@ func (s *Server) ensureFullJPEG(r *http.Request, rec *store.File) (string, error
 	if err != nil {
 		return "", err
 	}
-	if _, _, err := thumb.SipsConvert(r.Context(), src, dst, thumb.WidthFullJPEG); err != nil {
-		return "", err
+
+	bg := s.cfg.BackgroundContext
+	if bg == nil {
+		bg = context.Background()
 	}
-	return dst, nil
+
+	// singleflight.Do keys on the absolute cache path so the merge survives
+	// any case variation in the URL — the cache path is derived from rec.ID.
+	out, ferr, _ := fullTranscodeGroup.Do(dst, func() (any, error) {
+		// Re-check after winning the lock: another caller's transcode may
+		// have finished while we were waiting.
+		if st, err := os.Stat(dst); err == nil && st.Size() > 0 { //nolint:gosec // dst is internal cache path
+			return dst, nil
+		}
+		// Wait on the semaphore against bg, not r.Context(): if the first
+		// caller into singleflight.Do cancels (the user navigated away),
+		// every other waiter on this key would otherwise receive the
+		// cancel error and force the next click to start over. Keying
+		// the wait to bg means once admitted, the transcode completes
+		// and feeds the cache for the next request.
+		select {
+		case fullTranscodeSem <- struct{}{}:
+		case <-bg.Done():
+			return "", bg.Err()
+		}
+		defer func() { <-fullTranscodeSem }()
+
+		// When exiftool or ffmpeg aren't wired (tests, degraded prod),
+		// fall back to a sips-only transcode — matches the pre-refactor
+		// behaviour and is sufficient for any format sips can decode.
+		if s.cfg.Exiftool == nil || s.cfg.Ffmpeg == nil {
+			if _, _, err := thumb.SipsConvert(bg, src, dst, thumb.WidthFullJPEG); err != nil {
+				return "", fmt.Errorf("sips full jpeg: %w", err)
+			}
+			return dst, nil
+		}
+		if _, _, err := thumb.BuildPhotoFullJPEG(bg, s.cfg.Exiftool, s.cfg.Ffmpeg, src, dst); err != nil {
+			return "", fmt.Errorf("build full jpeg: %w", err)
+		}
+		return dst, nil
+	})
+	if ferr != nil {
+		return "", ferr
+	}
+	path, ok := out.(string)
+	if !ok || path == "" {
+		return "", errors.New("ensureFullJPEG: empty result")
+	}
+	return path, nil
 }
 
 // safeJoinUnderRoot guards against path-traversal: the resolved absolute

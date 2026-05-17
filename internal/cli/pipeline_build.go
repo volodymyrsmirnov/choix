@@ -51,17 +51,15 @@ func (a *metaProcessorAdapter) Process(ctx context.Context, fileID int64) error 
 	return a.ext.Process(ctx, fileID, absPath)
 }
 
-// buildPipelineCore wires the engine pipeline. It is the single source of
-// truth for stage concurrency, the grouper threshold, and the external-tool
-// resolution rules.
-//
-// The Analyzer is returned separately so the serve adapter can Close() it
-// after the pipeline goroutine exits — destroying ONNX C sessions while
-// inference is in flight is a use-after-free.
-func buildPipelineCore(st *store.Store, scanRoot string, cfg *config.Config) (*pipeline.Pipeline, *local.Analyzer, *scanner.Scanner, error) {
+// resolveMediaTools locates exiftool + ffmpeg on PATH. exiftool is
+// load-bearing (metadata extraction); ffmpeg falls back to a bare-name
+// runner because /full/ transcodes only invoke it as a last-resort fallback
+// after sips and exiftool-preview both fail. Returned values are non-nil
+// on success.
+func resolveMediaTools() (*meta.ExifTool, *deps.Runner, error) {
 	exiftoolBin, err := exec.LookPath("exiftool")
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("exiftool not found in PATH: %w", err)
+		return nil, nil, fmt.Errorf("exiftool not found in PATH: %w", err)
 	}
 	etool := meta.New(exiftoolBin)
 
@@ -70,6 +68,21 @@ func buildPipelineCore(st *store.Store, scanRoot string, cfg *config.Config) (*p
 		ffRunner = deps.NewRunner(fp)
 	} else {
 		ffRunner = &deps.Runner{Path: "ffmpeg"}
+	}
+	return etool, ffRunner, nil
+}
+
+// buildPipelineCore wires the engine pipeline. It is the single source of
+// truth for stage concurrency, the grouper threshold, and the external-tool
+// resolution rules.
+//
+// The Analyzer is returned separately so the serve adapter can Close() it
+// after the pipeline goroutine exits — destroying ONNX C sessions while
+// inference is in flight is a use-after-free.
+func buildPipelineCore(st *store.Store, scanRoot string, cfg *config.Config) (*pipeline.Pipeline, *local.Analyzer, *scanner.Scanner, error) {
+	etool, ffRunner, err := resolveMediaTools()
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	tb := &thumb.Builder{
