@@ -55,8 +55,10 @@ func Bin() string {
 	return filepath.Join(r, "bin")
 }
 
-// RuntimeDylib returns ~/.choix/lib/libonnxruntime.dylib. The first-run
-// installer drops the dylib here; ai/local points onnxruntime_go at it.
+// RuntimeDylib returns ~/.choix/lib/libonnxruntime.dylib, the highest-priority
+// location ai/local probes for the ONNX runtime. It is an optional user-level
+// override: when present (e.g. a manual symlink to a brew-installed dylib) it
+// wins, otherwise ai/local falls back to the standard Homebrew prefixes.
 func RuntimeDylib() string {
 	r, err := Root()
 	if err != nil {

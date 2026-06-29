@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -15,22 +16,59 @@ import (
 var initOnce sync.Once
 var initErr error
 
-// runtimeDylibPath returns the user-level path where libonnxruntime.dylib
-// is expected. The first-run wizard / install path drops it here, so we
-// point onnxruntime_go straight at it instead of relying on DYLD search.
-func runtimeDylibPath() string { return appdir.RuntimeDylib() }
+// runtimeDylibCandidates lists the paths to probe for libonnxruntime.dylib,
+// in priority order:
+//
+//  1. ~/.choix/lib/libonnxruntime.dylib — an explicit user-level install
+//     (the first-run wizard may drop one here, or a user can symlink it).
+//  2. $HOMEBREW_PREFIX/opt/onnxruntime/... — honors a non-standard brew root.
+//  3. /opt/homebrew and /usr/local — the stock Apple Silicon / Intel brew
+//     prefixes, covered even when HOMEBREW_PREFIX is unset.
+//
+// We point at the Homebrew *opt* symlink, never a versioned Cellar path, so a
+// `brew upgrade onnxruntime` can't strand the loader: opt always tracks the
+// current version. (A hand-made Cellar symlink going stale on upgrade was the
+// original "onnxruntime.so not found" failure.)
+func runtimeDylibCandidates() []string {
+	const rel = "opt/onnxruntime/lib/libonnxruntime.dylib"
+	var c []string
+	if p := appdir.RuntimeDylib(); p != "" {
+		c = append(c, p)
+	}
+	if pfx := os.Getenv("HOMEBREW_PREFIX"); pfx != "" {
+		c = append(c, filepath.Join(pfx, rel))
+	}
+	c = append(c,
+		filepath.Join("/opt/homebrew", rel),
+		filepath.Join("/usr/local", rel),
+	)
+	return c
+}
+
+// firstExisting returns the first path in candidates that resolves to an
+// existing file (symlinks are followed, so a dangling link counts as
+// missing), or "" if none do.
+func firstExisting(candidates []string) string {
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
 
 func ensureRuntime() error {
 	initOnce.Do(func() {
-		// Point onnxruntime_go at the user-level dylib if present. When
-		// it isn't, fall back to whatever the DYLD loader can find — the
-		// downstream session creation will return a clear error if no
-		// dylib is reachable, and the analyzer skips ML-backed signals
+		// Point onnxruntime_go at the first reachable dylib. When none of
+		// the candidates exist, fall back to whatever the DYLD loader can
+		// find — the downstream session creation returns a clear error if
+		// no dylib is reachable, and the analyzer skips ML-backed signals
 		// without failing the analyze step.
-		if p := runtimeDylibPath(); p != "" {
-			if _, statErr := os.Stat(p); statErr == nil {
-				ort.SetSharedLibraryPath(p)
-			}
+		if p := firstExisting(runtimeDylibCandidates()); p != "" {
+			ort.SetSharedLibraryPath(p)
 		}
 		if err := ort.InitializeEnvironment(); err != nil {
 			initErr = fmt.Errorf("init onnxruntime: %w", err)
