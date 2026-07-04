@@ -9,7 +9,7 @@ require (
 	github.com/r3labs/sse/v2 v2.10.0
 	github.com/spf13/cobra v1.8.0
 	github.com/yalue/onnxruntime_go v1.28.0
-	golang.org/x/image v0.39.0
+	golang.org/x/image v0.41.0
 	golang.org/x/sync v0.20.0
 	modernc.org/sqlite v1.50.0
 )
