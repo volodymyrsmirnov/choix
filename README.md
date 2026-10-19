@@ -1,5 +1,7 @@
 # choix
 
+> 📝 Blog post: [A tool to pick the best photo out of 100, choix](https://volodymyr.smirnov.im/writing/choix/)
+
 A single-binary photo-and-video culling tool for macOS. Drop it into a folder
 of mixed media, run it, and a localhost web UI groups everything by
 **device → time bucket → visual cluster** so you can pick favorites fast.
