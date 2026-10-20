@@ -46,7 +46,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1
+          version: v2.12.2
 
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@v1.12.0
