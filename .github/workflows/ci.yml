@@ -49,7 +49,7 @@ jobs:
           version: v2.12.2
 
       - name: Install gotestsum
-        run: go install gotest.tools/gotestsum@v1.12.0
+        run: go install gotest.tools/gotestsum@v1.13.0
 
       - name: Test with coverage
         run: gotestsum --junitfile test-results.xml -- -race -coverprofile=coverage.out -covermode=atomic ./...
