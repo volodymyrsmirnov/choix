@@ -5,6 +5,7 @@ import {
 } from './primitives'
 import { fetchCluster, postPick, thumbURL, fullURL, type FocusResponse, type Member } from '../api'
 import { toast } from './Toaster'
+import { isLetter } from '../keys'
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 8
@@ -369,16 +370,16 @@ export const Focus: React.FC<{
         return
       }
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); toggle('picked'); return }
-      if (e.key === 'x' || e.key === 'X') { e.preventDefault(); toggle('rejected'); return }
-      if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setShowInfo(v => !v); return }
-      if (e.key === 'z' || e.key === 'Z') {
+      if (isLetter(e, 'x')) { e.preventDefault(); toggle('rejected'); return }
+      if (isLetter(e, 'i')) { e.preventDefault(); setShowInfo(v => !v); return }
+      if (isLetter(e, 'z')) {
         e.preventDefault()
         if (isVideoMember) return // videos render at native size; zoom is hidden in the toolbar too
         // Toggle: if already zoomed, snap back to 1×; otherwise jump to 2×.
         if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) }
         return
       }
-      if (e.key === 'c' || e.key === 'C') { e.preventDefault(); toggleCompare(); return }
+      if (isLetter(e, 'c')) { e.preventDefault(); toggleCompare(); return }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); if (!isVideoMember) stepZoom(1); return }
       if (e.key === '-' || e.key === '_') { e.preventDefault(); if (!isVideoMember) stepZoom(-1); return }
       if (e.key === '0') { e.preventDefault(); if (!isVideoMember) { setZoom(1); setPan({ x: 0, y: 0 }) } ; return }

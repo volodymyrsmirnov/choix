@@ -7,6 +7,7 @@ import {
 import type { LibraryResponse, Cluster, Member } from '../api'
 import { postRecluster, thumbURL } from '../api'
 import { toast } from './Toaster'
+import { isLetter } from '../keys'
 
 type SortKey = 'time-asc' | 'time-desc'
 
@@ -212,7 +213,7 @@ export const Library: React.FC<{
   // Cmd/Ctrl-K focuses the search input.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && isLetter(e, 'k')) {
         e.preventDefault()
         searchRef.current?.focus()
         searchRef.current?.select()
@@ -233,19 +234,19 @@ export const Library: React.FC<{
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const list = visibleClustersRef.current
       if (list.length === 0) return
-      if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'J') {
+      if (e.key === 'ArrowDown' || isLetter(e, 'j')) {
         e.preventDefault()
         userMovedRef.current = true
         setActiveIdx(i => Math.min(list.length - 1, i + 1))
         return
       }
-      if (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'K') {
+      if (e.key === 'ArrowUp' || isLetter(e, 'k')) {
         e.preventDefault()
         userMovedRef.current = true
         setActiveIdx(i => Math.max(0, i - 1))
         return
       }
-      if (e.key === 'f' || e.key === 'F' || e.key === 'Enter') {
+      if (isLetter(e, 'f') || e.key === 'Enter') {
         e.preventDefault()
         const c = list[Math.min(activeIdx, list.length - 1)]
         if (c) onOpenCluster(c.id)
