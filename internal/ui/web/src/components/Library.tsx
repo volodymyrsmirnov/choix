@@ -1,15 +1,172 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   AppBar,
   SearchIcon, FilterIcon, SortIcon, RefreshIcon, ChevronDown, InfoIcon,
-  CheckIcon,
+  CheckIcon, XIcon,
 } from './primitives'
 import type { LibraryResponse, Cluster, Member } from '../api'
 import { postRecluster, thumbURL } from '../api'
 import { toast } from './Toaster'
 import { isLetter } from '../keys'
+import { shortcutsOpen, setShortcutsOpen } from './Shortcuts'
 
 export type SortKey = 'time-asc' | 'time-desc'
+
+// The ⌘K handler accepts Ctrl as well, but the hint should name the key the
+// user actually has. Same sniff as Focus's undo hint.
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
+const MOD_LABEL = IS_MAC ? '⌘' : 'Ctrl'
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+type MenuOption<K extends string> = { k: K; label: string }
+
+// Menu button following the WAI-ARIA menu-button pattern with radio items:
+// focus moves into the menu on open, ↑/↓/Home/End move between items,
+// Enter/Space select, Escape closes and returns focus to the trigger, and
+// Tab or any other focus move out of the menu closes it.
+//
+// ↑/↓ on the *closed* trigger deliberately do not open the menu (the APG
+// suggests they could): after picking a camera the trigger keeps focus, and
+// the user's next ↓ must keep moving the active cluster as it always has.
+function Dropdown<K extends string>({ testid, icon, srPrefix, label, menuLabel, options, value, onSelect }: {
+  testid: string
+  icon: React.ReactNode
+  srPrefix: string
+  label: string
+  menuLabel: string
+  options: MenuOption<K>[]
+  value: K
+  onSelect: (k: K) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  // Set by a Tab keydown inside the menu so the focusout that follows closes
+  // the menu even when Shift+Tab lands on our own trigger (which a mouse
+  // click on the trigger must not do — the click itself toggles it shut).
+  const tabbingRef = useRef(false)
+  const menuID = useId()
+
+  const items = () => Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])
+
+  // Click-outside closes. Only listening while open keeps an idle Library
+  // free of document-wide mousedown work.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  // Move focus onto the checked item (or the first) as soon as the menu opens.
+  useEffect(() => {
+    if (!open) return
+    tabbingRef.current = false
+    const list = items()
+    ;(list.find(el => el.getAttribute('aria-checked') === 'true') ?? list[0])?.focus()
+  }, [open])
+
+  const choose = (k: K, refocus: boolean) => {
+    onSelect(k)
+    setOpen(false)
+    // Keyboard users land back on the trigger; after a mouse pick we leave
+    // focus alone so Enter / F keep acting on the active cluster.
+    if (refocus) triggerRef.current?.focus()
+  }
+
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const list = items()
+    const n = list.length
+    if (n === 0) return
+    const i = list.indexOf(document.activeElement as HTMLElement)
+    switch (e.key) {
+      case 'ArrowDown': list[(i + 1 + n) % n]?.focus(); break
+      case 'ArrowUp': list[i <= 0 ? n - 1 : i - 1]?.focus(); break
+      case 'Home': list[0]?.focus(); break
+      case 'End': list[n - 1]?.focus(); break
+      case 'Escape':
+        setOpen(false)
+        triggerRef.current?.focus()
+        break
+      case 'Enter':
+      case ' ': {
+        const opt = options[i]
+        if (opt) choose(opt.k, true)
+        break
+      }
+      case 'Tab':
+        // Let the browser move focus; onMenuBlur closes the menu.
+        tabbingRef.current = true
+        return
+      default:
+        return
+    }
+    // The menu owns these keys: preventDefault stops Enter/Space from also
+    // clicking the item, stopPropagation keeps the Library's window-level
+    // ↑/↓/Enter navigation from moving or opening a cluster behind the menu.
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const onMenuBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as Node | null
+    if (tabbingRef.current) {
+      tabbingRef.current = false
+      if (!next || !menuRef.current?.contains(next)) setOpen(false)
+      return
+    }
+    // relatedTarget is null when the window loses focus or (Safari) a click
+    // lands on a non-focusable spot; the mousedown listener covers clicks.
+    if (next && !wrapRef.current?.contains(next)) setOpen(false)
+  }
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button ref={triggerRef} type="button" className="btn btn-ghost"
+              onClick={() => setOpen(v => !v)}
+              onKeyDown={e => {
+                // Shift+Tab from the menu can leave focus on an open trigger.
+                if (open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false) }
+              }}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              aria-controls={open ? menuID : undefined}
+              data-testid={testid}>
+        {icon}<span className="sr-only">{srPrefix} </span>{label} <ChevronDown />
+      </button>
+      {open && (
+        <div ref={menuRef} id={menuID} role="menu" aria-label={menuLabel}
+             onKeyDown={onMenuKeyDown} onBlur={onMenuBlur}
+             className="absolute z-10 mt-1 left-0 min-w-[200px] rounded-md border border-line-2 bg-bg-2 shadow-pop py-1">
+          {options.map(opt => {
+            const checked = opt.k === value
+            return (
+              <button key={opt.k} type="button" role="menuitemradio" aria-checked={checked} tabIndex={-1}
+                      onClick={() => choose(opt.k, false)}
+                      className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs outline-none hover:bg-bg-3 focus:bg-bg-4 focus:text-fg-0 ${checked ? 'text-fg-0' : 'text-fg-1'}`}>
+                {/* The check (not just a lighter text colour) marks the current value. */}
+                <span className="w-3 flex-shrink-0" aria-hidden="true">{checked && <CheckIcon size={12} />}</span>
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const SORT_OPTIONS: MenuOption<SortKey>[] = [
+  { k: 'time-asc', label: 'Capture time — earliest first' },
+  { k: 'time-desc', label: 'Capture time — latest first' },
+]
 
 // The Library's filter/sort view. App keeps the last value across Library
 // unmounts (Focus and Settings replace the Library entirely) so returning
@@ -32,19 +189,9 @@ const Subnav: React.FC<{
   onSort: (v: SortKey) => void
   searchRef: React.RefObject<HTMLInputElement>
 }> = ({ summary, onRecluster, busy, query, onQuery, devices, device, onDevice, sort, onSort, searchRef }) => {
-  const [deviceOpen, setDeviceOpen] = useState(false)
-  const [sortOpen, setSortOpen] = useState(false)
-  const deviceRef = useRef<HTMLDivElement | null>(null)
-  const sortRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (deviceRef.current && !deviceRef.current.contains(e.target as Node)) setDeviceOpen(false)
-      if (sortRef.current && !sortRef.current.contains(e.target as Node)) setSortOpen(false)
-    }
-    window.addEventListener('mousedown', onClick)
-    return () => window.removeEventListener('mousedown', onClick)
-  }, [])
+  const deviceOptions = useMemo<MenuOption<string>[]>(
+    () => [{ k: '', label: 'All cameras' }, ...devices.map(d => ({ k: d, label: d }))],
+    [devices])
 
   return (
     <div className="flex items-center gap-2 h-10 px-3.5 border-b border-line-1 bg-bg-1">
@@ -56,48 +203,35 @@ const Subnav: React.FC<{
           value={query}
           onChange={e => onQuery(e.target.value)}
           placeholder="Filter clusters"
+          aria-label="Filter clusters by camera, time or file name"
+          aria-keyshortcuts={IS_MAC ? 'Meta+K' : 'Control+K'}
           className="bg-transparent border-0 outline-none text-xs text-fg-0 placeholder:text-fg-3 flex-1 min-w-0"
           data-testid="filter-input"
         />
-        <span className="kbd text-[9px]">⌘ K</span>
+        <span className="kbd text-[9px]" aria-hidden="true">{MOD_LABEL} K</span>
       </label>
 
-      <div ref={deviceRef} className="relative">
-        <button className="btn btn-ghost" onClick={() => setDeviceOpen(v => !v)} data-testid="device-filter">
-          <FilterIcon /> {device === '' ? 'All cameras' : device} <ChevronDown />
-        </button>
-        {deviceOpen && (
-          <div className="absolute z-10 mt-1 left-0 min-w-[200px] rounded-md border border-line-2 bg-bg-2 shadow-pop py-1">
-            {[{ k: '', label: 'All cameras' }, ...devices.map(d => ({ k: d, label: d }))].map(opt => (
-              <button key={opt.k}
-                      onClick={() => { onDevice(opt.k); setDeviceOpen(false) }}
-                      className={`w-full text-left px-3 py-1.5 text-xs ${device === opt.k ? 'text-fg-0 bg-bg-3' : 'text-fg-1 hover:bg-bg-3'}`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <Dropdown
+        testid="device-filter"
+        icon={<FilterIcon />}
+        srPrefix="Camera:"
+        label={device === '' ? 'All cameras' : device}
+        menuLabel="Camera"
+        options={deviceOptions}
+        value={device}
+        onSelect={onDevice}
+      />
 
-      <div ref={sortRef} className="relative">
-        <button className="btn btn-ghost" onClick={() => setSortOpen(v => !v)} data-testid="sort-toggle">
-          <SortIcon /> {sort === 'time-asc' ? 'Capture time ↑' : 'Capture time ↓'} <ChevronDown />
-        </button>
-        {sortOpen && (
-          <div className="absolute z-10 mt-1 left-0 min-w-[200px] rounded-md border border-line-2 bg-bg-2 shadow-pop py-1">
-            {([
-              { k: 'time-asc' as SortKey, label: 'Capture time — earliest first' },
-              { k: 'time-desc' as SortKey, label: 'Capture time — latest first' },
-            ]).map(opt => (
-              <button key={opt.k}
-                      onClick={() => { onSort(opt.k); setSortOpen(false) }}
-                      className={`w-full text-left px-3 py-1.5 text-xs ${sort === opt.k ? 'text-fg-0 bg-bg-3' : 'text-fg-1 hover:bg-bg-3'}`}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <Dropdown
+        testid="sort-toggle"
+        icon={<SortIcon />}
+        srPrefix="Sort:"
+        label={sort === 'time-asc' ? 'Capture time ↑' : 'Capture time ↓'}
+        menuLabel="Sort clusters"
+        options={SORT_OPTIONS}
+        value={sort}
+        onSelect={onSort}
+      />
 
       <span className="flex-1" />
       <span className="font-mono text-[11px] text-fg-2">
@@ -115,49 +249,78 @@ const Subnav: React.FC<{
   )
 }
 
+// Only the keys that act on this screen; Pick / Reject / Compare / Zoom live
+// in Focus and are listed in the full shortcuts overlay.
 const HelpHint: React.FC<{ picksDir: string }> = ({ picksDir }) => (
   <div className="flex items-center gap-3.5 px-3.5 py-2 border-b border-line-1 bg-bg-1 text-[11px] text-fg-2">
     <InfoIcon className="text-fg-3" />
-    <span className="inline-flex items-center gap-1"><span className="kbd">↑</span><span className="kbd">↓</span> Navigate</span>
+    <span className="inline-flex items-center gap-1"><span className="kbd">↑</span><span className="kbd">↓</span> Navigate clusters</span>
     <span className="inline-flex items-center gap-1"><span className="kbd">F</span> / <span className="kbd">↵</span> Open Focus</span>
-    <span className="font-mono text-fg-3">·</span>
-    <span className="inline-flex items-center gap-1"><span className="kbd">Space</span> Pick</span>
-    <span className="inline-flex items-center gap-1"><span className="kbd">X</span> Reject</span>
-    <span className="inline-flex items-center gap-1"><span className="kbd">C</span> Compare</span>
-    <span className="inline-flex items-center gap-1"><span className="kbd">Z</span> Pixel-peep</span>
+    <span className="inline-flex items-center gap-1"><span className="kbd">{MOD_LABEL} K</span> Search</span>
+    <button type="button"
+            onClick={() => setShortcutsOpen(true)}
+            aria-haspopup="dialog"
+            aria-keyshortcuts="?"
+            className="inline-flex items-center gap-1 bg-transparent border-0 p-0 cursor-pointer text-fg-2 hover:text-fg-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-pick focus-visible:ring-offset-2 focus-visible:ring-offset-bg-1"
+            data-testid="hint-shortcuts">
+      <span className="kbd" aria-hidden="true">?</span> All shortcuts
+    </button>
     <span className="flex-1" />
     <span>Picks copy to <span className="font-mono text-fg-1">{picksDir}</span></span>
   </div>
 )
 
-const Thumb: React.FC<{ m: Member; onOpen: () => void; size?: number }> = ({ m, onOpen, size = 116 }) => {
+// Strip geometry. The overflow maths below derives the "+N" count from these
+// instead of measuring every thumbnail, so the strip's inline gap/padding use
+// the same constants.
+const THUMB_SIZE = 116
+const THUMB_GAP = 8
+const STRIP_PAD_X = 2
+const THUMB_STEP = THUMB_SIZE + THUMB_GAP
+const FADE_PX = 40
+
+function baseName(p: string): string {
+  const i = p.lastIndexOf('/')
+  return i >= 0 ? p.slice(i + 1) : p
+}
+
+const Thumb: React.FC<{ m: Member; onOpen: () => void; size?: number }> = ({ m, onOpen, size = THUMB_SIZE }) => {
   const state = m.picked ? 'picked' : (m.rejected ? 'rejected' : 'default')
+  // The button's aria-label is the accessible name; the img is hidden from
+  // assistive tech so the full-path tooltip (kept for mouse users) isn't read
+  // out a second time as a description.
+  const name = baseName(m.path)
+    + (m.kind === 'video' ? ', video' : '')
+    + (m.picked ? ', picked' : m.rejected ? ', rejected' : '')
   return (
     <button onClick={onOpen}
             className="thumb flex-shrink-0 bg-transparent p-0 cursor-pointer outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-pick focus-visible:ring-offset-2 focus-visible:ring-offset-bg-1"
             data-state={state}
             data-file-id={m.file_id}
             data-testid="thumb"
-            title={m.path}
+            aria-label={name}
             style={{ width: size, height: size }}>
-      <img src={thumbURL(m)} alt={m.path} loading="lazy" />
+      <img src={thumbURL(m)} alt="" aria-hidden="true" title={m.path} loading="lazy" />
       {m.kind === 'video' && (
         <div className="absolute top-1 right-1 w-5 h-5 rounded-sm flex items-center justify-center pointer-events-none"
              style={{ background: 'oklch(0 0 0 / 0.65)' }}
-             aria-label="Video">
+             aria-hidden="true">
           <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" className="text-fg-0 ml-0.5">
             <path d="M2 1.5l7 3.5-7 3.5z" />
           </svg>
         </div>
       )}
+      {/* Badges ignore the pointer so hovering them still shows the img's path tooltip. */}
       {m.picked && (
-        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold flex items-center gap-1 bg-pick text-pick-ink">
+        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-sm text-[11px] font-semibold flex items-center gap-1 bg-pick text-pick-ink pointer-events-none"
+             aria-hidden="true">
           <CheckIcon size={10} /> Pick
         </div>
       )}
       {m.rejected && (
-        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-sm text-[10px] font-semibold"
-             style={{ background: 'oklch(0.66 0.20 25 / 0.95)', color: 'oklch(0.16 0.06 25)' }}>
+        <div className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded-sm text-[11px] font-semibold pointer-events-none"
+             style={{ background: 'oklch(0.66 0.20 25 / 0.95)', color: 'oklch(0.16 0.06 25)' }}
+             aria-hidden="true">
           Reject
         </div>
       )}
@@ -165,25 +328,203 @@ const Thumb: React.FC<{ m: Member; onOpen: () => void; size?: number }> = ({ m, 
   )
 }
 
-type ClusterCounts = { picked: number; rejected: number; reviewed: number }
+// One ResizeObserver shared by every strip on the page: with ~200 clusters a
+// per-strip observer would be 200 observers for what is one window resize.
+const stripMeasurers = new WeakMap<Element, () => void>()
+let stripObserver: ResizeObserver | null = null
+function observeStrip(el: Element, measure: () => void): () => void {
+  if (typeof ResizeObserver === 'undefined') {
+    measure()
+    return () => {}
+  }
+  stripObserver ??= new ResizeObserver(entries => {
+    for (const entry of entries) stripMeasurers.get(entry.target)?.()
+  })
+  stripMeasurers.set(el, measure)
+  // observe() always delivers an initial entry, which doubles as the first
+  // measurement — no layout read during React's commit.
+  stripObserver.observe(el)
+  return () => {
+    stripObserver?.unobserve(el)
+    stripMeasurers.delete(el)
+  }
+}
 
-const ClusterMeta: React.FC<{ c: Cluster; counts: ClusterCounts; onFocus: () => void }> = ({ c, counts, onFocus }) => {
+type StripOverflow = { start: boolean; hidden: number }
+const NO_OVERFLOW: StripOverflow = { start: false, hidden: 0 }
+
+function fadeMask(start: boolean, end: boolean): string | undefined {
+  if (!start && !end) return undefined
+  const a = start ? `transparent 0, #000 ${FADE_PX}px` : '#000 0'
+  const b = end ? `#000 calc(100% - ${FADE_PX}px), transparent 100%` : '#000 100%'
+  return `linear-gradient(to right, ${a}, ${b})`
+}
+
+// A cluster's horizontally scrolling thumbnail row. The scrollbar stays
+// hidden, so overflow is signalled with an edge fade (a mask, which matches
+// any section background and never intercepts clicks) and a "+N" pill that
+// pages the row forward.
+const ClusterStrip: React.FC<{
+  clusterID: number
+  members: Member[]
+  onOpenCluster: (clusterID: number, fileID?: number) => void
+}> = ({ clusterID, members, onOpenCluster }) => {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [ov, setOv] = useState<StripOverflow>(NO_OVERFLOW)
+  const count = members.length
+
+  const measure = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    const { scrollLeft, clientWidth } = el
+    // Thumbs whose right edge is inside the viewport; everything after them
+    // (including the one cut off under the fade) counts as not yet seen.
+    const seen = Math.floor((scrollLeft + clientWidth - STRIP_PAD_X + THUMB_GAP) / THUMB_STEP)
+    const hidden = Math.max(0, count - seen)
+    const start = scrollLeft > STRIP_PAD_X
+    // Bail out unchanged so scrolling within a thumb, or a resize that
+    // doesn't move an edge, re-renders nothing.
+    setOv(p => (p.start === start && p.hidden === hidden ? p : { start, hidden }))
+  }, [count])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let raf = 0
+    // At most one read per frame however fast the trackpad fires scroll.
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => { raf = 0; measure() })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    // Re-observing when `measure` changes (member count changed) also buys
+    // a fresh initial measurement.
+    const unobserve = observeStrip(el, measure)
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+      unobserve()
+    }
+  }, [measure])
+
+  const showMore = () => {
+    const el = ref.current
+    if (!el) return
+    const seen = Math.floor((el.scrollLeft + el.clientWidth - STRIP_PAD_X + THUMB_GAP) / THUMB_STEP)
+    // Land the first unseen thumb just past the left fade, leaving a sliver
+    // of the previous one as context for where the row came from.
+    el.scrollTo({ left: Math.max(0, seen * THUMB_STEP - FADE_PX), behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  }
+
+  // Thumbs are memoised so an overflow update (the pill count changing as
+  // the row scrolls) re-renders the strip shell, not every thumbnail.
+  const thumbs = useMemo(() => members.map(m => (
+    <Thumb key={m.file_id} m={m} onOpen={() => onOpenCluster(clusterID, m.file_id)} />
+  )), [members, clusterID, onOpenCluster])
+
+  const mask = fadeMask(ov.start, ov.hidden > 0)
+  return (
+    <div className="relative">
+      <div ref={ref}
+           className="flex overflow-x-auto py-2 [&::-webkit-scrollbar]:hidden"
+           style={{ gap: THUMB_GAP, paddingLeft: STRIP_PAD_X, paddingRight: STRIP_PAD_X, scrollbarWidth: 'none', maskImage: mask, WebkitMaskImage: mask }}>
+        {thumbs}
+      </div>
+      {ov.hidden > 0 && (
+        <button type="button" onClick={showMore}
+                aria-label={`Show more photos in this cluster (${ov.hidden} more)`}
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-6 min-w-[34px] px-2 rounded-full border border-line-2 bg-bg-3 text-fg-0 font-mono text-[11px] shadow-pop cursor-pointer hover:bg-bg-4 outline-none focus-visible:ring-2 focus-visible:ring-pick"
+                data-testid="strip-more">
+          +{ov.hidden}
+        </button>
+      )}
+    </div>
+  )
+}
+
+type ClusterCounts = { picked: number; rejected: number; reviewed: number }
+const ZERO_COUNTS: ClusterCounts = { picked: 0, rejected: 0, reviewed: 0 }
+
+const ClusterMeta: React.FC<{ c: Cluster; counts: ClusterCounts; onFocus: () => void; titleID: string; timeID: string }> = ({ c, counts, onFocus, titleID, timeID }) => {
+  const n = c.members.length
+  const done = n > 0 && counts.reviewed === n
+  // Picked / rejected carry a ✓ / ✕ glyph and screen-reader text, so the
+  // pick-green and reject-red are reinforcement rather than the only cue.
   return (
     <div className="flex items-center gap-3">
-      <span className="font-semibold text-[13px] text-fg-0 tracking-tight">{c.device}</span>
-      <span className="font-mono text-[11px] text-fg-2">{c.time}</span>
+      <h2 id={titleID} className="font-semibold text-[13px] text-fg-0 tracking-tight">{c.device}</h2>
+      <span id={timeID} className="font-mono text-[11px] text-fg-2">{c.time}</span>
       <span className="flex-1" />
-      <div className="flex items-center gap-2 font-mono text-[11px] text-fg-2">
-        <span><span className="dot" data-tone="pick" /> <span className="ml-1">{counts.picked}</span></span>
-        <span><span className="dot" data-tone="reject" /> <span className="ml-1">{counts.rejected}</span></span>
-        <span className="text-fg-3">{counts.reviewed}/{c.members.length}</span>
+      <div className="flex items-center gap-3 font-mono text-[11px] text-fg-2">
+        <span className="inline-flex items-center gap-1" title={`${counts.picked} picked`}>
+          <span className="text-pick" aria-hidden="true"><CheckIcon size={11} /></span>
+          {counts.picked}<span className="sr-only"> picked</span>
+        </span>
+        <span className="inline-flex items-center gap-1" title={`${counts.rejected} rejected`}>
+          <span className="text-reject" aria-hidden="true"><XIcon size={11} /></span>
+          {counts.rejected}<span className="sr-only"> rejected</span>
+        </span>
+        {done ? (
+          // Quiet, but enough to skim the page for clusters still to finish.
+          <span className="inline-flex items-center gap-1 text-fg-1" title={`All ${n} reviewed`} data-testid="cluster-reviewed">
+            <span aria-hidden="true"><CheckIcon size={11} /></span> Reviewed
+          </span>
+        ) : (
+          <span className="text-fg-3" title={`${counts.reviewed} of ${n} reviewed`}>
+            <span aria-hidden="true">{counts.reviewed}/{n}</span>
+            <span className="sr-only">{counts.reviewed} of {n}</span> reviewed
+          </span>
+        )}
       </div>
       <button className="btn btn-ghost text-[11px]" onClick={onFocus}>
-        Open Focus <span className="kbd">F</span>
+        Open Focus <span className="kbd" aria-hidden="true">F</span>
       </button>
     </div>
   )
 }
+
+// Memoised so ↑/↓ re-renders only the two sections whose active state
+// flipped, not every cluster on the page.
+const ClusterSection = memo(function ClusterSection({ c, idx, isActive, counts, onOpenCluster, onActivate }: {
+  c: Cluster
+  idx: number
+  isActive: boolean
+  counts: ClusterCounts
+  onOpenCluster: (clusterID: number, fileID?: number) => void
+  onActivate: (idx: number) => void
+}) {
+  const n = c.members.length
+  const pct = n > 0 ? (counts.reviewed / n) * 100 : 0
+  const titleID = `cluster-${c.id}-device`
+  const timeID = `cluster-${c.id}-time`
+  return (
+    // role="group" rather than the implicit region: a named <section> per
+    // cluster would flood the landmark list with hundreds of entries. The
+    // device name is an h2, so heading navigation hops cluster to cluster.
+    <section data-testid="cluster" data-cluster-id={c.id}
+             data-active-cluster={isActive ? 'true' : undefined}
+             role="group"
+             aria-labelledby={`${titleID} ${timeID}`}
+             aria-current={isActive ? 'true' : undefined}
+             onClick={() => onActivate(idx)}
+             className={`rounded-md transition-colors px-2 -mx-2 ${isActive ? 'bg-bg-2 ring-1 ring-line-2' : ''}`}>
+      <div className="mb-2">
+        <ClusterMeta c={c} counts={counts} onFocus={() => onOpenCluster(c.id)} titleID={titleID} timeID={timeID} />
+        {/* Neutral fill: the rail's default pick-green gradient read as "picked". */}
+        <div className="progress-rail mt-2 h-0.5"
+             role="progressbar"
+             aria-label="Reviewed"
+             aria-valuemin={0}
+             aria-valuemax={Math.max(1, n)}
+             aria-valuenow={counts.reviewed}
+             aria-valuetext={`${counts.reviewed} of ${n} reviewed`}>
+          <div className="absolute inset-y-0 left-0 rounded-[inherit] bg-fg-2" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <ClusterStrip clusterID={c.id} members={c.members} onOpenCluster={onOpenCluster} />
+    </section>
+  )
+})
 
 export const Library: React.FC<{
   data: LibraryResponse
@@ -236,9 +577,11 @@ export const Library: React.FC<{
     onScrollChange?.((e.target as HTMLElement).scrollTop)
   }
 
-  // Cmd/Ctrl-K focuses the search input.
+  // Cmd/Ctrl-K focuses the search input. Stands down while the shortcuts
+  // dialog is open so focus isn't yanked out from behind it.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (shortcutsOpen()) return
       if ((e.metaKey || e.ctrlKey) && isLetter(e, 'k')) {
         e.preventDefault()
         searchRef.current?.focus()
@@ -251,13 +594,22 @@ export const Library: React.FC<{
 
   // Keyboard navigation: ↑/↓ (or j/k) move the active cluster, F / Enter open it.
   // The handler bails when the focus is on an input/textarea so the filter
-  // box keeps its native key behavior.
+  // box keeps its native key behavior, while the shortcuts dialog is open, and
+  // for keys pressed inside an open dropdown menu (the menu also stops the
+  // events it handles; this is the backstop).
   const visibleClustersRef = useRef<Cluster[]>([])
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
+      if (shortcutsOpen()) return
+      const target = e.target instanceof Element ? e.target : null
+      const tag = target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (target?.closest('[role="menu"]')) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      // Enter on a focused control (a thumbnail, the +N pill, a dropdown
+      // trigger, Re-cluster…) belongs to that control's own click; opening the
+      // active cluster as well would fire two actions for one key.
+      if (e.key === 'Enter' && target?.closest('button, a[href], [role="button"]')) return
       const list = visibleClustersRef.current
       if (list.length === 0) return
       if (e.key === 'ArrowDown' || isLetter(e, 'j')) {
@@ -360,7 +712,7 @@ export const Library: React.FC<{
     const main = mainRef.current
     if (!main) return
     const el = main.querySelector<HTMLElement>(`[data-active-cluster="true"]`)
-    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
   }, [activeIdx])
 
   // Counts are computed once per data.clusters change instead of three times per
@@ -414,30 +766,15 @@ export const Library: React.FC<{
           {visibleClusters.length === 0 && (
             <div className="text-fg-2 text-xs px-2">No clusters match your filters.</div>
           )}
-          {visibleClusters.map((c, idx) => {
-            const cc = counts.get(c.id) ?? { picked: 0, rejected: 0, reviewed: 0 }
-            const pct = c.members.length > 0 ? (cc.reviewed / c.members.length) * 100 : 0
-            const isActive = idx === activeIdx
-            return (
-              <section key={c.id} data-testid="cluster" data-cluster-id={c.id}
-                       data-active-cluster={isActive ? 'true' : undefined}
-                       onClick={() => setActiveIdx(idx)}
-                       className={`rounded-md transition-colors px-2 -mx-2 ${isActive ? 'bg-bg-2 ring-1 ring-line-2' : ''}`}>
-                <div className="mb-2">
-                  <ClusterMeta c={c} counts={cc} onFocus={() => onOpenCluster(c.id)} />
-                  <div className="progress-rail mt-2 h-0.5">
-                    <div className="fill" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-                <div className="flex gap-2 overflow-x-auto py-2 px-0.5 [&::-webkit-scrollbar]:hidden"
-                     style={{ scrollbarWidth: 'none' }}>
-                  {c.members.map(m => (
-                    <Thumb key={m.file_id} m={m} onOpen={() => onOpenCluster(c.id, m.file_id)} />
-                  ))}
-                </div>
-              </section>
-            )
-          })}
+          {visibleClusters.map((c, idx) => (
+            <ClusterSection key={c.id}
+                            c={c}
+                            idx={idx}
+                            isActive={idx === activeIdx}
+                            counts={counts.get(c.id) ?? ZERO_COUNTS}
+                            onOpenCluster={onOpenCluster}
+                            onActivate={setActiveIdx} />
+          ))}
         </div>
       </main>
     </div>
