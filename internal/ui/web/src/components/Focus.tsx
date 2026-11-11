@@ -60,6 +60,16 @@ function undoActionFor(prev: Mark, cur: Mark): PickAction | null {
 let undoSlot: { fileID: number; prev: Mark; next: Mark } | null = null
 let liveUndo: (() => Promise<void>) | null = null
 
+// Completed mutations are announced at module level for the same reason: the
+// request may have been started by a Focus instance that has since unmounted
+// (Undo clicked from the Library, then the cluster reopened before the
+// response). Whichever Focus is mounted when it completes subscribes here and
+// patches its own members. `mutationSeq` lets a cluster load detect that a
+// mutation completed while its fetch was in flight, in which case the
+// response may predate the write and must not be shown as-is.
+let mutationSeq = 0
+const mutationListeners = new Set<(fileID: number, action: PickAction) => void>()
+
 // paneDigit returns 1–4 for the pane-select keys, preferring e.key and falling
 // back to the physical key (AZERTY types '&', 'é', … on the digit row without
 // Shift). Like isLetter, the physical fallback is skipped under Alt/AltGr.
@@ -263,6 +273,10 @@ export const Focus: React.FC<{
     membersRef.current = patch(membersRef.current)
     setMembersState(patch)
   }, [])
+  useEffect(() => {
+    mutationListeners.add(patchMember)
+    return () => { mutationListeners.delete(patchMember) }
+  }, [])
   // inflightRef is checked synchronously in mutate (including keyboard autorepeat paths).
   // inflightIDs mirrors it as state only so the Pick/Reject buttons can be disabled.
   const inflightRef = useRef<Set<number>>(new Set())
@@ -332,13 +346,22 @@ export const Focus: React.FC<{
     abortRef.current = ctrl
 
     let d: FocusResponse
-    try {
-      d = await fetchCluster(clusterID, ctrl.signal)
-    } catch (e) {
+    for (;;) {
+      const seq = mutationSeq
+      try {
+        d = await fetchCluster(clusterID, ctrl.signal)
+      } catch (e) {
+        if (ctrl.signal.aborted) return
+        throw e
+      }
       if (ctrl.signal.aborted) return
-      throw e
+      // A pick/reject/undo finished while this fetch was in flight, so the
+      // response may carry the marks from before it (and the listener patch
+      // had nothing to patch yet on a first load). The DB is the source of
+      // truth: fetch again rather than show possibly stale marks. A mutation
+      // that finishes after this point is applied by the listener instead.
+      if (mutationSeq === seq) break
     }
-    if (ctrl.signal.aborted) return
 
     setData(d)
     membersRef.current = d.cluster.members
@@ -389,16 +412,19 @@ export const Focus: React.FC<{
     setInflightIDs(s => new Set(s).add(fileID))
     try {
       await postPick(fileID, action)
-      // Patch by file id, not index: the user may have switched clusters
-      // while the request was in flight.
-      patchMember(fileID, action)
+      // Announce instead of patching this instance directly: the user may
+      // have switched clusters, or left and reopened Focus, while the request
+      // was in flight, and the view on screen is the one that must update.
+      // Listeners patch by file id, not index.
+      mutationSeq++
+      for (const l of mutationListeners) l(fileID, action)
       onChangedRef.current()
       return true
     } finally {
       inflightRef.current.delete(fileID)
       setInflightIDs(s => { const n = new Set(s); n.delete(fileID); return n })
     }
-  }, [patchMember])
+  }, [])
 
   const undo = useCallback(async () => {
     const slot = undoSlot
