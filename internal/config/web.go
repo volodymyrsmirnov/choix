@@ -36,7 +36,7 @@ func Load() (*Config, error) {
 }
 
 // Save writes cfg to the global config file atomically (tmp + rename). All
-// six user-facing settings are emitted explicitly so a `false` bool persists
+// user-facing settings are emitted explicitly so a `false` bool persists
 // through round-trips.
 func Save(cfg *Config) error {
 	path, err := configFilePath()
@@ -54,6 +54,7 @@ func Save(cfg *Config) error {
 		AdvanceOnAction:        &cfg.AdvanceOnAction,
 		HideRejectedPhotos:     &cfg.HideRejectedPhotos,
 		CrossDeviceMerging:     &cfg.CrossDeviceMerging,
+		QualityRating:          &cfg.QualityRating,
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(schema); err != nil {

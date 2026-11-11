@@ -77,3 +77,37 @@ func TestProgressDoesNotResetIdleTimer(t *testing.T) {
 		t.Errorf("lastReq = %v, want %v", env.server.lastReq, frozen)
 	}
 }
+
+// While the quality model downloads or photos are rated, an open tab polls
+// /api/quality every second and refreshes the Library by itself. Those
+// requests carry BackgroundRequestHeader and must not postpone idle
+// shutdown; the same endpoints without the header (a real page load) do.
+func TestBackgroundRequestsDoNotResetIdleTimer(t *testing.T) {
+	env := newTestServer(t)
+	frozen := time.Now()
+	env.server.Now = func() time.Time { return frozen }
+	env.get("/api/library").Body.Close()
+	before := env.server.lastReq
+
+	frozen = frozen.Add(time.Minute)
+	for _, path := range []string{"/api/quality", "/api/library", "/api/clusters/1"} {
+		req, err := http.NewRequest(http.MethodGet, env.httptest.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(BackgroundRequestHeader, "1")
+		resp, err := env.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if env.server.lastReq != before {
+			t.Fatalf("background GET %s reset the idle timer", path)
+		}
+	}
+
+	env.get("/api/quality").Body.Close()
+	if !env.server.lastReq.Equal(frozen) {
+		t.Fatal("a foreground request must still count as activity")
+	}
+}

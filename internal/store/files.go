@@ -290,7 +290,8 @@ func (r *FilesRepo) DeleteUnderPath(ctx context.Context, dir string) (int64, err
 // hash matches, scan_status and existing metadata are preserved (so a
 // re-scan never re-triggers thumb generation or analysis for unchanged
 // files). When the hash differs, scan_status resets to 'discovered' so
-// downstream stages re-run on the new contents.
+// downstream stages re-run on the new contents. The quality rating described
+// the old bytes, so it is cleared as well.
 //
 // The upsert keys on path (case-insensitive via the LOWER(path) unique
 // index added in migration 003), so a re-scan that visits the same file
@@ -313,7 +314,8 @@ func (r *FilesRepo) UpsertOnRescan(f File) (id int64, inserted bool, err error) 
 	}
 	// Modified — reset scan_status, refresh metadata fields.
 	_, err = r.db.Exec(
-		`UPDATE files SET size=?, mtime=?, content_hash=?, kind=?, format=?, scan_status='discovered', error=NULL WHERE id=?`,
+		`UPDATE files SET size=?, mtime=?, content_hash=?, kind=?, format=?, scan_status='discovered', error=NULL,
+		        quality_raw=NULL, quality_model=NULL WHERE id=?`,
 		f.Size, f.Mtime, f.ContentHash, f.Kind, f.Format, existing.ID)
 	if err != nil {
 		return 0, false, err

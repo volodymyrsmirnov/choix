@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { AppBar } from './primitives'
-import { fetchSettings, saveSettings, type SettingsBody } from '../api'
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { AppBar, QualityContext } from './primitives'
+import { fetchSettings, retryQuality, saveSettings, type QualityStatus, type SettingsBody } from '../api'
 import { toast } from './Toaster'
 
 // Built-in defaults. Mirrors config.Defaults() in internal/config/config.go
-// (zero-valued booleans are off). "Restore defaults" only fills the form with
+// (zero-valued booleans are off; the quality rating is on by default). "Restore defaults" only fills the form with
 // these; nothing is written until the user presses Save.
 const DEFAULTS: SettingsBody = {
   bucket_size: 600,
@@ -13,6 +13,7 @@ const DEFAULTS: SettingsBody = {
   advance_on_action: false,
   hide_rejected_photos: false,
   cross_device_merging: false,
+  quality_rating: true,
 }
 
 // handleSettingsPost rejects bucket_size < 60 with a 400; checking it here
@@ -130,6 +131,25 @@ const ToggleState: React.FC<{ on: boolean }> = ({ on }) => (
   <span aria-hidden="true" className="text-xs text-fg-2">{on ? 'On' : 'Off'}</span>
 )
 
+// One line under the quality toggle saying what the background worker is
+// doing with the *saved* setting (the toggle itself may hold an unsaved edit).
+function qualityStatusText(q: QualityStatus | null): string {
+  if (!q) return ''
+  if (!q.enabled) return 'Off: no model download, no ratings.'
+  switch (q.state) {
+    case 'downloading':
+      return q.size > 0
+        ? `Downloading the model: ${Math.floor((q.received / q.size) * 100)}% of ${Math.round(q.size / 1e6)} MB.`
+        : 'Downloading the model.'
+    case 'download_failed': return `Model download failed: ${q.error ?? 'unknown error'}.`
+    case 'waiting': return 'Waiting for the scan to finish before rating photos.'
+    case 'scoring': return `Rating photos: ${q.done.toLocaleString()} of ${q.total.toLocaleString()}.`
+    case 'error': return `Rating stopped: ${q.error ?? 'unknown error'}. Restart choix to try again.`
+    case 'idle': return 'Model installed; ratings are up to date.'
+    default: return ''
+  }
+}
+
 const ConfirmLeave: React.FC<{ onDiscard: () => void; onKeep: () => void }> = ({ onDiscard, onKeep }) => {
   const discardRef = useRef<HTMLButtonElement>(null)
   const keepRef = useRef<HTMLButtonElement>(null)
@@ -198,7 +218,21 @@ export const Settings: React.FC<{
   const [advance, setAdvance] = useState(DEFAULTS.advance_on_action)
   const [hideRejected, setHideRejected] = useState(DEFAULTS.hide_rejected_photos)
   const [crossDevice, setCrossDevice] = useState(DEFAULTS.cross_device_merging)
+  const [qualityRating, setQualityRating] = useState(DEFAULTS.quality_rating)
   const [busy, setBusy] = useState(false)
+  const qualityCtx = useContext(QualityContext)
+  const [retrying, setRetrying] = useState(false)
+  const retryDownload = async () => {
+    setRetrying(true)
+    try {
+      await retryQuality()
+      qualityCtx.refresh()
+    } catch (e) {
+      toast.reject('Retry failed', { body: String(e) })
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   const applyForm = useCallback((s: SettingsBody) => {
     setBucketText(secondsToMinutesText(s.bucket_size))
@@ -207,6 +241,7 @@ export const Settings: React.FC<{
     setAdvance(!!s.advance_on_action)
     setHideRejected(!!s.hide_rejected_photos)
     setCrossDevice(!!s.cross_device_merging)
+    setQualityRating(!!s.quality_rating)
   }, [])
 
   useEffect(() => {
@@ -233,7 +268,8 @@ export const Settings: React.FC<{
   ) : false
   const behaviourDirty = data ? (
     advance !== !!data.advance_on_action ||
-    hideRejected !== !!data.hide_rejected_photos
+    hideRejected !== !!data.hide_rejected_photos ||
+    qualityRating !== !!data.quality_rating
   ) : false
   const outputDirty = data ? picksDir !== data.picks_dir : false
   const dirty = groupingDirty || behaviourDirty || outputDirty
@@ -253,7 +289,8 @@ export const Settings: React.FC<{
     picksDir === DEFAULTS.picks_dir &&
     advance === DEFAULTS.advance_on_action &&
     hideRejected === DEFAULTS.hide_rejected_photos &&
-    crossDevice === DEFAULTS.cross_device_merging
+    crossDevice === DEFAULTS.cross_device_merging &&
+    qualityRating === DEFAULTS.quality_rating
 
   const save = async () => {
     // Save is disabled while invalid; this guard only narrows the type.
@@ -267,6 +304,7 @@ export const Settings: React.FC<{
         advance_on_action: advance,
         hide_rejected_photos: hideRejected,
         cross_device_merging: crossDevice,
+        quality_rating: qualityRating,
       })
       const fresh = await fetchSettings()
       setData(fresh)
@@ -462,7 +500,9 @@ export const Settings: React.FC<{
             </nav>
           </aside>
 
-          <main ref={scrollRef} className="flex-1 overflow-y-auto">
+          {/* `relative`: containing block for `sr-only` labels, so they
+              cannot stretch the document (see Library's scroller). */}
+          <main ref={scrollRef} className="relative flex-1 overflow-y-auto">
             <div className="max-w-[640px] px-8 pt-8 pb-16 flex flex-col gap-10">
               <h1 className="sr-only">Settings</h1>
 
@@ -549,6 +589,27 @@ export const Settings: React.FC<{
                     <Toggle id="hide-rejected-toggle" labelledBy="hide-rejected-toggle-label" describedBy="hide-rejected-toggle-hint"
                             checked={hideRejected} onChange={setHideRejected} testId="hide-rejected-toggle" />
                     <ToggleState on={hideRejected} />
+                  </div>
+                </Field>
+
+                <Field controlId="quality-toggle" title="Quality rating"
+                       hint="Show a 0–10 technical-quality rating (sharpness, motion blur, noise) on every photo, to tell near-identical frames apart. Advisory only: it never picks, rejects or reorders. Downloads a 177 MB model once. The model is licensed for non-commercial use (CC BY-NC-SA 4.0); turn this off for paid work.">
+                  <div className="flex items-center gap-3">
+                    <Toggle id="quality-toggle" labelledBy="quality-toggle-label" describedBy="quality-toggle-hint"
+                            checked={qualityRating} onChange={setQualityRating} testId="quality-toggle" />
+                    <ToggleState on={qualityRating} />
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 min-h-[22px]">
+                    <p role="status" data-testid="quality-status"
+                       className={`m-0 text-[11px] leading-[1.5] ${qualityCtx.status?.state === 'download_failed' || qualityCtx.status?.state === 'error' ? 'text-reject' : 'text-fg-2'}`}>
+                      {qualityStatusText(qualityCtx.status)}
+                    </p>
+                    {qualityCtx.status?.enabled && qualityCtx.status.state === 'download_failed' && (
+                      <button type="button" className="btn h-[22px] px-2 text-[11px]" onClick={retryDownload}
+                              disabled={retrying} data-testid="quality-retry">
+                        Retry
+                      </button>
+                    )}
                   </div>
                 </Field>
               </section>

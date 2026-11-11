@@ -16,6 +16,11 @@ type Config struct {
 	// Behaviour
 	AdvanceOnAction    bool // cycle to next photo after Pick/Reject in Focus
 	HideRejectedPhotos bool // hide rejected photos from the Library
+
+	// QualityRating enables the advisory technical-quality rating: the
+	// model is downloaded automatically and photos are scored in the
+	// background. Off means no download, no scoring and no badges.
+	QualityRating bool
 }
 
 // Defaults returns the built-in default configuration. Callers layer TOML, env,
@@ -25,5 +30,6 @@ func Defaults() Config {
 		BucketSizeSec:          600,
 		VisualClusterThreshold: 0.92,
 		PicksDir:               "picks",
+		QualityRating:          true,
 	}
 }

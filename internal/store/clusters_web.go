@@ -17,6 +17,11 @@ type ClusterMemberView struct {
 	ContentHash string
 	Kind        string // 'photo' | 'video'
 	Format      string // 'jpeg' | 'heic' | 'mov' | 'mp4' | ...
+	// QualityRaw is the raw quality score and QualityModel the scorer that
+	// produced it (see migration 005). The web layer shows a rating only
+	// when QualityModel is the scorer currently in use.
+	QualityRaw   sql.NullFloat64
+	QualityModel sql.NullString
 }
 
 // AllOrdered returns all clusters ordered by device_key, time_bucket (nulls
@@ -49,7 +54,7 @@ func (r *ClustersRepo) AllOrdered() ([]Cluster, error) {
 // with <video> instead of <img> without a second roundtrip.
 func (r *ClustersRepo) Members(clusterID int64) ([]ClusterMemberView, error) {
 	rows, err := r.db.QueryContext(context.Background(),
-		`SELECT cm.file_id, f.path, f.content_hash, f.kind, f.format
+		`SELECT cm.file_id, f.path, f.content_hash, f.kind, f.format, f.quality_raw, f.quality_model
 		 FROM cluster_members cm
 		 JOIN files f ON f.id = cm.file_id
 		 WHERE cm.cluster_id = ?
@@ -63,7 +68,7 @@ func (r *ClustersRepo) Members(clusterID int64) ([]ClusterMemberView, error) {
 	var out []ClusterMemberView
 	for rows.Next() {
 		var m ClusterMemberView
-		if err := rows.Scan(&m.FileID, &m.Path, &m.ContentHash, &m.Kind, &m.Format); err != nil {
+		if err := rows.Scan(&m.FileID, &m.Path, &m.ContentHash, &m.Kind, &m.Format, &m.QualityRaw, &m.QualityModel); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
