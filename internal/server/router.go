@@ -12,9 +12,10 @@ import (
 )
 
 // hashedAsset matches files whose name embeds a content hash, e.g.
-// `main.89b5883b.js` or `main.c68ede52.css`. Such files are immutable —
-// any change rolls a new filename — so we set Cache-Control accordingly.
-var hashedAsset = regexp.MustCompile(`\.[0-9a-f]{8}\.(js|css|woff2?|map)$`)
+// `main.89b5883b.js`, `main.c68ede52.css` or the app icon `icon.0a1b2c3d.svg`.
+// Such files are immutable — any change rolls a new filename — so we set
+// Cache-Control accordingly.
+var hashedAsset = regexp.MustCompile(`\.[0-9a-f]{8}\.(js|css|svg|woff2?|map)$`)
 
 // routes builds the full chi router from the Server's dependencies.
 func (s *Server) routes() http.Handler {

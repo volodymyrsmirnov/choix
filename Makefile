@@ -9,10 +9,16 @@ PKG := ./...
 WEB_DIR  := internal/ui/web
 WEB_DIST := $(WEB_DIR)/dist
 
-.PHONY: build webui test fmt fmt-check lint vet vulncheck release clean help
+.PHONY: build webui icons test fmt fmt-check lint vet vulncheck release clean help
 
 webui:
 	cd $(WEB_DIR) && bun install --frozen-lockfile && bun run build
+
+# Regenerate the app icon set in assets/icon/ (SVGs, PNGs, choix.icns) from
+# assets/icon/build.ts. Outputs are committed; needs rsvg-convert
+# (`brew install librsvg`) and macOS iconutil.
+icons:
+	bun run assets/icon/build.ts
 
 build: webui
 	go build -ldflags="$(LDFLAGS)" -o $(BIN) ./cmd/choix
@@ -52,6 +58,7 @@ help:
 	@echo "Available targets:"
 	@echo "  build      - Build the choix binary (rebuilds the embedded SPA)"
 	@echo "  webui      - Rebuild only the embedded SPA bundle"
+	@echo "  icons      - Regenerate the app icon set in assets/icon/"
 	@echo "  test       - Run tests with race detector and coverage"
 	@echo "  fmt        - Format Go source files"
 	@echo "  fmt-check  - Check formatting without modifying files"
