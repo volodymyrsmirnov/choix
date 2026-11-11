@@ -48,6 +48,18 @@ function undoActionFor(prev: Mark, cur: Mark): PickAction | null {
   return null
 }
 
+// One level of undo: the last successful Pick/Reject/Clear. `prev` is the
+// file's mark before the action, `next` the mark the action produced.
+//
+// Both live at module level, not in the component, because the undo toast
+// outlives the Focus instance that raised it: the user can press Esc, reopen
+// the cluster and click Undo while the toast is still up. `undoSlot` lets the
+// new instance's ⌘Z see that action, and `liveUndo` routes the toast's button
+// to whichever Focus is mounted now, so the view on screen (not a discarded
+// one) is patched and its in-flight guard applies.
+let undoSlot: { fileID: number; prev: Mark; next: Mark } | null = null
+let liveUndo: (() => Promise<void>) | null = null
+
 // paneDigit returns 1–4 for the pane-select keys, preferring e.key and falling
 // back to the physical key (AZERTY types '&', 'é', … on the digit row without
 // Shift). Like isLetter, the physical fallback is skipped under Alt/AltGr.
@@ -255,9 +267,6 @@ export const Focus: React.FC<{
   // inflightIDs mirrors it as state only so the Pick/Reject buttons can be disabled.
   const inflightRef = useRef<Set<number>>(new Set())
   const [inflightIDs, setInflightIDs] = useState<Set<number>>(new Set())
-  // One level of undo: the last successful Pick/Reject/Clear. `prev` is the
-  // file's mark before the action, `next` the mark the action produced.
-  const undoRef = useRef<{ fileID: number; prev: Mark; next: Mark } | null>(null)
   // The undo toast's action closure can outlive this render (and even this
   // component, if the user clicks Undo from the Library), so it reaches
   // onChanged through a ref rather than capturing a possibly stale prop.
@@ -392,24 +401,33 @@ export const Focus: React.FC<{
   }, [patchMember])
 
   const undo = useCallback(async () => {
-    const slot = undoRef.current
+    const slot = undoSlot
     if (!slot) return
     const action = undoActionFor(slot.prev, slot.next)
-    if (!action) { undoRef.current = null; return }
+    if (!action) { undoSlot = null; return }
     try {
       // Busy (a mutation on this file is still pending): keep the slot so the
       // user can simply press ⌘Z again.
       if (!(await mutate(slot.fileID, action))) return
       // Only consume the slot if no newer action replaced it meanwhile; in
       // that case the newer action's toast (and its Undo) stays up.
-      if (undoRef.current === slot) {
-        undoRef.current = null
+      if (undoSlot === slot) {
+        undoSlot = null
         toast.ok('Undone', { key: UNDO_TOAST_KEY, duration: 1500 })
       }
     } catch (e) {
       toast.reject('Undo failed', { body: String(e) })
     }
   }, [mutate])
+
+  // Register this instance as the one the undo toast should call. With no
+  // Focus mounted (Undo clicked from the Library) the toast falls back to the
+  // closure it was created with, which still fixes the server state and
+  // refreshes the Library.
+  useEffect(() => {
+    liveUndo = undo
+    return () => { if (liveUndo === undo) liveUndo = null }
+  }, [undo])
 
   // actionTarget is what Space / X / Pick / Reject act on: the current photo,
   // or in compare mode the active pane (none if `current` isn't compared).
@@ -427,10 +445,10 @@ export const Focus: React.FC<{
     const prev: Mark = { picked: target.picked, rejected: target.rejected }
     try {
       if (!(await mutate(target.file_id, action))) return
-      undoRef.current = { fileID: target.file_id, prev, next: applyAction(prev, action) }
+      undoSlot = { fileID: target.file_id, prev, next: applyAction(prev, action) }
       toast.ok(action === 'pick' ? 'Picked' : action === 'reject' ? 'Rejected' : 'Cleared', {
         key: UNDO_TOAST_KEY,
-        action: { label: 'Undo', hint: UNDO_HINT, onClick: () => { void undo() } },
+        action: { label: 'Undo', hint: UNDO_HINT, onClick: () => { void (liveUndo ?? undo)() } },
       })
       // Auto-advance on accept/reject (not on un-accept/un-reject), wrapping at
       // the end. Never while comparing — the panes are the user's working set —
