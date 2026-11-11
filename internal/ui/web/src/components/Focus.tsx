@@ -5,7 +5,7 @@ import {
 } from './primitives'
 import { fetchCluster, postPick, thumbURL, fullURL, type FocusResponse, type Member } from '../api'
 import { toast } from './Toaster'
-import { isLetter } from '../keys'
+import { isLetter, keyboardFocusedControl } from '../keys'
 import { shortcutsOpen } from './Shortcuts'
 
 const MIN_ZOOM = 1
@@ -656,14 +656,14 @@ export const Focus: React.FC<{
       if (shortcutsOpen()) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      // A toast button that has keyboard focus (Undo, Dismiss) keeps its
-      // native Enter / Space activation. Without this, Enter on a focused
-      // Undo would jump to the next cluster and Space would pick the current
-      // photo instead of undoing. Other keys still act as Focus shortcuts.
-      // Focus's own buttons are deliberately not exempt: a mouse click leaves
-      // them focused, and Space must keep picking afterwards.
-      if ((e.key === 'Enter' || e.key === ' ' || e.code === 'Space')
-          && (e.target as HTMLElement | null)?.closest?.('[data-toaster]')) return
+      // A button reached with Tab (toast Undo, Help, Settings, the footer
+      // actions…) keeps its native Enter / Space activation. Without this,
+      // Enter on a focused Undo would jump to the next cluster and Space
+      // would pick the current photo instead of undoing. Other keys still act
+      // as Focus shortcuts. A button that is focused only because it was
+      // clicked is not exempt, so Space keeps picking after a mouse click
+      // (see keyboardFocusedControl).
+      if ((e.key === 'Enter' || e.key === ' ' || e.code === 'Space') && keyboardFocusedControl(e)) return
       // The native <video controls> intercepts Space (play/pause) and the
       // arrow keys (seek/volume) when its play button or the element itself
       // holds focus. We listen on the capture phase and blur any focused

@@ -7,7 +7,7 @@ import {
 import type { LibraryResponse, Cluster, Member } from '../api'
 import { postRecluster, thumbURL } from '../api'
 import { toast } from './Toaster'
-import { isLetter } from '../keys'
+import { isLetter, keyboardFocusedControl } from '../keys'
 import { shortcutsOpen, setShortcutsOpen } from './Shortcuts'
 
 export type SortKey = 'time-asc' | 'time-desc'
@@ -606,10 +606,12 @@ export const Library: React.FC<{
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (target?.closest('[role="menu"]')) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
-      // Enter on a focused control (a thumbnail, the +N pill, a dropdown
-      // trigger, Re-cluster…) belongs to that control's own click; opening the
-      // active cluster as well would fire two actions for one key.
-      if (e.key === 'Enter' && target?.closest('button, a[href], [role="button"]')) return
+      // Enter on a control reached with Tab (a thumbnail, the +N pill, a
+      // dropdown trigger, Re-cluster…) belongs to that control's own click.
+      // A control that is focused only because it was clicked doesn't claim
+      // it: Enter opens the active cluster as usual, and the preventDefault
+      // below stops the browser from also re-clicking that control.
+      if (e.key === 'Enter' && keyboardFocusedControl(e)) return
       const list = visibleClustersRef.current
       if (list.length === 0) return
       if (e.key === 'ArrowDown' || isLetter(e, 'j')) {
