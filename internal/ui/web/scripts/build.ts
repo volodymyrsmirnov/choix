@@ -28,7 +28,13 @@ mkdirSync(DIST, { recursive: true })
 
 // 2. JS bundle. Bun's `--entry-naming` only takes a literal name, so we
 //    bundle to a stable name first, hash, then rename.
-await $`bun build ./src/main.tsx --outdir ./dist --minify --target=browser --define:process.env.NODE_ENV='"production"' --entry-naming=main.js`.cwd(ROOT)
+//    `--production` sets NODE_ENV=production for both React and bun's JSX
+//    transform. The old `--define:process.env.NODE_ENV=...` form is silently
+//    ignored by bun, which shipped React's development build.
+await $`bun build ./src/main.tsx --outdir ./dist --production --target=browser --entry-naming=main.js`.cwd(ROOT)
+if (readFileSync(join(DIST, 'main.js'), 'utf8').includes('jsx-dev-runtime')) {
+  throw new Error('bun build emitted development JSX (found jsx-dev-runtime in the bundle)')
+}
 const jsBuf = readFileSync(join(DIST, 'main.js'))
 const jsHash = hash8(jsBuf)
 const jsName = `main.${jsHash}.js`
