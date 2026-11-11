@@ -500,7 +500,9 @@ export const Settings: React.FC<{
             </nav>
           </aside>
 
-          <main ref={scrollRef} className="flex-1 overflow-y-auto">
+          {/* `relative`: containing block for `sr-only` labels, so they
+              cannot stretch the document (see Library's scroller). */}
+          <main ref={scrollRef} className="relative flex-1 overflow-y-auto">
             <div className="max-w-[640px] px-8 pt-8 pb-16 flex flex-col gap-10">
               <h1 className="sr-only">Settings</h1>
 

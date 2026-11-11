@@ -770,7 +770,12 @@ export const Library: React.FC<{
         searchRef={searchRef}
       />
       <HelpHint picksDir={picksDir} />
-      <main ref={mainRef} onScroll={handleScroll} className="flex-1 overflow-auto" data-testid="clusters">
+      {/* `relative` makes this scroller the containing block for the
+          absolutely positioned `sr-only` labels inside it. Without it they
+          are positioned against <body>, sit thousands of pixels below the
+          viewport and make the *document* scrollable — so after reaching
+          the last cluster the page kept scrolling into blank space. */}
+      <main ref={mainRef} onScroll={handleScroll} className="relative flex-1 overflow-auto" data-testid="clusters">
         <div className="px-3.5 pt-4 pb-10 flex flex-col gap-6">
           {visibleClusters.length === 0 && (
             <div className="text-fg-2 text-xs px-2">No clusters match your filters.</div>
