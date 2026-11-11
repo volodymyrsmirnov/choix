@@ -2,8 +2,7 @@ import React, { memo, useCallback, useEffect, useId, useMemo, useRef, useState }
 import {
   AppBar,
   SearchIcon, FilterIcon, SortIcon, RefreshIcon, ChevronDown, InfoIcon,
-  CheckIcon, XIcon,
-} from './primitives'
+  CheckIcon, XIcon, QualityBadge, qualityLabel } from './primitives'
 import type { LibraryResponse, Cluster, Member } from '../api'
 import { postRecluster, thumbURL } from '../api'
 import { toast } from './Toaster'
@@ -289,8 +288,11 @@ const Thumb: React.FC<{ m: Member; onOpen: () => void; size?: number }> = ({ m, 
   // The button's aria-label is the accessible name; the img is hidden from
   // assistive tech so the full-path tooltip (kept for mouse users) isn't read
   // out a second time as a description.
+  // Videos are never rated; they keep the top-right corner for their icon.
+  const quality = m.kind === 'photo' && typeof m.quality === 'number' ? m.quality : undefined
   const name = baseName(m.path)
     + (m.kind === 'video' ? ', video' : '')
+    + (quality !== undefined ? `, ${qualityLabel(quality)}` : '')
     + (m.picked ? ', picked' : m.rejected ? ', rejected' : '')
   return (
     <button onClick={onOpen}
@@ -309,6 +311,11 @@ const Thumb: React.FC<{ m: Member; onOpen: () => void; size?: number }> = ({ m, 
             <path d="M2 1.5l7 3.5-7 3.5z" />
           </svg>
         </div>
+      )}
+      {/* Advisory quality rating. Absolutely positioned, so a rating that
+          arrives after the thumbnail rendered moves nothing. */}
+      {quality !== undefined && (
+        <QualityBadge value={quality} className="absolute top-1 right-1 pointer-events-none" />
       )}
       {/* Badges ignore the pointer so hovering them still shows the img's path tooltip. */}
       {m.picked && (

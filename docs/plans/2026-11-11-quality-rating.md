@@ -410,3 +410,17 @@ pipeline's running state), which the redesign above removes.
 | 9 | Hero overlay cap, hide hero badge while comparing, always reserve compare label room | **Accepted** (reserved whenever the feature is enabled). |
 | 10 | Research: compare checkpoints by normalised margin; say the number is per-scene; measure burst noise; licence note beside the toggle | **Accepted:** table text corrected, jitter noise measured (sd 0.05), tooltip + README + Settings note added. |
 | nits | `416` with a complete part; `ModelKind.String`/`Parse`; session load not cancellable; 5 s library refetch cost; nil installer must be inert; delete probe test; plan status wording | **Accepted** (refetch interval raised to 10 s; a nil worker disables the feature in tests). |
+
+## Implementation notes (what changed while building)
+
+- Compare panes: the stage's zoom control floats over the top-right pane's
+  corner, so in that one pane the badge sits just below the control
+  (`top-[42px]`); every other pane has it at `top-2 right-2`.
+- A failed download is retried on *any* wake-up, not only on Retry: when a
+  scan ends, when the setting is saved on again, or on Retry. Each wake-up
+  makes at most three attempts, so there is no loop.
+- Measured end to end on the generated corpus (5 scenes × sharp / blur σ2 /
+  blur σ5 / noise σ25, 3600 px JPEGs): in every scene sharp > noise > mild
+  blur > heavy blur, e.g. 8.8 / 8.0 / 5.3 / 2.2. 20 photos took 5.3 s after
+  the 4.8 s session load (0.27 s per photo); the 177 MB download took 3.3 s
+  on this connection.

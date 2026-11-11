@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   AppBar,
-  ArrowL, ArrowR, CheckIcon, XIcon, PanelIcon, ZoomIcon, CompareIcon, Spinner,
-} from './primitives'
+  ArrowL, ArrowR, CheckIcon, XIcon, PanelIcon, ZoomIcon, CompareIcon, Spinner, QualityBadge, formatQuality, qualityLabel } from './primitives'
 import { fetchCluster, postPick, thumbURL, fullURL, type FocusResponse, type Member } from '../api'
 import { toast } from './Toaster'
 import { isLetter, keyboardFocusedControl } from '../keys'
@@ -314,12 +313,25 @@ export const Focus: React.FC<{
   totalCount: number
   folder: string
   advanceOnAction: boolean
+  // Advisory quality ratings by file id, kept current by App. Read from this
+  // map rather than from the member objects so a rating that arrives while a
+  // cluster is open shows up without replacing `members` (which would
+  // restart the full-image load and the neighbour prefetch).
+  ratings: Map<number, number>
+  // Whether the quality rating is switched on: gates the badges and reserves
+  // their room next to the path labels so nothing re-flows when one arrives.
+  qualityEnabled: boolean
   onBack: () => void
   onCluster: (id: number) => void
   onSettings: () => void
   onLibrary: () => void
   onChanged: () => void
-}> = ({ clusterID, startFileID, totalPicked, totalCount, folder, advanceOnAction, onBack, onCluster, onSettings, onLibrary, onChanged }) => {
+}> = ({ clusterID, startFileID, totalPicked, totalCount, folder, advanceOnAction, ratings, qualityEnabled, onBack, onCluster, onSettings, onLibrary, onChanged }) => {
+  // The rating to show for a member, or undefined. Falls back to the value
+  // in this cluster's own payload for photos the Library omits (rejected
+  // photos while "Hide rejected" is on). Videos are never rated.
+  const ratingOf = (m: Member): number | undefined =>
+    qualityEnabled && m.kind === 'photo' ? (ratings.get(m.file_id) ?? m.quality) : undefined
   const [data, setData] = useState<FocusResponse | null>(null)
   const [current, setCurrent] = useState(0)
   const [showInfo, setShowInfo] = useState<boolean>(() => {
@@ -815,6 +827,8 @@ export const Focus: React.FC<{
   if (exif.focal_length) exifRows.push(['Focal', exif.focal_length])
   if (exif.captured) exifRows.push(['Captured', exif.captured])
   if (exif.size) exifRows.push(['Size', exif.size])
+  const heroRating = ratingOf(member)
+  if (heroRating !== undefined) exifRows.push(['Quality', `${formatQuality(heroRating)} / 10`])
   const hasGPS = typeof exif.gps_lat === 'number' && typeof exif.gps_lon === 'number'
   const gpsLabel = hasGPS ? `${exif.gps_lat!.toFixed(5)}, ${exif.gps_lon!.toFixed(5)}` : ''
   const gpsHref = hasGPS ? `https://www.google.com/maps/search/?api=1&query=${exif.gps_lat},${exif.gps_lon}` : ''
@@ -893,6 +907,7 @@ export const Focus: React.FC<{
             // aria-current marks the photo Space / X act on — in compare mode
             // only when it is one of the panes, as with `target` below.
             const isCurrent = i === current && (!comparing || compareIdx.includes(i))
+            const rating = ratingOf(m)
             return (
               <button key={m.file_id}
                       onClick={() => {
@@ -902,12 +917,15 @@ export const Focus: React.FC<{
                       data-testid="rail-thumb"
                       data-file-id={m.file_id}
                       data-rail-index={i}
-                      aria-label={`${m.kind === 'video' ? 'Video' : 'Photo'} ${i + 1}: ${m.path}${m.picked ? ' (picked)' : m.rejected ? ' (rejected)' : ''}`}
+                      aria-label={`${m.kind === 'video' ? 'Video' : 'Photo'} ${i + 1}: ${m.path}${rating !== undefined ? `, ${qualityLabel(rating)}` : ''}${m.picked ? ' (picked)' : m.rejected ? ' (rejected)' : ''}`}
                       aria-pressed={comparing ? compareIdx.includes(i) : undefined}
                       aria-current={isCurrent ? 'true' : undefined}
                       className="bg-transparent border-0 p-0 cursor-pointer flex flex-col gap-[3px] outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-pick focus-visible:ring-offset-1 focus-visible:ring-offset-bg-1 rounded-sm">
                 <div className="thumb w-full aspect-square" data-state={state}>
                   <img src={thumbURL(m)} alt={m.path} loading="lazy" />
+                  {rating !== undefined && (
+                    <QualityBadge value={rating} className="absolute top-1 right-1 pointer-events-none" />
+                  )}
                 </div>
                 <div className="flex items-center justify-between h-[13px] px-0.5 text-[11px] leading-none font-mono">
                   <span className={i === current ? 'text-fg-0' : 'text-fg-3'}>{String(i + 1).padStart(2, '0')}</span>
@@ -932,6 +950,7 @@ export const Focus: React.FC<{
               )}
               {comparePanes.map(({ m, idx }, pos) => {
                 const active = idx === current
+                const rating = ratingOf(m)
                 return (
                   <div key={m.file_id}
                        className="compare-pane relative bg-bg-1 rounded-md overflow-hidden border border-line-1 select-none"
@@ -958,7 +977,7 @@ export const Focus: React.FC<{
                     {/* The hero's position overlay is hidden while comparing,
                         so each pane carries its own cluster position next to
                         the pane key — the same number its rail thumb shows. */}
-                    <div className="absolute top-2 left-2 flex items-center gap-2 max-w-[calc(100%-16px)] px-2 py-1 rounded-md text-[11px] font-mono backdrop-blur-md z-10"
+                    <div className={`absolute top-2 left-2 flex items-center gap-2 px-2 py-1 rounded-md text-[11px] font-mono backdrop-blur-md z-10 ${qualityEnabled ? 'max-w-[calc(100%-58px)]' : 'max-w-[calc(100%-16px)]'}`}
                          style={{ background: 'oklch(0 0 0 / 0.5)' }}>
                       <span className="kbd shrink-0">{pos + 1}</span>
                       <span className="shrink-0 text-fg-0">
@@ -968,6 +987,15 @@ export const Focus: React.FC<{
                       <PathLabel path={m.path} />
                       {(m.picked || m.rejected) && <span className="shrink-0"><MarkBadge m={m} withText /></span>}
                     </div>
+                    {/* Top-right corner of the pane; the label above always
+                        leaves room for it while the rating is switched on.
+                        The stage's zoom control floats over the top-right
+                        pane's corner, so in that one pane the badge sits
+                        just below it instead of underneath it. */}
+                    {rating !== undefined && (
+                      <QualityBadge value={rating} standalone
+                                    className={`absolute right-2 z-10 pointer-events-none ${pos === compareCols - 1 ? 'top-[42px]' : 'top-2'}`} />
+                    )}
                   </div>
                 )
               })}
@@ -997,7 +1025,7 @@ export const Focus: React.FC<{
               Deliberately not a live region: announcing every ←/→ would be
               noise, and the hero image's name already changes. */}
           {!comparing && (
-            <div className="absolute top-3 left-3 flex items-center gap-2 max-w-[max(160px,calc(100%-280px))] px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md"
+            <div className={`absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md ${qualityEnabled ? 'max-w-[max(160px,calc(100%-390px))]' : 'max-w-[max(160px,calc(100%-280px))]'}`}
                  style={{ background: 'oklch(0 0 0 / 0.5)' }}>
               <span className="shrink-0 font-mono text-[11px] text-fg-0">
                 {String(current + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}
@@ -1008,6 +1036,19 @@ export const Focus: React.FC<{
           )}
 
           <div className="absolute top-3 right-3 flex items-center gap-1.5">
+            {/* Quality rating of the hero photo. The photo is letterboxed, so
+                its own corner moves with the aspect ratio; the stage's
+                top-right corner, ahead of the zoom / Info controls, is the
+                stable place. Hidden while comparing: each pane has its own. */}
+            {!comparing && heroRating !== undefined && (
+              <div role="img" aria-label={`Quality ${formatQuality(heroRating)} of 10`} data-testid="quality-hero"
+                   title="Technical quality (sharpness, noise), 0–10. Advisory; compare within a cluster."
+                   className="flex items-center gap-1.5 h-[34px] px-2.5 rounded-md border border-white/5 backdrop-blur-md font-mono text-[11px]"
+                   style={{ background: 'oklch(0 0 0 / 0.5)' }}>
+                <span className="text-fg-2">Quality</span>
+                <span className="text-fg-0 tabular-nums text-[12px] font-medium">{formatQuality(heroRating)}</span>
+              </div>
+            )}
             {member.kind !== 'video' && (
               <div className="flex items-center gap-1 h-[34px] px-2 rounded-md border border-white/5 backdrop-blur-md font-mono"
                    style={{ background: 'oklch(0 0 0 / 0.5)' }}>

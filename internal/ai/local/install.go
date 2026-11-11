@@ -151,7 +151,8 @@ func (i *Installer) fetch(ctx context.Context, m Model, dest string, onProgress 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("GET %s: %w", m.URL, downloadErr(ctx, err))
+		// net/http's error already names the method and URL.
+		return false, fmt.Errorf("download model: %w", downloadErr(ctx, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 

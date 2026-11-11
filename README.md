@@ -102,6 +102,10 @@ discover → metadata → thumb → analyze → cluster
    buckets at the gap threshold, then sub-clusters each bucket by
    CLIP cosine similarity. Picks survive re-clustering untouched.
 
+After the pipeline, a background worker adds the advisory
+[quality rating](#quality-rating) to photos; it is not a pipeline stage and
+nothing waits for it.
+
 ## Hard guarantees
 
 - **Originals are sacred.** No code path opens an original in anything
@@ -120,6 +124,50 @@ collapse into a single cluster. Install the model from the Settings page
 (first-run wizard), and the model lands in
 `~/.choix/models/`.
 
+## Quality rating
+
+Each photo gets an advisory **technical-quality rating from 0 to 10**
+(one decimal, 0 = worst), shown as a small badge in the top-right corner of
+thumbnails, of the Focus view and of every Compare pane, and in the Info
+panel. It exists for one job: inside a cluster of near-identical frames,
+showing which one is sharpest and cleanest.
+
+- **What it measures:** focus, motion blur and noise, as judged by
+  [TOPIQ](https://arxiv.org/abs/2308.03060) (no-reference, ResNet-50,
+  KonIQ-10k weights) on five full-detail crops of the 1600 px preview.
+- **What it does not measure:** composition, expression, exposure taste or
+  whether the sharp part is your subject. A frame focused on the background
+  rates like a sharp one.
+- **How to read it:** compare numbers *within a cluster*. Different scenes
+  are not comparable (a flawless foggy landscape legitimately scores lower
+  than a flawless brick wall), and differences under about 0.2 are noise.
+  Critical sharpness is still a job for pixel-peep (`Z`).
+- **It never acts:** nothing is picked, rejected, hidden or reordered by
+  it, and there is no shortcut tied to it.
+- **Photos only.** Videos, images under 384 px on a side and extreme
+  panoramas are left unrated.
+
+It is **on by default**. On first run choix downloads the model (177 MB,
+pinned to a fixed revision and SHA-256-verified) into `~/.choix/models/` in
+the background, with progress in the app bar, then rates photos while no
+scan is running (about four photos per second on Apple Silicon). The scan
+and the UI never wait for it, and if the download fails choix simply works
+without ratings (retry from Settings).
+
+**Turn it off** in Settings → Behaviour → Quality rating, or set
+`quality_rating = false` in `~/.choix/config.toml`. Off means no download,
+no scoring and no badges.
+
+**Licence of the model.** The TOPIQ weights come from
+[IQA-PyTorch](https://github.com/chaofengc/IQA-PyTorch) (Chaofeng Chen et
+al.) under **CC BY-NC-SA 4.0**, and choix downloads an ONNX conversion of
+them from
+[`nocturna/topiq-nr-koniq-onnx`](https://huggingface.co/nocturna/topiq-nr-koniq-onnx)
+under the same licence. choix does not bundle or redistribute the model.
+The licence is **non-commercial**: if you use choix for paid work, turn the
+quality rating off. `build/quality-model/` has the scripts that reproduce
+and verify the ONNX file.
+
 ## Configuration
 
 Settings are machine-wide and live in
@@ -134,6 +182,7 @@ from the Settings page in the UI.
 | `advance_on_action`        | false   | Auto-advance to next photo after Pick/Reject in Focus |
 | `hide_rejected_photos`     | false   | Hide rejected photos in the Library view              |
 | `cross_device_merging`     | false   | Merge clusters across devices via clock-skew anchors  |
+| `quality_rating`           | true    | Advisory 0–10 technical-quality rating (see above)    |
 
 Precedence: CLI flags > env vars > `config.toml` > built-in defaults.
 

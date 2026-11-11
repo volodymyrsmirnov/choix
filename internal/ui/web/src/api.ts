@@ -8,6 +8,9 @@ export interface Member {
   rejected: boolean
   kind: 'photo' | 'video'
   format: string
+  // Advisory technical-quality rating, 0–10 with one decimal (0 = worst).
+  // Absent for videos, unrated photos and when the feature is off.
+  quality?: number
 }
 
 // thumbURL / fullURL build path-keyed media URLs with a content-hash cache
@@ -69,6 +72,20 @@ export interface SettingsBody {
   advance_on_action: boolean
   hide_rejected_photos: boolean
   cross_device_merging: boolean
+  quality_rating: boolean
+}
+
+// Snapshot of the background quality worker (GET /api/quality).
+export type QualityState =
+  | 'disabled' | 'downloading' | 'download_failed' | 'waiting' | 'scoring' | 'idle' | 'error'
+export interface QualityStatus {
+  enabled: boolean
+  state: QualityState
+  received: number // model download, bytes
+  size: number     // 0 while unknown
+  done: number     // photos rated in the current pass
+  total: number
+  error?: string
 }
 
 export interface ProgressEvent {
@@ -104,6 +121,18 @@ export async function saveSettings(body: Partial<SettingsBody>): Promise<{ saved
     body: JSON.stringify(body),
   })
   if (!r.ok) throw new Error(`save settings: ${r.status} ${await r.text()}`)
+  return r.json()
+}
+
+export async function fetchQuality(): Promise<QualityStatus> {
+  const r = await fetch('/api/quality')
+  if (!r.ok) throw new Error(`quality: ${r.status}`)
+  return r.json()
+}
+
+export async function retryQuality(): Promise<QualityStatus> {
+  const r = await fetch('/api/quality/retry', { method: 'POST' })
+  if (!r.ok) throw new Error(`quality retry: ${r.status} ${await r.text()}`)
   return r.json()
 }
 
