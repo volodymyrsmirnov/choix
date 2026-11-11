@@ -7,6 +7,12 @@
 *.out
 internal/ui/web/dist/
 
+# choix's own output when it is run against a folder inside the repo:
+# per-folder state + thumbnail cache, and pick copies at the scan root.
+# `/picks/` is root-anchored so it never matches internal/picks.
+.choix/
+/picks/
+
 # build tools cache
 build/.tools/
 
