@@ -30,7 +30,7 @@ const TONE_COLOR: Record<ToastTone, string> = {
 const ToastView: React.FC<{ t: Toast; onDismiss: (id: number) => void }> = ({ t, onDismiss }) => (
   <div className="w-[360px] rounded-lg border border-line-2 backdrop-blur-md shadow-pop p-2.5 flex items-center gap-2.5"
        style={{ background: 'oklch(0.22 0.005 240 / 0.96)' }}>
-    <div className="w-[3px] self-stretch rounded-full" style={{ background: TONE_COLOR[t.tone] }} />
+    <div className="w-[3px] self-stretch rounded-full" aria-hidden="true" style={{ background: TONE_COLOR[t.tone] }} />
     <div className="flex-1 min-w-0">
       <div className="text-xs font-semibold text-fg-0 leading-tight">{t.title}</div>
       {t.body && <div className="text-[11px] text-fg-2 mt-0.5 leading-snug">{t.body}</div>}
@@ -41,7 +41,8 @@ const ToastView: React.FC<{ t: Toast; onDismiss: (id: number) => void }> = ({ t,
         {t.action.hint && <span className="kbd">{t.action.hint}</span>}
       </button>
     )}
-    <button className="btn btn-ghost h-[22px] px-1 text-fg-3" aria-label="Dismiss" onClick={() => onDismiss(t.id)}><XIcon /></button>
+    <button className="btn btn-ghost h-[22px] px-1 text-fg-3" aria-label={`Dismiss notification: ${t.title}`}
+            title="Dismiss" onClick={() => onDismiss(t.id)}><XIcon /></button>
   </div>
 )
 
