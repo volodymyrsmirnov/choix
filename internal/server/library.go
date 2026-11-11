@@ -32,6 +32,10 @@ type memberJSON struct {
 	Format      string `json:"format"`
 	Picked      bool   `json:"picked"`
 	Rejected    bool   `json:"rejected"`
+	// Quality is the advisory technical-quality rating, 0–10 with one
+	// decimal (0 = worst). Omitted when the photo has no current rating or
+	// the feature is off. Nothing in choix acts on it.
+	Quality *float64 `json:"quality,omitempty"`
 }
 
 // clusterJSON is one cluster strip.
@@ -96,6 +100,7 @@ func (s *Server) buildLibraryJSON() (libraryJSON, error) {
 		return libraryJSON{}, err
 	}
 	hideRejected := s.liveCfgOrDefaults().HideRejectedPhotos
+	showQuality := s.qualityEnabled()
 
 	resp := libraryJSON{
 		Folder:   filepath.Base(s.cfg.ScanRoot),
@@ -147,6 +152,7 @@ func (s *Server) buildLibraryJSON() (libraryJSON, error) {
 				Format:      m.Format,
 				Picked:      picksMap[m.FileID] == "picked",
 				Rejected:    rejected,
+				Quality:     memberQuality(m, showQuality),
 			})
 		}
 		if hideRejected && len(out) == 0 {
@@ -220,6 +226,7 @@ func (s *Server) handleClusterJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	showQuality := s.qualityEnabled()
 	memJSON := make([]memberJSON, 0, len(members))
 	exif := make(map[string]exifJSON, len(members))
 	for _, m := range members {
@@ -231,6 +238,7 @@ func (s *Server) handleClusterJSON(w http.ResponseWriter, r *http.Request) {
 			Format:      m.Format,
 			Picked:      picksMap[m.FileID] == "picked",
 			Rejected:    picksMap[m.FileID] == "rejected",
+			Quality:     memberQuality(m, showQuality),
 		})
 		f, ok := files[m.FileID]
 		if !ok {

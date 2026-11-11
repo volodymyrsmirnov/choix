@@ -1,5 +1,6 @@
 import React, { useContext } from 'react'
 import { setShortcutsOpen } from './Shortcuts'
+import type { QualityStatus } from '../api'
 
 type IconProps = { className?: string; size?: number }
 // Icons are always decorative: every icon-only control carries its own
@@ -132,6 +133,114 @@ const ScanIndicator: React.FC<{ scan: ScanProgress }> = ({ scan }) => {
   )
 }
 
+// ── Advisory quality rating ────────────────────────────────────────────────
+// A 0–10 technical-quality score (focus, motion blur, noise) per photo. It is
+// information only: nothing sorts, picks or rejects by it.
+
+export const formatQuality = (q: number): string => q.toFixed(1)
+// Spoken form, appended to a thumbnail button's accessible name or used as
+// the badge's own label where the badge stands alone.
+export const qualityLabel = (q: number): string => `quality ${formatQuality(q)} of 10`
+
+// The badge. `standalone` gives it its own accessible name (Focus hero,
+// Compare panes); inside a labelled button (Library and rail thumbnails) a
+// nested label is never announced, so there the badge is hidden from
+// assistive tech and the button's name carries the rating instead.
+// The value is always text — colour is never the only signal.
+export const QualityBadge: React.FC<{ value: number; standalone?: boolean; className?: string }> = ({ value, standalone, className }) => {
+  const a11y = standalone
+    ? { role: 'img', 'aria-label': `Quality ${formatQuality(value)} of 10` }
+    : { 'aria-hidden': true as const }
+  return (
+    <span {...a11y} data-testid="quality-badge"
+          title={`Technical quality ${formatQuality(value)} of 10 (sharpness, noise). Compare within a cluster.`}
+          className={`inline-flex items-center justify-center px-1 h-[18px] min-w-[26px] rounded-sm font-mono tabular-nums text-[11px] leading-none font-medium text-fg-0 ${className ?? ''}`}
+          style={{ background: 'oklch(0 0 0 / 0.65)' }}>
+      {formatQuality(value)}
+    </span>
+  )
+}
+
+// Quality worker state, provided by App (which polls GET /api/quality) and
+// read by AppBar and Settings. `refresh` re-polls right away, e.g. after
+// pressing Retry.
+export interface QualityContextValue {
+  status: QualityStatus | null
+  refresh: () => void
+}
+export const QualityContext = React.createContext<QualityContextValue>({ status: null, refresh: () => {} })
+
+// AppBar indicator for the quality worker, in the same visual language as
+// the scan indicator: model download, rating pass, or a failure notice.
+// Renders nothing when there is nothing to say.
+const QualityIndicator: React.FC<{ status: QualityStatus; scanShown: boolean }> = ({ status, scanShown }) => {
+  const { state } = status
+  if (state === 'download_failed' || state === 'error') {
+    const text = state === 'download_failed' ? 'Quality model download failed' : 'Quality rating stopped'
+    return (
+      <div data-testid="quality-progress" data-state={state} role="status"
+           title={`${status.error ?? ''}${state === 'download_failed' ? ' — retry from Settings' : ' — restart choix to retry'}`}
+           className="flex items-center gap-2 min-w-0 text-[11px] text-reject">
+        <span className="dot" data-tone="reject" aria-hidden="true" />
+        <span className="truncate">{text}</span>
+      </div>
+    )
+  }
+  if (state === 'downloading') {
+    const known = status.size > 0
+    const pct = known ? Math.min(100, (status.received / status.size) * 100) : 0
+    const mb = (n: number) => Math.round(n / 1e6).toLocaleString()
+    return (
+      <div data-testid="quality-progress" data-state={state}
+           title="Downloading the model for the quality rating (one-time). Turn it off in Settings."
+           className="flex items-center gap-2 min-w-0 text-[11px]">
+        <Spinner small decorative />
+        <span role="status" className="truncate text-fg-1">Quality model</span>
+        <span className="font-mono tabular-nums text-fg-2 text-right flex-shrink-0 w-[4ch]" aria-hidden="true">
+          {known ? `${Math.floor(pct)}%` : ''}
+        </span>
+        <div className="progress-rail w-20 flex-shrink-0"
+             role="progressbar" aria-label="Quality model download"
+             aria-valuemin={0} aria-valuemax={known ? 100 : undefined}
+             aria-valuenow={known ? Math.floor(pct) : undefined}
+             aria-valuetext={known ? `${mb(status.received)} of ${mb(status.size)} MB` : undefined}>
+          <div className="fill" data-indet={known ? undefined : 'true'}
+               style={{ width: known ? `${pct}%` : undefined }} />
+        </div>
+      </div>
+    )
+  }
+  // The rating pass only runs while no scan is, but the two snapshots are
+  // polled separately, so never show both at once.
+  if (state === 'scoring' && !scanShown && status.total > 0) {
+    const totalText = status.total.toLocaleString()
+    const pct = Math.min(100, (status.done / status.total) * 100)
+    return (
+      <div data-testid="quality-progress" data-state={state}
+           className="flex items-center gap-2 min-w-0 text-[11px]">
+        <Spinner small decorative />
+        <span role="status" className="truncate text-fg-1">Rate quality</span>
+        <span className="font-mono tabular-nums text-fg-2 text-right flex-shrink-0"
+              style={{ width: `${totalText.length * 2 + 3}ch` }} aria-hidden="true">
+          {status.done.toLocaleString()} / {totalText}
+        </span>
+        <div className="progress-rail w-20 flex-shrink-0"
+             role="progressbar" aria-label="Quality rating progress"
+             aria-valuemin={0} aria-valuemax={status.total} aria-valuenow={status.done}
+             aria-valuetext={`${status.done.toLocaleString()} of ${totalText} photos`}>
+          <div className="fill" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    )
+  }
+  return null
+}
+const qualityIndicatorVisible = (q: QualityStatus | null, scanShown: boolean): q is QualityStatus =>
+  !!q && q.enabled && (
+    q.state === 'download_failed' || q.state === 'error' || q.state === 'downloading'
+    || (q.state === 'scoring' && !scanShown && q.total > 0)
+  )
+
 export interface AppBarProps {
   folder: string
   picked: number
@@ -152,6 +261,8 @@ export const AppBar: React.FC<AppBarProps> = ({
   showMeter = true, showScanProgress = true,
 }) => {
   const scan = useContext(ScanProgressContext)
+  const quality = useContext(QualityContext).status
+  const scanShown = showScanProgress && !!scan
   const pct = total > 0 ? (picked / total) * 100 : 0
   const meterLabel = `${picked.toLocaleString()} of ${total.toLocaleString()} picked`
   return (
@@ -173,6 +284,12 @@ export const AppBar: React.FC<AppBarProps> = ({
         <>
           <div className="w-px h-[18px] bg-line-1 flex-shrink-0" />
           <ScanIndicator scan={scan} />
+        </>
+      )}
+      {qualityIndicatorVisible(quality, scanShown) && (
+        <>
+          <div className="w-px h-[18px] bg-line-1 flex-shrink-0" />
+          <QualityIndicator status={quality} scanShown={scanShown} />
         </>
       )}
       <div className="flex-1" />

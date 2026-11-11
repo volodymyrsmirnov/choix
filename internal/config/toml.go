@@ -18,6 +18,7 @@ type fileSchema struct {
 	AdvanceOnAction        *bool    `toml:"advance_on_action"`
 	HideRejectedPhotos     *bool    `toml:"hide_rejected_photos"`
 	CrossDeviceMerging     *bool    `toml:"cross_device_merging"`
+	QualityRating          *bool    `toml:"quality_rating"`
 }
 
 // LoadFile reads a config TOML file at path and returns the raw schema with
@@ -58,5 +59,8 @@ func ApplyTOML(dst *Config, src *fileSchema) {
 	}
 	if src.CrossDeviceMerging != nil {
 		dst.CrossDeviceMerging = *src.CrossDeviceMerging
+	}
+	if src.QualityRating != nil {
+		dst.QualityRating = *src.QualityRating
 	}
 }

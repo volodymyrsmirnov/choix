@@ -40,6 +40,8 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/recluster", s.handleReclusterPost)
 	r.Get("/api/settings", s.handleSettingsGet)
 	r.Post("/api/settings", s.handleSettingsPost)
+	r.Get("/api/quality", s.handleQualityGet)
+	r.Post("/api/quality/retry", s.handleQualityRetry)
 
 	// First-run wizard — only registered when an installer was passed
 	// in Config. Tests that construct Servers without one (the majority)

@@ -13,7 +13,7 @@ func TestMigrateAppliesV1(t *testing.T) {
 	}
 	// user_version equals the number of applied migrations.
 	// Update this constant when a new migration file is added.
-	const wantVersion = 4
+	const wantVersion = 5
 	if v != wantVersion {
 		t.Fatalf("user_version = %d, want %d", v, wantVersion)
 	}

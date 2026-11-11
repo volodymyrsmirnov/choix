@@ -20,6 +20,7 @@ type settingsBody struct {
 	AdvanceOnAction    bool    `json:"advance_on_action"`
 	HideRejectedPhotos bool    `json:"hide_rejected_photos"`
 	CrossDeviceMerging bool    `json:"cross_device_merging"`
+	QualityRating      bool    `json:"quality_rating"`
 }
 
 // liveCfgOrDefaults returns the current live config, falling back to
@@ -51,6 +52,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		AdvanceOnAction:    cfg.AdvanceOnAction,
 		HideRejectedPhotos: cfg.HideRejectedPhotos,
 		CrossDeviceMerging: cfg.CrossDeviceMerging,
+		QualityRating:      cfg.QualityRating,
 	})
 }
 
@@ -61,6 +63,7 @@ type settingsForm struct {
 	AdvanceOnAction    *bool    `json:"advance_on_action"`
 	HideRejectedPhotos *bool    `json:"hide_rejected_photos"`
 	CrossDeviceMerging *bool    `json:"cross_device_merging"`
+	QualityRating      *bool    `json:"quality_rating"`
 }
 
 func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +118,9 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg.CrossDeviceMerging = *form.CrossDeviceMerging
 	}
+	if form.QualityRating != nil {
+		cfg.QualityRating = *form.QualityRating
+	}
 
 	if err := config.Save(cfg); err != nil {
 		slog.Warn("settings save failed", "err", err)
@@ -123,6 +129,11 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.ReloadConfig(); err != nil {
 		slog.Warn("settings reload failed", "err", err)
+	}
+	// Apply the quality switch to the worker now: off cancels a download
+	// or scoring pass in flight, on starts them. No restart, no recluster.
+	if q := s.cfg.Quality; q != nil && q.Enabled() != cfg.QualityRating {
+		q.SetEnabled(cfg.QualityRating)
 	}
 
 	reclustered := false
@@ -146,6 +157,7 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 		"advance_on_action", cfg.AdvanceOnAction,
 		"hide_rejected", cfg.HideRejectedPhotos,
 		"cross_device", cfg.CrossDeviceMerging,
+		"quality_rating", cfg.QualityRating,
 		"reclustered", reclustered,
 	)
 

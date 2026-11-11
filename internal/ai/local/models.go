@@ -11,19 +11,23 @@ import (
 	"path/filepath"
 )
 
-// ModelKind enumerates the local ONNX models choix uses. Only CLIP is in
-// production use today; the AI top-pick flow that needed sharpness, face
-// landmarks, and NIMA was retired and those models were removed from the
-// registry.
+// ModelKind enumerates the local ONNX models choix uses: CLIP for visual
+// clustering (installed through the first-run wizard) and the quality model
+// for the advisory technical-quality rating (downloaded automatically while
+// that feature is enabled).
 type ModelKind int
 
 const (
 	ModelCLIP ModelKind = iota
+	ModelQuality
 )
 
 func (k ModelKind) String() string {
-	if k == ModelCLIP {
+	switch k {
+	case ModelCLIP:
 		return "clip"
+	case ModelQuality:
+		return "quality"
 	}
 	return "unknown"
 }
@@ -31,8 +35,11 @@ func (k ModelKind) String() string {
 // ParseModelKind converts a string name to the corresponding ModelKind.
 // Returns (0, false) for unrecognized names.
 func ParseModelKind(s string) (ModelKind, bool) {
-	if s == "clip" {
+	switch s {
+	case "clip":
 		return ModelCLIP, true
+	case "quality":
+		return ModelQuality, true
 	}
 	return 0, false
 }
@@ -47,8 +54,8 @@ type Model struct {
 	OutputShape []int
 }
 
-// KnownModels is the registry of pinned models. CLIP is pinned to a
-// HuggingFace commit so the URL can't drift between releases.
+// KnownModels is the registry of pinned models. Each is pinned to a
+// Hugging Face commit and a SHA-256 so the bytes can't drift between releases.
 var KnownModels = map[ModelKind]Model{
 	ModelCLIP: {
 		Kind:        ModelCLIP,
@@ -57,6 +64,20 @@ var KnownModels = map[ModelKind]Model{
 		SHA256:      "c68d3d9a200ddd2a8c8a5510b576d4c94d1ae383bf8b36dd8c084f94e1fb4d63",
 		InputShape:  []int{1, 3, 224, 224},
 		OutputShape: []int{1, 512},
+	},
+	// TOPIQ no-reference IQA (CFANet, ResNet-50, KonIQ-10k checkpoint from
+	// IQA-PyTorch), exported to ONNX with a fixed 384x384 input. Pinned to a
+	// Hugging Face commit; the file was checked against the PyTorch model
+	// (max abs difference 5e-7), see build/quality-model/. Licence:
+	// CC BY-NC-SA 4.0 — non-commercial use only. choix never redistributes
+	// it; each install downloads it from upstream.
+	ModelQuality: {
+		Kind:        ModelQuality,
+		FileName:    "topiq_nr_koniq_384.onnx",
+		URL:         "https://huggingface.co/nocturna/topiq-nr-koniq-onnx/resolve/3dab0f80c8a3afa0356c763b0e741564096783a8/model.onnx",
+		SHA256:      "9aa87559a8b8f6084ed5ab5eb0d489e1351ec9ad7e733213cdff14a5dccf34c2",
+		InputShape:  []int{1, 3, 384, 384},
+		OutputShape: []int{1, 1},
 	},
 }
 

@@ -21,9 +21,9 @@ These are non-negotiable. Breaking any of them is a regression.
 1. **Originals are sacred.** No code path opens an original file in anything other than `O_RDONLY`. The only thing that ever writes inside the scan root is the `picks/` subfolder (via `internal/picks`) and the `.choix/` working directory.
 2. **Never lose a pick.** Pick state is fsync'd to SQLite synchronously before the API returns success. The DB is the source of truth; everything else is cache.
 3. **Per-file failures are isolated.** A corrupt RAF or a video without keyframes marks that one file `scan_status='failed'` with the error text. The pipeline keeps going.
-4. **Cancellation is honored within ~1 s.** All worker goroutines select on `ctx.Done()` between files.
+4. **Cancellation is honored within ~1 s.** All worker goroutines select on `ctx.Done()` between files. Known exception: creating an ONNX/CoreML session (CLIP ≈ 1 s, quality model ≈ 4.5 s, once per process) and a single inference cannot be interrupted; shutdown waits for them.
 5. **macOS only for v1.** Apple Silicon first; the build is a universal binary so x86_64 still runs. Linux/Windows are deferred — see `v2.md`.
-6. **No auto-installs of network resources at runtime by Claude.** External tools (`exiftool`, `ffmpeg`, ML models) ship via brew or via the explicit first-run wizard in `internal/firstrun`. Don't add code that silently fetches binaries on the user's behalf.
+6. **Network downloads are pinned, visible and opt-out — and only for models.** choix never fetches executables: `exiftool` and `ffmpeg` come from brew, and the CLIP model is installed through the explicit first-run wizard in `internal/firstrun`. The one automatic download is a model in `local.KnownModels` that an *enabled* feature needs — today only the quality-rating model (owner's decision, 2026-11-11). Such a download must: use the pinned URL and verify the SHA-256 before the file is put in place; be visible (progress in the app bar, `slog` lines at start/end/failure); be non-fatal; and stop being attempted when the feature's setting is off. Don't add any other silent fetch.
 7. **No duplicate files at the schema level.** A file is identified by its relative path (case-insensitive). Migration 003 enforces `UNIQUE(LOWER(path))` and `Insert` is an atomic UPSERT — there is no TOCTOU window in which a duplicate row can appear, even on macOS APFS where casing varies between scans.
 
 ---
@@ -70,7 +70,9 @@ discover → metadata → thumb → analyze → cluster
 
 * `discover` / `metadata` / `thumb` / `analyze` are **per-file** (worker pool, NumCPU for I/O, 1 for AI).
 * `cluster` is global: `group.RebuildAll` sorts every analyzed file by (device, captured_at, id) and emits gap-based time buckets, then runs CLIP-similarity sub-clustering inside each bucket. Re-clustering wipes and rebuilds the `clusters` and `cluster_members` rows; picks are stored in a separate table and survive untouched.
-* There is **no rerank stage**. Cloud LLM ranking and the local face/NIMA/sharpness/exposure/pHash signals were removed in v1 — only CLIP embeddings remain.
+* There is **no rerank stage**. Cloud LLM ranking and the local face/NIMA/sharpness/exposure/pHash signals were removed in v1 — CLIP embeddings are the only signal the grouper uses. (The quality rating added later is a display-only score computed after the pipeline; it ranks nothing.)
+
+**After the pipeline: the quality worker.** `internal/quality.Worker` is one background goroutine, started by `internal/cli/serve.go`, that (1) downloads the quality model when the `quality_rating` setting is on and the file is missing, then (2) rates every pending photo. It is *not* a pipeline stage and is outside the pipeline adapter's `run` flag on purpose: scans and `/api/setup/finalize` must never see "already running" because of it. It yields before every photo while the pipeline is running, the serve adapter wakes it when a run ends, and it is stopped and joined before the pipeline and ONNX sessions are torn down. A photo that cannot be rated keeps `scan_status='analyzed'` — a missing rating is not a file failure.
 
 If a stage fails for a file, that file ends `scan_status='failed'` with `error` populated; the pipeline continues. On restart, the pipeline resumes from each file's current status — running `choix .` twice is idempotent, and the file row is keyed by case-insensitive path so a re-walk that visits the same file with different casing does not duplicate rows.
 
@@ -94,6 +96,8 @@ choix/
 │   │                                 001_initial.sql       schema
 │   │                                 002_kv.sql            per-folder KV
 │   │                                 003_path_nocase.sql   UNIQUE(LOWER(path))
+│   │                                 004_gps.sql           gps_lat / gps_lon
+│   │                                 005_quality.sql       quality_raw / quality_model
 │   ├── deps/                       External tool resolution (exiftool, ffmpeg).
 │   ├── scanner/                    Walks the scan root, computes content hashes,
 │   │                               atomically upserts files rows, marks deleted
@@ -104,8 +108,12 @@ choix/
 │   │   sips.go                     macOS sips (HEIC/JPEG/PNG/TIFF) — primary.
 │   │   photo.go                    Tier-1/2 with sips → exiftool → ffmpeg fallback.
 │   │   video.go                    ffmpeg keyframes (5 evenly spaced).
-│   ├── ai/local/                   CLIP embeddings only (clip.go). ONNX Runtime
-│   │                               + CoreML EP for ANE/Metal acceleration.
+│   ├── ai/local/                   ONNX Runtime + CoreML EP. clip.go: CLIP
+│   │                               embeddings. quality.go: TOPIQ quality scorer.
+│   │                               models.go: pinned model registry. install.go:
+│   │                               the one resumable, hash-verified downloader.
+│   ├── quality/                    Background worker for the advisory quality
+│   │                               rating: model download, then scoring.
 │   ├── group/                      Device → time-bucket (gap-based) → CLIP visual
 │   │                               sub-cluster. RebuildAll is the only entry the
 │   │                               pipeline + recluster handler call.
@@ -139,7 +147,10 @@ choix/
 │                                   SVG masters, Icon Composer layers, PNGs, .icns.
 ├── build/                          Release tooling: lipo, sign, notarize, staple,
 │                                   verify, brew formula, update-formula.
+│   └── quality-model/              Python scripts that export and verify the
+│                                   quality ONNX model (build-time only).
 ├── docs/
+│   ├── plans/                      Feature plans (e.g. 2026-11-11-quality-rating.md).
 │   ├── superpowers/
 │   │   ├── specs/                  Authoritative design (one file per spec).
 │   │   └── plans/                  Implementation plans (TDD format, per phase).
@@ -217,7 +228,7 @@ State lives at `<folder>/.choix/state.db`. Picks are copied to `<folder>/picks/`
 ### UI
 - Single-page React app under `internal/ui/web/`. Built with `bun build` (TSX → ES module bundle) and Tailwind v3 standalone CLI; output goes to `internal/ui/web/dist/` and is embedded into the Go binary via `//go:embed all:web/dist`.
 - The Go server serves `index.html` for `/`, `/focus/{id}`, `/settings` (anything not matching `/api/`, `/static/`, `/thumb/`, `/full/`); React handles client-side routing.
-- All page data comes from JSON endpoints: `GET /api/library`, `GET /api/clusters/{id}`, `GET /api/settings`. State changes go through `POST /api/picks`, `POST /api/recluster`, `POST /api/settings`. SSE progress over `GET /api/progress`.
+- All page data comes from JSON endpoints: `GET /api/library`, `GET /api/clusters/{id}`, `GET /api/settings`, `GET /api/quality`. State changes go through `POST /api/picks`, `POST /api/recluster`, `POST /api/settings`. SSE progress over `GET /api/progress`.
 - **Static assets are content-hashed** (`main.<hash>.js`, `main.<hash>.css`, `icon.<hash>.svg`) so `Cache-Control: public, max-age=31536000, immutable` is safe; index.html is served `no-cache` so the next deploy's hashed URLs are picked up immediately.
 - The favicon and the AppBar mark are `assets/icon/favicon.svg`, copied into `dist/` by `scripts/build.ts`; its hashed URL reaches the JS as the `__CHOIX_ICON__` build-time define. Pass bun defines as `--define KEY=VALUE` (space-separated): bun silently ignores `--define:KEY=VALUE`.
 - **Media URLs are path-keyed**: `/thumb/<rel-path>?tier=thumb|preview&v=<content-hash>` and `/full/<rel-path>?v=<content-hash>`. The path is stable across cluster rebuilds (clusters renumber, files don't), and the `v` query string busts the browser cache when the file's bytes change. Use the `thumbURL` / `fullURL` helpers in `api.ts` instead of building URLs by hand.
@@ -255,7 +266,7 @@ Cache layout: `<scanRoot>/.choix/thumbs/<bucket>/<file_id>-<tier>.jpg`, where `<
 
 ---
 
-## CLIP embeddings (the only AI signal)
+## CLIP embeddings (the only signal used for grouping)
 
 Located in `internal/ai/local/clip.go`. Uses `github.com/yalue/onnxruntime_go` with the **CoreML execution provider** for ANE/Metal acceleration. Models are NOT bundled in the binary — they're downloaded into `~/.choix/models/` by the first-run wizard.
 
@@ -263,7 +274,20 @@ When the CLIP model is absent, the `analyze` stage skips the file's embedding (t
 
 Visual clustering uses cosine similarity ≥ `VisualClusterThreshold` (default 0.92) inside each gap-based time bucket. The threshold is exposed in Settings and changing it triggers an immediate re-cluster.
 
-The "AI" — whatever that meant in earlier drafts — is **advisory only**. There is no auto-pick, no rerank, no scored top candidate. The user's manual pick is always the source of truth.
+The "AI" — whatever that meant in earlier drafts — is **advisory only**. There is no auto-pick, no rerank, no scored top candidate. The user's manual pick is always the source of truth. The quality rating follows the same rule: it is a number next to each photo and nothing else.
+
+---
+
+## Quality rating (advisory, second model)
+
+Spec and research: `docs/plans/2026-11-11-quality-rating.md`.
+
+- **What:** a per-photo technical-quality score (focus, motion blur, noise) from TOPIQ-NR (ResNet-50, KonIQ weights), shown as a 0–10 badge. **Advisory only** — nothing picks, rejects, sorts or highlights by it, and there is deliberately no "best in cluster" marker (differences under ~0.2 are noise).
+- **Model:** `local.ModelQuality` in `KnownModels` (pinned Hugging Face revision + SHA-256, 177 MB, fixed input `[1,3,384,384]`, RGB 0..1). Licence CC BY-NC-SA 4.0 (non-commercial); never bundled or redistributed. `build/quality-model/export.py` reproduces it.
+- **Scoring recipe** (`internal/ai/local/quality.go`): tier-2 preview → reduced so the long side is ≤ 1600 px and ≤ the original's long side (never scaled up; short side < 384 px ⇒ unrated) → five native-resolution 384 px crops (centre + quadrant centres) → mean of the three best. Changing the model or this recipe **must** bump `QualityScorerID`: rows stamped with another id become pending and their old scores are hidden.
+- **Storage:** `files.quality_raw` (raw score, NULL = unrated) and `files.quality_model` (scorer id), migration 005. The 0–10 value is computed only in `local.QualityDisplay` — recalibrate there, never rescore. Only "this photo can never be rated" is stamped with a NULL score; cancellation, a disabled setting, inference or DB errors leave the row pending. Writes are conditional on the content hash; a changed file loses its rating in `UpsertOnRescan`.
+- **Runtime:** `internal/quality.Worker` (see "After the pipeline" above). State is exposed as a snapshot at `GET /api/quality`, which the SPA polls only while the snapshot's `active` flag is set — **not** over the SSE progress stream (that stream replays its history to each new page and its consumers treat any event as "scan running"). `active` is set synchronously when work is requested (`Worker.Wake`) and while a scan runs, so one fetch after a trigger is enough to decide whether to keep polling. The snapshot's `rated` counter only grows; the SPA refetches ratings whenever it differs from the value it last acted on, instead of inferring completion from the states it happened to observe. Requests the page makes by itself (that poll, ratings-driven Library/cluster refreshes) carry the `X-Choix-Background` header and do not reset the idle-shutdown timer. `POST /api/quality/retry` wakes the worker after a failed download.
+- **API/UI:** `quality` on each member of `/api/library` and `/api/clusters/{id}` (omitted when off, unrated, video, or stamped by another scorer). Badge at the top-right of Library and rail thumbnails, in the Focus control group, in each Compare pane, plus an Info row. Focus reads ratings from a `file_id → rating` map supplied by App so live updates never replace its member objects.
 
 ---
 
@@ -281,6 +305,7 @@ Loaded by `internal/config`. Settings of note:
 | `AdvanceOnAction` | `false` | `advance_on_action` | Cycle to the next photo after Pick/Reject in Focus |
 | `HideRejectedPhotos` | `false` | `hide_rejected_photos` | Hide rejected photos from the Library view |
 | `CrossDeviceMerging` | `false` | `cross_device_merging` | Merge clusters across devices using clock-skew detection |
+| `QualityRating` | `true` | `quality_rating` | Advisory quality rating: auto-download the model, score photos, show badges. Global TOML only (no env var, no per-folder override) so the worker, API and UI share one source |
 
 **All settings are machine-wide** — they live only in the global `config.toml`. The per-folder SQLite `kv` table (`migrations/002_kv.sql`) used to hold `picks_dir`, `advance_on_action`, and `hide_rejected_photos`; on first launch after the upgrade, `internal/server/settings_migration.go` carries any pre-existing KV values into TOML and deletes the legacy rows. First-folder-wins: once one scan-root has migrated a value, subsequent scan-roots leave the TOML alone (their KV rows still get cleaned up).
 
@@ -293,7 +318,7 @@ The Settings page reads + writes via `GET/POST /api/settings`; saving `bucket_si
 ## Web UI invariants
 
 - Server binds **127.0.0.1** only.
-- Idle shutdown after `--idle-after` (default 10 min). The SSE keepalive does **not** reset the timer (otherwise a long-lived browser tab defeats shutdown).
+- Idle shutdown after `--idle-after` (default 10 min). The SSE keepalive does **not** reset the timer (otherwise a long-lived browser tab defeats shutdown), and neither does any request carrying `X-Choix-Background` (the page's own polling and automatic refreshes).
 - Library auto-refreshes on:
   - cluster=done events from the SSE progress stream,
   - any pick/reject/recluster from the Focus page (via the `onChanged` callback),

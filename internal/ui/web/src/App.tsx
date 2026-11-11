@@ -5,10 +5,10 @@ import { Settings } from './components/Settings'
 import { Empty } from './components/Empty'
 import { Toaster, toast } from './components/Toaster'
 import { ShortcutsOverlay, handleShortcutsKeydown } from './components/Shortcuts'
-import { ScanProgressContext, type ScanProgress } from './components/primitives'
+import { ScanProgressContext, QualityContext, type ScanProgress, type QualityContextValue } from './components/primitives'
 import {
-  fetchLibrary, fetchSettings, subscribeProgress,
-  type LibraryResponse, type ProgressEvent, type SettingsBody,
+  fetchLibrary, fetchSettings, fetchQuality, subscribeProgress,
+  type LibraryResponse, type ProgressEvent, type SettingsBody, type QualityStatus,
 } from './api'
 
 type Route =
@@ -35,6 +35,23 @@ function parseRoute(): Route {
 // Real scans run for seconds to minutes, so the delay costs nothing.
 const SCAN_INDICATOR_DELAY_MS = 400
 
+// Quality worker polling. The worker's state is a snapshot endpoint, not
+// part of the SSE stream, so the App polls it — but only while the snapshot
+// says `active` (work in flight or queued, or a scan running); otherwise it
+// is fetched once on load, when a scan starts or finishes and after a
+// settings save. `active` is set synchronously on the server when work is
+// requested, so a single fetch after a trigger never misses it.
+const QUALITY_POLL_MS = 1000
+// While photos are being rated, new ratings are pulled into the Library at
+// most this often (and once more when the pass ends).
+const RATINGS_REFRESH_MS = 10_000
+
+function sameQuality(a: QualityStatus | null, b: QualityStatus): boolean {
+  return !!a && a.enabled === b.enabled && a.state === b.state && a.active === b.active
+    && a.rated === b.rated && a.received === b.received
+    && a.size === b.size && a.done === b.done && a.total === b.total && a.error === b.error
+}
+
 export const App: React.FC = () => {
   const [route, setRoute] = useState<Route>(parseRoute())
   const [library, setLibrary] = useState<LibraryResponse | null>(null)
@@ -42,6 +59,7 @@ export const App: React.FC = () => {
   const [advanceOnAction, setAdvanceOnAction] = useState(false)
   const [progress, setProgress] = useState<ProgressEvent | null>(null)
   const [scanDone, setScanDone] = useState(false)
+  const [quality, setQuality] = useState<QualityStatus | null>(null)
   const libraryScrollRef = useRef(0)
   const libraryActiveIDRef = useRef<number | null>(null)
   // Library's query/device/sort, remembered for the page lifetime so that
@@ -54,14 +72,30 @@ export const App: React.FC = () => {
   const libraryFiltersRef = useRef<LibraryFilters>(DEFAULT_LIBRARY_FILTERS)
   const lastProgressKey = useRef('')
 
-  const refreshLibrary = useCallback(async () => {
+  // `background` = nobody asked (new ratings arrived): the request is marked
+  // so it does not postpone idle shutdown.
+  //
+  // Refreshes can overlap (a ratings refresh in flight when a pick, a
+  // settings save or a recluster triggers another) and their responses can
+  // arrive out of order. Only the most recently started one may set state,
+  // so an older snapshot can never bring back stale picks, cluster ids or
+  // badges; the newer request was sent later, so it reflects at least as
+  // much.
+  const libraryGen = useRef(0)
+  const refreshLibrary = useCallback(async (background = false) => {
+    const gen = ++libraryGen.current
     try {
-      const d = await fetchLibrary()
-      setLibrary(d)
+      const d = await fetchLibrary(background)
+      if (gen === libraryGen.current) setLibrary(d)
     } catch (e) {
-      toast.reject('Library load failed', { body: String(e) })
+      if (gen === libraryGen.current) toast.reject('Library load failed', { body: String(e) })
     }
   }, [])
+
+  // What screens get as their "refresh the Library" callback. A wrapper so
+  // that whatever a caller passes (a click event, say) can never be taken
+  // for refreshLibrary's `background` flag.
+  const refreshLibraryNow = useCallback(() => refreshLibrary(), [refreshLibrary])
 
   // Stable identity so Library's mirror effect only fires on real filter
   // changes, not on every App re-render (e.g. each SSE progress tick).
@@ -74,10 +108,58 @@ export const App: React.FC = () => {
     setAdvanceOnAction(!!s.advance_on_action)
   }, [])
 
+  // Poll the quality worker: one fetch, then keep going once a second while
+  // the snapshot says `active`. Any caller may kick it.
+  const qualityTimer = useRef<number | undefined>(undefined)
+  const qualityGen = useRef(0)
+  const refreshQuality = useCallback(async () => {
+    // Each call supersedes the previous one. Responses can arrive out of
+    // order (a poll overlapping a settings save), and an older snapshot
+    // must neither overwrite a newer one nor decide whether to keep
+    // polling — so only the latest call may touch state and the timer.
+    const gen = ++qualityGen.current
+    window.clearTimeout(qualityTimer.current)
+    let s: QualityStatus
+    try {
+      s = await fetchQuality()
+    } catch {
+      return // server unreachable (shutting down): stop quietly
+    }
+    if (gen !== qualityGen.current) return
+    setQuality(prev => (sameQuality(prev, s) ? prev : s))
+    if (s.active) {
+      qualityTimer.current = window.setTimeout(refreshQuality, QUALITY_POLL_MS)
+    }
+  }, [])
+  useEffect(() => () => { qualityGen.current++; window.clearTimeout(qualityTimer.current) }, [])
+
   useEffect(() => {
     refreshLibrary()
+    refreshQuality()
     fetchSettings().then(applySettings).catch(() => { /* ignore */ })
-  }, [refreshLibrary, applySettings])
+  }, [refreshLibrary, refreshQuality, applySettings])
+
+  // Bring freshly computed ratings into the Library. The trigger is the
+  // worker's `rated` counter, which only grows: whenever it differs from the
+  // value we last refreshed at, there are ratings we have not fetched —
+  // regardless of which states the polls happened to see (a short pass can
+  // start and finish between two polls). While the worker is still active
+  // the refresh is throttled; the first poll after it goes quiet, or after
+  // the throttle expires, catches up. Badges are absolutely positioned, so
+  // this never shifts layout. `ratingsRev` tells Focus the same thing.
+  const ratingsSeen = useRef({ rated: 0, at: 0 })
+  const [ratingsRev, setRatingsRev] = useState(0)
+  useEffect(() => {
+    if (!quality) return
+    const seen = ratingsSeen.current
+    if (quality.rated === seen.rated) return
+    const now = Date.now()
+    if (quality.active && now - seen.at < RATINGS_REFRESH_MS) return
+    seen.rated = quality.rated
+    seen.at = now
+    setRatingsRev(quality.rated)
+    refreshLibrary(true)
+  }, [quality, refreshLibrary])
 
   useEffect(() => {
     const close = subscribeProgress(ev => {
@@ -91,10 +173,13 @@ export const App: React.FC = () => {
       if (ev.stage === 'cluster' && ev.phase === 'done') {
         setScanDone(true)
         refreshLibrary()
+        // The scan may have produced photos to rate; the worker is woken
+        // server-side, so start watching it.
+        refreshQuality()
       }
     })
     return close
-  }, [refreshLibrary])
+  }, [refreshLibrary, refreshQuality])
 
   useEffect(() => {
     const onPop = () => setRoute(parseRoute())
@@ -157,6 +242,10 @@ export const App: React.FC = () => {
   const showEmptyScanning = library !== null && library.clusters.length === 0 && isScanning
   const showEmptyDone = library !== null && library.clusters.length === 0 && scanDone && !isScanning
 
+  // A scan that starts later (e.g. after the CLIP model is installed) will
+  // hand the quality worker new photos: start watching it again.
+  useEffect(() => { if (isScanning) refreshQuality() }, [isScanning, refreshQuality])
+
   // AppBar scan indicator: appears once a scan has been running for
   // SCAN_INDICATOR_DELAY_MS, disappears the moment it finishes. Keyed on the
   // isScanning boolean only, so per-file ticks don't restart the timer.
@@ -181,6 +270,19 @@ export const App: React.FC = () => {
     }
   }, [scanVisible, isScanning, progress])
 
+  const qualityCtx = useMemo<QualityContextValue>(() => ({ status: quality, refresh: refreshQuality }), [quality, refreshQuality])
+  // file_id → rating, from the Library payload. Focus reads ratings from here
+  // so they update live without replacing its member objects (which its image
+  // loader and prefetcher key on).
+  const ratings = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const c of library?.clusters ?? []) {
+      for (const mem of c.members) if (typeof mem.quality === 'number') m.set(mem.file_id, mem.quality)
+    }
+    return m
+  }, [library])
+  const qualityEnabled = !!quality?.enabled
+
   // Every route renders inside the same wrapper so Toaster (and the
   // overlay) keep a stable position in the tree and never remount — a
   // remount would drop live toasts and briefly unregister toast().
@@ -200,11 +302,14 @@ export const App: React.FC = () => {
         totalCount={total}
         folder={library.folder}
         advanceOnAction={advanceOnAction}
+        ratings={ratings}
+        ratingsRev={ratingsRev}
+        qualityEnabled={qualityEnabled}
         onBack={goLibrary}
         onCluster={(id) => goFocus(id)}
         onSettings={goSettings}
         onLibrary={goLibrary}
-        onChanged={refreshLibrary}
+        onChanged={refreshLibraryNow}
       />
     )
   } else if (route.name === 'settings') {
@@ -215,7 +320,7 @@ export const App: React.FC = () => {
         totalCount={total}
         onSettings={goSettings}
         onLibrary={goLibrary}
-        onSaved={async (s) => { applySettings(s); await refreshLibrary() }}
+        onSaved={async (s) => { applySettings(s); refreshQuality(); await refreshLibrary() }}
       />
     )
   } else {
@@ -226,7 +331,7 @@ export const App: React.FC = () => {
         onSettings={goSettings}
         onLibrary={goLibrary}
         picksDir={picksDir}
-        refresh={refreshLibrary}
+        refresh={refreshLibraryNow}
         initialScroll={libraryScrollRef.current}
         onScrollChange={(top) => { libraryScrollRef.current = top }}
         initialActiveClusterID={libraryActiveIDRef.current}
@@ -239,9 +344,11 @@ export const App: React.FC = () => {
 
   return (
     <ScanProgressContext.Provider value={scan}>
-      {body}
-      <ShortcutsOverlay screen={route.name} />
-      <Toaster />
+      <QualityContext.Provider value={qualityCtx}>
+        {body}
+        <ShortcutsOverlay screen={route.name} />
+        <Toaster />
+      </QualityContext.Provider>
     </ScanProgressContext.Provider>
   )
 }

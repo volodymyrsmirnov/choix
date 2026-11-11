@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -101,5 +102,46 @@ func TestSavedFilePathIsExpected(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("configFilePath = %q, want %q", got, want)
+	}
+}
+
+// QualityRating defaults to on, so "off" is the value that must survive a
+// save/load round trip — and a config.toml written before the key existed
+// must still read as on.
+func TestQualityRatingDefaultsOnAndOffPersists(t *testing.T) {
+	stubConfigDir(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.QualityRating {
+		t.Fatal("QualityRating must default to true when the file is missing")
+	}
+
+	cfg.QualityRating = false
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	out, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if out.QualityRating {
+		t.Fatal("QualityRating=false did not persist")
+	}
+}
+
+func TestQualityRatingAbsentKeyReadsAsOn(t *testing.T) {
+	dir := stubConfigDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte("bucket_size_sec = 300\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.QualityRating || cfg.BucketSizeSec != 300 {
+		t.Fatalf("got %+v, want QualityRating on with bucket 300", *cfg)
 	}
 }
