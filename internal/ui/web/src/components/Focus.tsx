@@ -6,6 +6,7 @@ import {
 import { fetchCluster, postPick, thumbURL, fullURL, type FocusResponse, type Member } from '../api'
 import { toast } from './Toaster'
 import { isLetter } from '../keys'
+import { shortcutsOpen } from './Shortcuts'
 
 const MIN_ZOOM = 1
 const MAX_ZOOM = 8
@@ -83,6 +84,64 @@ function setInflight(fileID: number, on: boolean) {
   for (const l of inflightListeners) l()
 }
 
+// The MediaQueryList is created once; reading `.matches` per use is cheap and
+// still follows the user flipping the OS setting mid-session. CSS transitions
+// are covered by the global reduced-motion rule, but the rail's smooth scroll
+// and the inline crossfade/zoom durations are set from JS, so they check here.
+const reducedMotionMQ = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-reduced-motion: reduce)')
+  : null
+const reducedMotion = () => reducedMotionMQ?.matches ?? false
+const motionMs = (ms: number) => (reducedMotion() ? '0ms' : `${ms}ms`)
+
+const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
+
+// imageLabel is the accessible name of a hero / compare image: the file name
+// (the full relative path is noise when read aloud) plus its mark, which is
+// otherwise only conveyed by colour and glyphs.
+const imageLabel = (m: Member) => `${baseName(m.path)}${m.picked ? ', picked' : m.rejected ? ', rejected' : ''}`
+
+// PathLabel renders a relative path on one line inside a flex parent. Nested
+// folders easily overflow the overlay, and the file name is the part the user
+// needs, so the name never shrinks and only the folder part is ellipsised —
+// from the left (direction: rtl), so the folder nearest the file survives.
+// The LRM marks keep the slashes, which are bidi-neutral, from being
+// reordered to the wrong end of the run under rtl. Full path in the title.
+const PathLabel: React.FC<{ path: string; className?: string }> = ({ path, className }) => {
+  const cut = path.lastIndexOf('/') + 1
+  const dir = path.slice(0, cut)
+  return (
+    <span className={`flex min-w-0 ${className ?? ''}`} title={path}>
+      {dir && (
+        <span className="min-w-0 truncate" style={{ direction: 'rtl' }}>{`\u200E${dir}\u200E`}</span>
+      )}
+      <span className="shrink-0 max-w-full truncate">{path.slice(cut)}</span>
+    </span>
+  )
+}
+
+// MarkBadge shows a file's pick/reject state with a distinct glyph as well as
+// the colour, so the two stay distinguishable without red-green vision.
+// Decorative: every place that renders it also names the state in text or in
+// an accessible name.
+const MarkBadge: React.FC<{ m: Member; withText?: boolean }> = ({ m, withText }) => {
+  if (m.picked) {
+    return (
+      <span className="inline-flex items-center gap-1 text-pick" aria-hidden={withText ? undefined : true}>
+        <CheckIcon size={11} />{withText && 'Picked'}
+      </span>
+    )
+  }
+  if (m.rejected) {
+    return (
+      <span className="inline-flex items-center gap-1 text-reject" aria-hidden={withText ? undefined : true}>
+        <XIcon size={11} />{withText && 'Rejected'}
+      </span>
+    )
+  }
+  return null
+}
+
 // paneDigit returns 1–4 for the pane-select keys, preferring e.key and falling
 // back to the physical key (AZERTY types '&', 'é', … on the digit row without
 // Shift). Like isLetter, the physical fallback is skipped under Alt/AltGr.
@@ -154,7 +213,13 @@ const CrossfadeImage: React.FC<{
 
   // Videos never use pan/zoom — always render at natural size.
   const transform = isVideo ? 'none' : `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
-  const transitionDuration = dragging ? '0ms' : '120ms'
+  const transitionDuration = dragging ? '0ms' : motionMs(120)
+  const fadeDuration = motionMs(180)
+  // Both layers stay in the accessibility tree (they're only faded), so only
+  // the one currently on top carries the name; the other is decorative.
+  const label = imageLabel(member)
+  const thumbAlt = fullReady ? '' : label
+  const fullAlt = fullReady ? label : ''
   const imgCls = variant === 'compare'
     ? 'absolute inset-0 w-full h-full object-contain bg-bg-0 transition-transform'
     : 'absolute inset-0 w-full h-full object-contain transition-transform'
@@ -172,7 +237,7 @@ const CrossfadeImage: React.FC<{
       <img
         key={`thumb-${cacheKey}`}
         src={thumbURL(member)}
-        alt={member.path}
+        alt={thumbAlt}
         draggable={false}
         onLoad={() => setThumbReady(true)}
         className={imgCls}
@@ -185,6 +250,7 @@ const CrossfadeImage: React.FC<{
       <video
         key={`video-${cacheKey}`}
         src={fullURL(member)}
+        aria-label={fullAlt || undefined}
         controls
         draggable={false}
         tabIndex={-1}
@@ -193,7 +259,7 @@ const CrossfadeImage: React.FC<{
         className={variant === 'compare'
           ? 'absolute inset-0 w-full h-full object-contain bg-bg-0'
           : 'absolute inset-0 w-full h-full object-contain'}
-        style={{ opacity: fullReady ? 1 : 0, transition: 'opacity 180ms' }}
+        style={{ opacity: fullReady ? 1 : 0, transition: `opacity ${fadeDuration}` }}
         data-testid={variant === 'hero' ? 'hero-video' : undefined}
       />
       {variant === 'compare' && spinner}
@@ -204,7 +270,7 @@ const CrossfadeImage: React.FC<{
       <img
         key={`thumb-${cacheKey}`}
         src={thumbURL(member)}
-        alt={member.path}
+        alt={thumbAlt}
         draggable={false}
         onLoad={() => setThumbReady(true)}
         className={imgCls}
@@ -218,13 +284,13 @@ const CrossfadeImage: React.FC<{
         <img
           key={`full-${cacheKey}`}
           src={fullSrc}
-          alt={member.path}
+          alt={fullAlt}
           draggable={false}
           onLoad={() => setFullReady(true)}
           className={`${imgCls.replace('transition-transform', 'transition-opacity')}`}
           style={{
             transform, transformOrigin: 'center center',
-            transitionDuration: '180ms',
+            transitionDuration: fadeDuration,
             opacity: fullReady ? 1 : 0,
             pointerEvents: 'none',
           }}
@@ -327,7 +393,7 @@ export const Focus: React.FC<{
     if (!rail) return
     const target = rail.querySelector<HTMLElement>(`[data-rail-index="${current}"]`)
     if (target) {
-      target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      target.scrollIntoView({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' })
     }
   }, [current])
 
@@ -583,6 +649,11 @@ export const Focus: React.FC<{
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // The shortcuts dialog owns the keyboard while it's open (App handles
+      // its ? / Esc). Bail before the video blur and before any
+      // preventDefault, so Space / X / Esc / arrows neither act on the photo
+      // behind it nor get swallowed from the dialog.
+      if (shortcutsOpen()) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       // The native <video controls> intercepts Space (play/pause) and the
@@ -722,7 +793,7 @@ export const Focus: React.FC<{
     return (
       <div className="flex flex-col h-screen overflow-hidden bg-bg-1">
         <AppBar folder={folder} picked={totalPicked} total={totalCount} onSettings={onSettings} onLibrary={onLibrary} />
-        <div className="flex-1 flex items-center justify-center text-fg-2 text-sm">Loading…</div>
+        <div className="flex-1 flex items-center justify-center text-fg-2 text-sm" role="status" aria-live="polite">Loading…</div>
       </div>
     )
   }
@@ -786,18 +857,22 @@ export const Focus: React.FC<{
         <span className="font-mono text-[11px] text-fg-2">
           Cluster {data.cluster_index} / {data.cluster_count} · {reviewed}/{members.length} reviewed
         </span>
+        {/* Key caps inside buttons are hidden from assistive tech (a glyph
+            like ⇧↵ reads as noise in the name); aria-keyshortcuts exposes
+            the shortcut instead. Same pattern in the footer. */}
         <button className="btn btn-ghost" disabled={!data.prev_cluster_id}
-                onClick={goPrevCluster} data-testid="prev-cluster">
-          Prev cluster <span className="kbd">⇧↵</span>
+                onClick={goPrevCluster} data-testid="prev-cluster" aria-keyshortcuts="Shift+Enter">
+          Prev cluster <span className="kbd" aria-hidden="true">⇧↵</span>
         </button>
         <button className={`btn ${clusterDone && data.next_cluster_id ? 'btn-primary' : 'btn-ghost'}`} disabled={!data.next_cluster_id}
-                onClick={goNextCluster} data-testid="next-cluster">
-          Next cluster <span className="kbd">↵</span>
+                onClick={goNextCluster} data-testid="next-cluster" aria-keyshortcuts="Enter">
+          Next cluster <span className="kbd" aria-hidden="true">↵</span>
         </button>
       </div>
 
       <div className="flex-1 flex min-h-0 relative">
-        <aside ref={railRef} className="w-[132px] bg-bg-1 border-r border-line-1 overflow-y-auto py-2.5 px-2 flex flex-col gap-1.5" data-testid="rail">
+        <aside ref={railRef} className="w-[132px] bg-bg-1 border-r border-line-1 overflow-y-auto py-2.5 px-2 flex flex-col gap-1.5" data-testid="rail"
+               aria-label={comparing ? 'Cluster photos, select up to 4 to compare' : 'Cluster photos'}>
           {members.map((m, i) => {
             let state: string
             if (comparing && compareIdx.includes(i)) state = 'selected'
@@ -805,6 +880,11 @@ export const Focus: React.FC<{
             else if (m.picked) state = 'picked'
             else if (m.rejected) state = 'rejected'
             else state = 'default'
+            // A rail click navigates normally (not a toggle, so no
+            // aria-pressed) and toggles compare membership while comparing.
+            // aria-current marks the photo Space / X act on — in compare mode
+            // only when it is one of the panes, as with `target` below.
+            const isCurrent = i === current && (!comparing || compareIdx.includes(i))
             return (
               <button key={m.file_id}
                       onClick={() => {
@@ -815,17 +895,15 @@ export const Focus: React.FC<{
                       data-file-id={m.file_id}
                       data-rail-index={i}
                       aria-label={`${m.kind === 'video' ? 'Video' : 'Photo'} ${i + 1}: ${m.path}${m.picked ? ' (picked)' : m.rejected ? ' (rejected)' : ''}`}
-                      aria-pressed={i === current}
+                      aria-pressed={comparing ? compareIdx.includes(i) : undefined}
+                      aria-current={isCurrent ? 'true' : undefined}
                       className="bg-transparent border-0 p-0 cursor-pointer flex flex-col gap-[3px] outline-none focus:outline-none focus-visible:ring-2 focus-visible:ring-pick focus-visible:ring-offset-1 focus-visible:ring-offset-bg-1 rounded-sm">
                 <div className="thumb w-full aspect-square" data-state={state}>
                   <img src={thumbURL(m)} alt={m.path} loading="lazy" />
                 </div>
-                <div className="flex justify-between px-0.5 text-[9px] font-mono">
+                <div className="flex items-center justify-between h-[13px] px-0.5 text-[11px] leading-none font-mono">
                   <span className={i === current ? 'text-fg-0' : 'text-fg-3'}>{String(i + 1).padStart(2, '0')}</span>
-                  <span>
-                    {m.picked && <span className="text-pick">●</span>}
-                    {m.rejected && <span className="text-reject">●</span>}
-                  </span>
+                  <MarkBadge m={m} />
                 </div>
               </button>
             )
@@ -869,12 +947,18 @@ export const Focus: React.FC<{
                        onPointerCancel={(e) => { paneDown.current = null; onPanEnd(e) }}>
                     <CrossfadeImage member={m} variant="compare"
                                     pan={pan} zoom={zoom} dragging={!!dragState.current} />
-                    <div className="absolute top-2 left-2 px-2 py-1 rounded-md text-[11px] font-mono backdrop-blur-md z-10"
+                    {/* The hero's position overlay is hidden while comparing,
+                        so each pane carries its own cluster position next to
+                        the pane key — the same number its rail thumb shows. */}
+                    <div className="absolute top-2 left-2 flex items-center gap-2 max-w-[calc(100%-16px)] px-2 py-1 rounded-md text-[11px] font-mono backdrop-blur-md z-10"
                          style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-                      <span className="kbd mr-2">{pos + 1}</span>
-                      {m.path}
-                      {m.picked && <span className="ml-2 text-pick">● Pick</span>}
-                      {m.rejected && <span className="ml-2 text-reject">● Reject</span>}
+                      <span className="kbd shrink-0">{pos + 1}</span>
+                      <span className="shrink-0 text-fg-0">
+                        {String(idx + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}
+                      </span>
+                      <span className="shrink-0 w-px h-3 bg-white/10" />
+                      <PathLabel path={m.path} />
+                      {(m.picked || m.rejected) && <span className="shrink-0"><MarkBadge m={m} withText /></span>}
                     </div>
                   </div>
                 )
@@ -897,17 +981,21 @@ export const Focus: React.FC<{
             </div>
           )}
 
-          {/* Hidden while comparing: every pane carries its own numbered path
-              label in the same corner, and this overlay would sit on top of
-              pane 1's. */}
+          {/* The one photo-position counter (the footer no longer repeats it).
+              Hidden while comparing: every pane carries its own key, position
+              and path label in the same corner, and this overlay would sit on
+              top of pane 1's. The width cap leaves room for the zoom / Info
+              controls on the right; long paths ellipsise their folder part.
+              Deliberately not a live region: announcing every ←/→ would be
+              noise, and the hero image's name already changes. */}
           {!comparing && (
-            <div className="absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md"
+            <div className="absolute top-3 left-3 flex items-center gap-2 max-w-[max(160px,calc(100%-280px))] px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md"
                  style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-              <span className="font-mono text-[11px] text-fg-0">
+              <span className="shrink-0 font-mono text-[11px] text-fg-0">
                 {String(current + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}
               </span>
-              <span className="w-px h-3 bg-white/10" />
-              <span className="font-mono text-[11px] text-fg-1">{member.path}</span>
+              <span className="shrink-0 w-px h-3 bg-white/10" />
+              <PathLabel path={member.path} className="font-mono text-[11px] text-fg-1" />
             </div>
           )}
 
@@ -915,16 +1003,19 @@ export const Focus: React.FC<{
             {member.kind !== 'video' && (
               <div className="flex items-center gap-1 h-[34px] px-2 rounded-md border border-white/5 backdrop-blur-md font-mono"
                    style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(-1)} disabled={zoom <= MIN_ZOOM} title="Zoom out (-)">−</button>
+                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(-1)} disabled={zoom <= MIN_ZOOM} title="Zoom out (-)"
+                        aria-label="Zoom out">−</button>
                 <span className="text-[11px] text-fg-0 min-w-[40px] text-center">{Math.round(zoom * 100)}%</span>
-                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(1)} disabled={zoom >= MAX_ZOOM} title="Zoom in (+)">+</button>
+                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => stepZoom(1)} disabled={zoom >= MAX_ZOOM} title="Zoom in (+)"
+                        aria-label="Zoom in">+</button>
               </div>
             )}
             {!comparing && (
               <button onClick={() => setShowInfo(!showInfo)} title="Toggle info panel (I)"
+                      aria-pressed={showInfo} aria-keyshortcuts="I"
                       className={`btn h-[34px] ${showInfo ? '' : 'btn-ghost'} backdrop-blur-md`}
                       style={!showInfo ? { background: 'oklch(0 0 0 / 0.5)' } : undefined}>
-                <PanelIcon /> Info <span className="kbd">I</span>
+                <PanelIcon /> Info <span className="kbd" aria-hidden="true">I</span>
               </button>
             )}
           </div>
@@ -935,24 +1026,26 @@ export const Focus: React.FC<{
               <div className="px-3 py-2.5 border-b border-line-1 flex items-center gap-2">
                 <span className="eyebrow">EXIF</span>
                 <span className="flex-1" />
-                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => setShowInfo(false)}><XIcon /></button>
+                <button className="btn btn-ghost h-[22px] px-1.5" onClick={() => setShowInfo(false)}
+                        title="Close info panel (I)" aria-label="Close info panel"><XIcon /></button>
               </div>
               <div className="p-3 overflow-y-auto flex-1">
                 <dl className="m-0 grid grid-cols-[1fr_auto] gap-x-2.5 gap-y-1 text-[11px]">
                   {exifRows.map(([k, v]) => (
                     <React.Fragment key={k}>
                       <dt className="text-fg-2">{k}</dt>
-                      <dd className="m-0 text-fg-0 font-mono text-[10px]">{v}</dd>
+                      <dd className="m-0 text-fg-0 font-mono text-[11px]">{v}</dd>
                     </React.Fragment>
                   ))}
                   {hasGPS && (
                     <React.Fragment>
                       <dt className="text-fg-2">Coords</dt>
-                      <dd className="m-0 text-fg-0 font-mono text-[10px]">
+                      <dd className="m-0 text-fg-0 font-mono text-[11px]">
                         <a href={gpsHref}
                            target="_blank"
                            rel="noopener noreferrer"
-                           title="Open in Google Maps"
+                           title="Open in Google Maps (new tab)"
+                           aria-label={`${gpsLabel}, open in Google Maps (opens in a new tab)`}
                            className="text-pick hover:underline">
                           {gpsLabel}
                         </a>
@@ -981,8 +1074,10 @@ export const Focus: React.FC<{
                         style={{ background: 'oklch(0 0 0 / 0.5)' }}>
                   <CheckIcon className="text-pick" size={12} />
                   <span>{data.next_cluster_id ? 'Cluster reviewed' : 'Last cluster reviewed'}</span>
-                  <span className="w-px h-3 bg-white/10" />
-                  <span className="kbd">{data.next_cluster_id ? '↵' : 'Esc'}</span>
+                  {/* Hidden from the live announcement so it reads the words
+                      ("Cluster reviewed … Next cluster"), not a key glyph. */}
+                  <span className="w-px h-3 bg-white/10" aria-hidden="true" />
+                  <span className="kbd" aria-hidden="true">{data.next_cluster_id ? '↵' : 'Esc'}</span>
                   <span className="text-fg-1">{data.next_cluster_id ? 'Next cluster' : 'Library'}</span>
                 </button>
               )}
@@ -993,34 +1088,38 @@ export const Focus: React.FC<{
 
       <footer className="h-12 px-3 border-t border-line-1 bg-bg-2 flex items-center gap-1.5">
         {/* In compare mode ←/→ cycle the active pane, so they're useful with ≥2 panes. */}
-        <button className="btn btn-ghost" onClick={() => step(-1)} disabled={comparing ? comparePanes.length <= 1 : members.length <= 1}>
-          <ArrowL /> <span className="kbd">←</span>
+        <button className="btn btn-ghost" onClick={() => step(-1)} disabled={comparing ? comparePanes.length <= 1 : members.length <= 1}
+                aria-label={comparing ? 'Previous pane' : 'Previous photo'} aria-keyshortcuts="ArrowLeft">
+          <ArrowL /> <span className="kbd" aria-hidden="true">←</span>
         </button>
-        <button className="btn btn-ghost" onClick={() => step(1)} disabled={comparing ? comparePanes.length <= 1 : members.length <= 1}>
-          <span className="kbd">→</span> <ArrowR />
-        </button>
-        <div className="w-px h-[22px] bg-line-1 mx-1.5" />
-        <button className={`btn ${target?.picked ? 'btn-pick-active' : ''}`} onClick={() => toggle('picked')} data-testid="pick-btn" disabled={!target || inflightIDs.has(target.file_id)}>
-          <CheckIcon /> {target?.picked ? 'Picked' : 'Pick'} <span className="kbd">Space</span>
-        </button>
-        <button className={`btn ${target?.rejected ? 'btn-reject-active' : ''}`} onClick={() => toggle('rejected')} data-testid="reject-btn" disabled={!target || inflightIDs.has(target.file_id)}>
-          <XIcon /> {target?.rejected ? 'Rejected' : 'Reject'} <span className="kbd">X</span>
+        <button className="btn btn-ghost" onClick={() => step(1)} disabled={comparing ? comparePanes.length <= 1 : members.length <= 1}
+                aria-label={comparing ? 'Next pane' : 'Next photo'} aria-keyshortcuts="ArrowRight">
+          <span className="kbd" aria-hidden="true">→</span> <ArrowR />
         </button>
         <div className="w-px h-[22px] bg-line-1 mx-1.5" />
-        <button className={`btn ${comparing ? 'btn-pick-active' : 'btn-ghost'}`} onClick={toggleCompare} data-testid="compare-btn">
-          <CompareIcon /> Compare <span className="kbd">C</span>
+        {/* Pick / Reject keep their state-dependent text ("Picked") for
+            sighted users; aria-pressed carries the same state to AT. */}
+        <button className={`btn ${target?.picked ? 'btn-pick-active' : ''}`} onClick={() => toggle('picked')} data-testid="pick-btn" disabled={!target || inflightIDs.has(target.file_id)}
+                aria-pressed={!!target?.picked} aria-keyshortcuts="Space">
+          <CheckIcon /> {target?.picked ? 'Picked' : 'Pick'} <span className="kbd" aria-hidden="true">Space</span>
+        </button>
+        <button className={`btn ${target?.rejected ? 'btn-reject-active' : ''}`} onClick={() => toggle('rejected')} data-testid="reject-btn" disabled={!target || inflightIDs.has(target.file_id)}
+                aria-pressed={!!target?.rejected} aria-keyshortcuts="X">
+          <XIcon /> {target?.rejected ? 'Rejected' : 'Reject'} <span className="kbd" aria-hidden="true">X</span>
+        </button>
+        <div className="w-px h-[22px] bg-line-1 mx-1.5" />
+        <button className={`btn ${comparing ? 'btn-pick-active' : 'btn-ghost'}`} onClick={toggleCompare} data-testid="compare-btn"
+                aria-pressed={comparing} aria-keyshortcuts="C">
+          <CompareIcon /> Compare <span className="kbd" aria-hidden="true">C</span>
         </button>
         {member.kind !== 'video' && (
-          <button className={`btn ${zoom > 1 ? 'btn-pick-active' : 'btn-ghost'}`} onClick={() => { if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) } }} data-testid="zoom-btn" disabled={comparing}>
-            <ZoomIcon /> Pixel-peep <span className="kbd">Z</span>
+          <button className={`btn ${zoom > 1 ? 'btn-pick-active' : 'btn-ghost'}`} onClick={() => { if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }) } else { setZoom(2) } }} data-testid="zoom-btn" disabled={comparing}
+                  aria-pressed={zoom > 1} aria-keyshortcuts="Z">
+            <ZoomIcon /> Pixel-peep <span className="kbd" aria-hidden="true">Z</span>
           </button>
         )}
         <span className="flex-1" />
-        <span className="font-mono text-[11px] text-fg-2">
-          {String(current + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}
-        </span>
-        <div className="w-px h-[22px] bg-line-1 mx-1.5" />
-        <button className="btn btn-ghost" onClick={onBack}><ArrowL /> Back <span className="kbd">Esc</span></button>
+        <button className="btn btn-ghost" onClick={onBack} aria-keyshortcuts="Escape"><ArrowL /> Back <span className="kbd" aria-hidden="true">Esc</span></button>
       </footer>
     </div>
   )
