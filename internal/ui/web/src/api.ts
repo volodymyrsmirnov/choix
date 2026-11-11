@@ -89,6 +89,9 @@ export interface QualityStatus {
   size: number     // 0 while unknown
   done: number     // photos rated in the current pass
   total: number
+  // Photos dealt with since choix started; only grows. A change means there
+  // are ratings the page has not fetched yet.
+  rated: number
   error?: string
 }
 

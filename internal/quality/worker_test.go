@@ -464,3 +464,19 @@ func TestWakeBeforeStartAndAfterStopLeavesStatusInactive(t *testing.T) {
 		t.Fatal("a wake-up after Stop must not make the worker look active")
 	}
 }
+
+// Rated is the poller's "there are new ratings" signal: it must grow with
+// every photo dealt with, across passes, and never reset.
+func TestRatedCounterGrowsAcrossPasses(t *testing.T) {
+	f := &fakeFetcher{installed: true}
+	s := newFakeScorer(1, 2)
+	w := startWorker(t, Options{Fetcher: f, Scorer: s, Enabled: true})
+	waitFor(t, "first pass", func() bool { return w.Status().Rated == 2 && !w.Status().Active })
+
+	s.add(3)
+	w.Wake()
+	waitFor(t, "second pass", func() bool { return w.Status().Rated == 3 && !w.Status().Active })
+	if st := w.Status(); st.Done != 1 || st.Total != 1 {
+		t.Fatalf("per-pass progress = %d/%d, want 1/1 (only Rated is cumulative)", st.Done, st.Total)
+	}
+}

@@ -47,7 +47,8 @@ const QUALITY_POLL_MS = 1000
 const RATINGS_REFRESH_MS = 10_000
 
 function sameQuality(a: QualityStatus | null, b: QualityStatus): boolean {
-  return !!a && a.enabled === b.enabled && a.state === b.state && a.active === b.active && a.received === b.received
+  return !!a && a.enabled === b.enabled && a.state === b.state && a.active === b.active
+    && a.rated === b.rated && a.received === b.received
     && a.size === b.size && a.done === b.done && a.total === b.total && a.error === b.error
 }
 
@@ -125,24 +126,26 @@ export const App: React.FC = () => {
     fetchSettings().then(applySettings).catch(() => { /* ignore */ })
   }, [refreshLibrary, refreshQuality, applySettings])
 
-  // Bring freshly computed ratings into the Library: throttled while a
-  // rating pass runs, and once when it ends. Ratings are absolutely
-  // positioned badges, so this never shifts layout.
-  const ratingsSeen = useRef({ active: false, done: 0, at: 0 })
+  // Bring freshly computed ratings into the Library. The trigger is the
+  // worker's `rated` counter, which only grows: whenever it differs from the
+  // value we last refreshed at, there are ratings we have not fetched —
+  // regardless of which states the polls happened to see (a short pass can
+  // start and finish between two polls). While the worker is still active
+  // the refresh is throttled; the first poll after it goes quiet, or after
+  // the throttle expires, catches up. Badges are absolutely positioned, so
+  // this never shifts layout. `ratingsRev` tells Focus the same thing.
+  const ratingsSeen = useRef({ rated: 0, at: 0 })
+  const [ratingsRev, setRatingsRev] = useState(0)
   useEffect(() => {
     if (!quality) return
     const seen = ratingsSeen.current
-    const active = quality.state === 'scoring' || quality.state === 'waiting'
+    if (quality.rated === seen.rated) return
     const now = Date.now()
-    if (active && quality.done !== seen.done && now - seen.at >= RATINGS_REFRESH_MS) {
-      seen.at = now
-      refreshLibrary(true)
-    } else if (seen.active && !active) {
-      seen.at = now
-      refreshLibrary(true)
-    }
-    seen.active = active
-    seen.done = quality.done
+    if (quality.active && now - seen.at < RATINGS_REFRESH_MS) return
+    seen.rated = quality.rated
+    seen.at = now
+    setRatingsRev(quality.rated)
+    refreshLibrary(true)
   }, [quality, refreshLibrary])
 
   useEffect(() => {
@@ -258,18 +261,11 @@ export const App: React.FC = () => {
   // file_id → rating, from the Library payload. Focus reads ratings from here
   // so they update live without replacing its member objects (which its image
   // loader and prefetcher key on).
-  // The map keeps its identity while its contents are unchanged, so a Library
-  // refresh for another reason (a pick, say) is not mistaken by Focus for
-  // "new ratings arrived".
-  const ratingsRef = useRef<Map<number, number>>(new Map())
   const ratings = useMemo(() => {
     const m = new Map<number, number>()
     for (const c of library?.clusters ?? []) {
       for (const mem of c.members) if (typeof mem.quality === 'number') m.set(mem.file_id, mem.quality)
     }
-    const prev = ratingsRef.current
-    if (prev.size === m.size && [...m].every(([id, q]) => prev.get(id) === q)) return prev
-    ratingsRef.current = m
     return m
   }, [library])
   const qualityEnabled = !!quality?.enabled
@@ -294,6 +290,7 @@ export const App: React.FC = () => {
         folder={library.folder}
         advanceOnAction={advanceOnAction}
         ratings={ratings}
+        ratingsRev={ratingsRev}
         qualityEnabled={qualityEnabled}
         onBack={goLibrary}
         onCluster={(id) => goFocus(id)}

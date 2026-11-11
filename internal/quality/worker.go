@@ -59,6 +59,11 @@ type Status struct {
 	// Scoring progress for the current pass, in photos.
 	Done  int `json:"done"`
 	Total int `json:"total"`
+	// Rated counts the photos dealt with since choix started. It only ever
+	// grows, so a poller that remembers the last value it acted on knows
+	// exactly when there are new ratings to fetch — no matter which states
+	// it happened to observe in between.
+	Rated int `json:"rated"`
 	// Error explains download_failed and error states.
 	Error string `json:"error,omitempty"`
 }
@@ -343,6 +348,7 @@ func (w *Worker) scorePass(ctx context.Context) {
 			switch {
 			case err == nil:
 				rated, streak = rated+1, 0
+				w.update(func(s *Status) { s.Rated++ })
 			case ctx.Err() != nil:
 				slog.Info("quality rating pass cancelled", "rated", rated)
 				return
