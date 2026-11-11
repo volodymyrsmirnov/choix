@@ -17,11 +17,17 @@ module.exports = {
           4: 'oklch(0.31 0.007 240)',
           5: 'oklch(0.38 0.008 240)',
         },
+        // fg-3 is the faintest tier but still carries readable 11px labels,
+        // so it must clear WCAG AA (4.5:1) on the panel backgrounds: 5.15:1 on
+        // bg-2 and 4.62:1 on bg-3 (it was 2.65:1 on bg-2 at L=0.48). fg-2
+        // moves up in step (4.76 → 7.24 on bg-2) so fg-0 > fg-1 > fg-2 > fg-3
+        // stay evenly spaced. Ratios are computed from OKLCH → sRGB relative
+        // luminance; re-check them if any of these lightnesses change.
         fg: {
           0: 'oklch(0.97 0.003 240)',
           1: 'oklch(0.82 0.005 240)',
-          2: 'oklch(0.62 0.006 240)',
-          3: 'oklch(0.48 0.006 240)',
+          2: 'oklch(0.73 0.006 240)',
+          3: 'oklch(0.64 0.006 240)',
         },
         line: {
           1: 'oklch(0.28 0.005 240 / 0.9)',

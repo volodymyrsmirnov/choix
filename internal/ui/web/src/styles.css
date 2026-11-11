@@ -65,13 +65,15 @@
   .btn .kbd { @apply ml-0.5 text-fg-2 border-line-1; background: oklch(1 0 0 / 0.06); }
 
   .eyebrow {
-    @apply font-mono text-[10px] uppercase tracking-[0.08em] text-fg-2 font-medium;
+    @apply font-mono text-[11px] uppercase tracking-[0.08em] text-fg-2 font-medium;
   }
 
   .imgph {
     @apply relative flex items-center justify-center overflow-hidden font-mono;
-    color: oklch(0.5 0.005 240);
-    font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+    /* fg-2 rather than a one-off grey: ≥5.7:1 on both stripe tones below
+       (the old oklch(0.5) label was ~2.3:1). */
+    color: theme('colors.fg.2');
+    font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase;
     background: repeating-linear-gradient(135deg,
       oklch(0.30 0.005 240) 0 12px,
       oklch(0.27 0.005 240) 12px 24px);
@@ -127,3 +129,49 @@
   to { transform: rotate(360deg); }
 }
 .choix-spin { animation: choix-spin 1s linear infinite; }
+@keyframes choix-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* Reduced motion, app-wide. Durations collapse to ~0 rather than `none` so
+   transitionend/animationend still fire for any code waiting on them, and
+   CSS smooth scrolling is disabled. JS `scrollIntoView({ behavior: 'smooth' })`
+   is NOT affected by this (an explicit behavior wins over scroll-behavior),
+   so callers must check matchMedia themselves.
+   The spinner and indeterminate progress bar are the exception: with their
+   animation zeroed they would freeze into a half-arc / a stray 30% sliver
+   that reads as "stuck". They swap the movement for a slow opacity pulse —
+   no spatial motion, but still visibly "working". The selectors below
+   out-specify the universal rule, so their !important wins. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  .choix-spin {
+    animation: choix-pulse 2s ease-in-out infinite !important;
+  }
+  .progress-rail .fill[data-indet="true"] {
+    width: 100%;
+    transform: none;
+    animation: choix-pulse 2s ease-in-out infinite !important;
+  }
+}
+
+/* Focus compare mode: the active pane (target of Space / X / Pick / Reject)
+   gets the same sel-coloured border + ring as a selected thumb, and its 1–4
+   badge picks up the accent. Kept outside @layer so Tailwind never purges it
+   and the attribute selector outranks the pane's border-line-1 utility. */
+.compare-pane { transition: border-color 120ms, box-shadow 120ms; }
+.compare-pane[data-active="true"] {
+  border-color: theme('colors.sel.DEFAULT');
+  box-shadow: 0 0 0 3px theme('colors.sel.bg');
+}
+.compare-pane[data-active="true"] .kbd {
+  color: theme('colors.sel.DEFAULT');
+  border-color: theme('colors.sel.DEFAULT');
+}
