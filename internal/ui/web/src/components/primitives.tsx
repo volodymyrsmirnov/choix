@@ -48,11 +48,10 @@ export const Spinner: React.FC<{ small?: boolean; decorative?: boolean; label?: 
   )
 }
 
+// The app icon (assets/icon/favicon.svg). Its hashed URL is injected at
+// build time by scripts/build.ts.
 export const BrandMark: React.FC = () => (
-  <div className="relative w-[18px] h-[18px] rounded-[4px]" aria-hidden="true"
-       style={{ background: 'linear-gradient(135deg, oklch(0.72 0.18 145) 0%, oklch(0.5 0.14 200) 100%)' }}>
-    <div className="absolute inset-1 bg-bg-1 rounded-[1px]" />
-  </div>
+  <img src={__CHOIX_ICON__} alt="" aria-hidden="true" width={20} height={20} className="block w-5 h-5" draggable={false} />
 )
 
 // Pipeline stage names (the `stage` field of SSE progress events) → labels.
