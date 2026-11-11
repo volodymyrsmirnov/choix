@@ -24,26 +24,27 @@ type localAnalyzeAdapter struct {
 }
 
 func (l *localAnalyzeAdapter) Analyze(ctx context.Context, fileID int64) error {
-	thumbPath, err := resolveTier1ThumbPath(l.s, l.root, fileID)
+	thumbPath, err := resolveThumbPath(l.s, l.root, fileID, thumb.TierThumb)
 	if err != nil {
 		return err
 	}
 	return l.a.Analyze(ctx, fileID, thumbPath)
 }
 
-// resolveTier1ThumbPath returns the absolute path to the file's tier-1 thumb,
-// preferring the thumbs row but falling back to the deterministic on-disk
-// cache layout when the row is missing (e.g., legacy databases or tests).
-func resolveTier1ThumbPath(s *store.Store, root string, fileID int64) (string, error) {
-	t, err := s.Thumbs().Get(fileID, thumb.TierThumb)
+// resolveThumbPath returns the absolute path to the file's cached thumbnail
+// of the given tier, preferring the thumbs row but falling back to the
+// deterministic on-disk cache layout when the row is missing (e.g., legacy
+// databases or tests).
+func resolveThumbPath(s *store.Store, root string, fileID int64, tier string) (string, error) {
+	t, err := s.Thumbs().Get(fileID, tier)
 	if err == nil && t.RelPath != "" {
 		return filepath.Join(root, t.RelPath), nil
 	}
-	abs := thumb.CachePath(root, fileID, thumb.TierThumb)
+	abs := thumb.CachePath(root, fileID, tier)
 	if _, statErr := os.Stat(abs); statErr == nil {
 		return abs, nil
 	}
-	return "", fmt.Errorf("tier-1 thumb missing for file %d: %w", fileID, err)
+	return "", fmt.Errorf("%s thumbnail missing for file %d: %w", tier, fileID, err)
 }
 
 // modelsDir returns the user-level ONNX models directory. The directory is

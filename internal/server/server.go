@@ -57,6 +57,10 @@ type Config struct {
 	// large embedded preview JPEG in a fraction of the time).
 	Exiftool *meta.ExifTool
 	Ffmpeg   *deps.Runner
+	// Quality is the background worker behind the advisory quality rating.
+	// Optional: nil turns the feature off for this server (no ratings in
+	// the API, /api/quality reports "disabled").
+	Quality QualityController
 	// BackgroundContext is the long-lived parent context for work that
 	// must outlive a single HTTP request — e.g. /api/setup/finalize
 	// kicking off a pipeline re-analyze. Optional; defaults to

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,10 +15,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/meta"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/server"
 	"github.com/volodymyrsmirnov/choix/internal/store"
+	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
 
 // servePipelineAdapter wraps pipeline.Pipeline to satisfy server.PipelineRunner.
@@ -29,10 +33,14 @@ type servePipelineAdapter struct {
 	pipe     *pipeline.Pipeline
 	analyzer *local.Analyzer
 	preRun   func()
-	mu       sync.Mutex
-	run      bool
-	stop     context.CancelFunc
-	done     chan struct{}
+	// onDone is called after every run ends (successfully or not), once
+	// the adapter reports idle again. The quality worker uses it to look
+	// for newly analyzed photos.
+	onDone func()
+	mu     sync.Mutex
+	run    bool
+	stop   context.CancelFunc
+	done   chan struct{}
 }
 
 func (a *servePipelineAdapter) Running() bool {
@@ -97,6 +105,9 @@ func (a *servePipelineAdapter) Start(parent context.Context) (<-chan pipeline.Ev
 			a.mu.Unlock()
 			close(done)
 			slog.Info("pipeline goroutine exit")
+			if a.onDone != nil {
+				a.onDone()
+			}
 		}()
 		err := a.pipe.Run(ctx)
 		if err != nil {
@@ -185,13 +196,21 @@ func runServe(cmd *cobra.Command, root string) error {
 	rootCtx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Advisory quality rating: one background worker downloads the model
+	// (when the setting is on and the file is missing) and rates photos
+	// whenever the pipeline is idle. It never blocks the scan or the UI.
+	installer := local.NewInstaller(modelsDir())
+	scorer, qualityWorker := buildQuality(st, absRoot, installer, pipe)
+	pipe.onDone = qualityWorker.Wake
+
 	srv, err := server.New(server.Config{
 		Store:             st,
 		ScanRoot:          absRoot,
 		Port:              port,
 		IdleAfter:         idle,
 		Pipeline:          pipe,
-		Installer:         local.NewInstaller(modelsDir()),
+		Installer:         installer,
+		Quality:           qualityWorker,
 		BackgroundContext: rootCtx,
 		Exiftool:          etool,
 		Ffmpeg:            ffRunner,
@@ -218,6 +237,10 @@ func runServe(cmd *cobra.Command, root string) error {
 	go func() {
 		slog.Info("auto-trigger initial scan", "root", absRoot)
 		events, err := pipe.Start(rootCtx)
+		// Started only after the scan has claimed the pipeline, so the
+		// worker sees it as busy and rates nothing until the scan is done.
+		// (The model download does not wait for the scan.)
+		qualityWorker.Start(rootCtx)
 		if err != nil {
 			slog.Error("auto-trigger scan failed to start", "err", err)
 			return
@@ -227,12 +250,17 @@ func runServe(cmd *cobra.Command, root string) error {
 	}()
 
 	err = srv.Run(rootCtx)
-	// Stop the pipeline (cancels its context), wait for any in-flight
-	// inference to return, then release analyzer resources. Order matters:
-	// Close() destroys ONNX C sessions, so Wait() must complete first.
+	// Teardown order matters. The quality worker goes first: Stop cancels
+	// its download or scoring pass and joins its goroutine, so nothing can
+	// start rating while the rest is torn down (idle shutdown does not
+	// cancel rootCtx). Then stop the pipeline (cancels its context), wait
+	// for any in-flight inference to return, and only then destroy the
+	// ONNX C sessions.
+	qualityWorker.Stop()
 	pipe.Stop()
 	pipe.Wait()
 	_ = pipe.Close()
+	_ = scorer.Close()
 	return err
 }
 
@@ -265,6 +293,41 @@ func buildServePipeline(st *store.Store, scanRoot string) (*servePipelineAdapter
 		sc.SetPicksDir(effectivePicksDir(st, &freshCfg))
 	}
 	return &servePipelineAdapter{pipe: p, analyzer: analyzer, preRun: preRun}, nil
+}
+
+// modelFetcher adapts the model installer to quality.Fetcher for the one
+// model the quality worker needs.
+type modelFetcher struct{ inst *local.Installer }
+
+func (f modelFetcher) Has() bool { return f.inst.ModelStore.Has(local.ModelQuality) }
+
+func (f modelFetcher) Download(ctx context.Context, onProgress func(received, size int64)) error {
+	return f.inst.Download(ctx, local.ModelQuality, onProgress)
+}
+
+// buildQuality wires the advisory quality rating: the scorer (ONNX session
+// owner, closed by the caller after the worker has stopped) and the
+// background worker that drives it. The setting comes from the machine-wide
+// config.toml only — the same single source the server and Settings page
+// use — so the worker, the API and the UI can never disagree about it.
+func buildQuality(st *store.Store, scanRoot string, installer *local.Installer, pipe *servePipelineAdapter) (*local.QualityScorer, *quality.Worker) {
+	enabled := config.Defaults().QualityRating
+	if cfg, err := config.Load(); err == nil {
+		enabled = cfg.QualityRating
+	} else {
+		slog.Warn("quality: loading config failed, using the default", "err", err)
+	}
+	scorer := local.NewQualityScorer(st, installer.ModelStore, func(fileID int64) (string, error) {
+		return resolveThumbPath(st, scanRoot, fileID, thumb.TierPreview)
+	})
+	worker := quality.New(quality.Options{
+		Fetcher:       modelFetcher{inst: installer},
+		Scorer:        scorer,
+		Busy:          pipe.Running,
+		Enabled:       enabled,
+		IsUnavailable: func(err error) bool { return errors.Is(err, local.ErrQualityUnavailable) },
+	})
+	return scorer, worker
 }
 
 // addServeFlags registers the serve-related flags on cmd.
