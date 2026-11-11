@@ -9,7 +9,15 @@ import { postRecluster, thumbURL } from '../api'
 import { toast } from './Toaster'
 import { isLetter } from '../keys'
 
-type SortKey = 'time-asc' | 'time-desc'
+export type SortKey = 'time-asc' | 'time-desc'
+
+// The Library's filter/sort view. App keeps the last value across Library
+// unmounts (Focus and Settings replace the Library entirely) so returning
+// lands on the same filtered, sorted list the saved scroll offset and active
+// cluster were recorded against.
+export type LibraryFilters = { query: string; device: string; sort: SortKey }
+
+export const DEFAULT_LIBRARY_FILTERS: LibraryFilters = { query: '', device: '', sort: 'time-asc' }
 
 const Subnav: React.FC<{
   summary: { clusters: number; total: number; visible: number }
@@ -56,11 +64,11 @@ const Subnav: React.FC<{
 
       <div ref={deviceRef} className="relative">
         <button className="btn btn-ghost" onClick={() => setDeviceOpen(v => !v)} data-testid="device-filter">
-          <FilterIcon /> {device === '' ? 'All clusters' : device} <ChevronDown />
+          <FilterIcon /> {device === '' ? 'All cameras' : device} <ChevronDown />
         </button>
         {deviceOpen && (
           <div className="absolute z-10 mt-1 left-0 min-w-[200px] rounded-md border border-line-2 bg-bg-2 shadow-pop py-1">
-            {[{ k: '', label: 'All clusters' }, ...devices.map(d => ({ k: d, label: d }))].map(opt => (
+            {[{ k: '', label: 'All cameras' }, ...devices.map(d => ({ k: d, label: d }))].map(opt => (
               <button key={opt.k}
                       onClick={() => { onDevice(opt.k); setDeviceOpen(false) }}
                       className={`w-full text-left px-3 py-1.5 text-xs ${device === opt.k ? 'text-fg-0 bg-bg-3' : 'text-fg-1 hover:bg-bg-3'}`}>
@@ -188,12 +196,30 @@ export const Library: React.FC<{
   onScrollChange?: (top: number) => void
   initialActiveClusterID?: number | null
   onActiveClusterChange?: (id: number | null) => void
-}> = ({ data, onOpenCluster, onSettings, onLibrary, picksDir, refresh, initialScroll, onScrollChange, initialActiveClusterID, onActiveClusterChange }) => {
+  initialFilters?: LibraryFilters
+  onFiltersChange?: (f: LibraryFilters) => void
+}> = ({ data, onOpenCluster, onSettings, onLibrary, picksDir, refresh, initialScroll, onScrollChange, initialActiveClusterID, onActiveClusterChange, initialFilters, onFiltersChange }) => {
   const [busy, setBusy] = useState(false)
-  const [query, setQuery] = useState('')
-  const [device, setDevice] = useState('')
-  const [sort, setSort] = useState<SortKey>('time-asc')
+  // Filters are seeded from the parent's remembered value so the very first
+  // render already shows the list the user left; the scroll restore and the
+  // active-cluster seed below both resolve against that first visible list.
+  const init = initialFilters ?? DEFAULT_LIBRARY_FILTERS
+  const [query, setQuery] = useState(init.query)
+  // A remembered device that vanished while we were unmounted (re-cluster,
+  // files removed) is dropped up front instead of via the reset effect below,
+  // so the first paint isn't a spurious "No clusters match your filters."
+  const [device, setDevice] = useState(() =>
+    init.device && data.clusters.some(c => c.device === init.device) ? init.device : '')
+  const [sort, setSort] = useState<SortKey>(init.sort)
   const [activeIdx, setActiveIdx] = useState(0)
+
+  // Mirror filter changes outwards. An effect (rather than wrapping each
+  // setter) also catches the device-reset effect clearing a stale camera, so
+  // the parent never restores a filter that no longer matches anything.
+  useEffect(() => {
+    onFiltersChange?.({ query, device, sort })
+  }, [query, device, sort, onFiltersChange])
+
   const searchRef = useRef<HTMLInputElement>(null)
   const mainRef = useRef<HTMLElement | null>(null)
 
@@ -301,8 +327,10 @@ export const Library: React.FC<{
 
   // Seed activeIdx from the cluster ID the parent remembered across navigation
   // (Library → Focus → back). Runs once when the visible list first arrives so
-  // the user's last-selected row stays selected; falls back to 0 if that
-  // cluster is no longer visible (filter applied, recluster hid it, etc.).
+  // the user's last-selected row stays selected. The filters are restored
+  // before the first render, so this index is into the same filtered, sorted
+  // list the ID was recorded against. Falls back to 0 if that cluster is no
+  // longer visible (recluster hid it, a stale device filter was dropped, etc.).
   const seededFromIDRef = useRef(false)
   useEffect(() => {
     if (seededFromIDRef.current) return

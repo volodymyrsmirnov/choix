@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Library } from './components/Library'
+import { Library, DEFAULT_LIBRARY_FILTERS, type LibraryFilters } from './components/Library'
 import { Focus } from './components/Focus'
 import { Settings } from './components/Settings'
 import { Empty } from './components/Empty'
@@ -35,6 +35,14 @@ export const App: React.FC = () => {
   const [scanDone, setScanDone] = useState(false)
   const libraryScrollRef = useRef(0)
   const libraryActiveIDRef = useRef<number | null>(null)
+  // Library's query/device/sort, remembered for the page lifetime so that
+  // Library → Focus/Settings → back restores the same filtered view the saved
+  // scroll offset and active cluster refer to. A ref (initial value in,
+  // changes mirrored out) rather than lifted useState: Library still owns the
+  // live state, so typing in the filter box re-renders only Library, never
+  // the whole App. Deliberately not localStorage — a filter left over from
+  // another folder or session would be confusing.
+  const libraryFiltersRef = useRef<LibraryFilters>(DEFAULT_LIBRARY_FILTERS)
   const lastProgressKey = useRef('')
 
   const refreshLibrary = useCallback(async () => {
@@ -44,6 +52,12 @@ export const App: React.FC = () => {
     } catch (e) {
       toast.reject('Library load failed', { body: String(e) })
     }
+  }, [])
+
+  // Stable identity so Library's mirror effect only fires on real filter
+  // changes, not on every App re-render (e.g. each SSE progress tick).
+  const onLibraryFiltersChange = useCallback((f: LibraryFilters) => {
+    libraryFiltersRef.current = f
   }, [])
 
   const applySettings = useCallback((s: SettingsBody) => {
@@ -192,6 +206,8 @@ export const App: React.FC = () => {
         onScrollChange={(top) => { libraryScrollRef.current = top }}
         initialActiveClusterID={libraryActiveIDRef.current}
         onActiveClusterChange={(id) => { libraryActiveIDRef.current = id }}
+        initialFilters={libraryFiltersRef.current}
+        onFiltersChange={onLibraryFiltersChange}
       />
     )
   }
