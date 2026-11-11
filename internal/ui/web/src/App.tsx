@@ -74,12 +74,21 @@ export const App: React.FC = () => {
 
   // `background` = nobody asked (new ratings arrived): the request is marked
   // so it does not postpone idle shutdown.
+  //
+  // Refreshes can overlap (a ratings refresh in flight when a pick, a
+  // settings save or a recluster triggers another) and their responses can
+  // arrive out of order. Only the most recently started one may set state,
+  // so an older snapshot can never bring back stale picks, cluster ids or
+  // badges; the newer request was sent later, so it reflects at least as
+  // much.
+  const libraryGen = useRef(0)
   const refreshLibrary = useCallback(async (background = false) => {
+    const gen = ++libraryGen.current
     try {
       const d = await fetchLibrary(background)
-      setLibrary(d)
+      if (gen === libraryGen.current) setLibrary(d)
     } catch (e) {
-      toast.reject('Library load failed', { body: String(e) })
+      if (gen === libraryGen.current) toast.reject('Library load failed', { body: String(e) })
     }
   }, [])
 
