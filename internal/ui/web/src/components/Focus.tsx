@@ -70,6 +70,19 @@ let liveUndo: (() => Promise<void>) | null = null
 let mutationSeq = 0
 const mutationListeners = new Set<(fileID: number, action: PickAction) => void>()
 
+// Files with a mutation in flight. Shared across Focus instances as well: a
+// reopened Focus must not start a second mutation on a file whose Undo (sent
+// by the previous instance) is still pending, or it would record that file's
+// soon-to-be-stale mark as the state to undo back to. Checked synchronously
+// in mutate; instances mirror it into state to disable their buttons.
+const inflightFiles = new Set<number>()
+const inflightListeners = new Set<() => void>()
+function setInflight(fileID: number, on: boolean) {
+  if (on) inflightFiles.add(fileID)
+  else inflightFiles.delete(fileID)
+  for (const l of inflightListeners) l()
+}
+
 // paneDigit returns 1–4 for the pane-select keys, preferring e.key and falling
 // back to the physical key (AZERTY types '&', 'é', … on the digit row without
 // Shift). Like isLetter, the physical fallback is skipped under Alt/AltGr.
@@ -277,10 +290,17 @@ export const Focus: React.FC<{
     mutationListeners.add(patchMember)
     return () => { mutationListeners.delete(patchMember) }
   }, [])
-  // inflightRef is checked synchronously in mutate (including keyboard autorepeat paths).
-  // inflightIDs mirrors it as state only so the Pick/Reject buttons can be disabled.
-  const inflightRef = useRef<Set<number>>(new Set())
-  const [inflightIDs, setInflightIDs] = useState<Set<number>>(new Set())
+  // inflightIDs mirrors the module-level inflightFiles as state, only so the
+  // Pick/Reject buttons can be disabled (including for a mutation a previous
+  // Focus instance left pending).
+  const [inflightIDs, setInflightIDs] = useState<Set<number>>(() => new Set(inflightFiles))
+  useEffect(() => {
+    const sync = () => setInflightIDs(new Set(inflightFiles))
+    inflightListeners.add(sync)
+    // Catch a change between the initial render and this subscription.
+    sync()
+    return () => { inflightListeners.delete(sync) }
+  }, [])
   // The undo toast's action closure can outlive this render (and even this
   // component, if the user clicks Undo from the Library), so it reaches
   // onChanged through a ref rather than capturing a possibly stale prop.
@@ -406,10 +426,8 @@ export const Focus: React.FC<{
     // Per-file-id in-flight guard: checked synchronously via ref so keyboard
     // autorepeat (rapid Space presses) or an Undo can't queue a second
     // mutation before the first one settles.
-    if (inflightRef.current.has(fileID)) return false
-    inflightRef.current.add(fileID)
-    // Mirror to state so the Pick/Reject buttons reflect the in-flight status.
-    setInflightIDs(s => new Set(s).add(fileID))
+    if (inflightFiles.has(fileID)) return false
+    setInflight(fileID, true)
     try {
       await postPick(fileID, action)
       // Announce instead of patching this instance directly: the user may
@@ -421,8 +439,7 @@ export const Focus: React.FC<{
       onChangedRef.current()
       return true
     } finally {
-      inflightRef.current.delete(fileID)
-      setInflightIDs(s => { const n = new Set(s); n.delete(fileID); return n })
+      setInflight(fileID, false)
     }
   }, [])
 
