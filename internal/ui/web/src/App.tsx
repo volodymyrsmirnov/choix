@@ -36,17 +36,18 @@ function parseRoute(): Route {
 const SCAN_INDICATOR_DELAY_MS = 400
 
 // Quality worker polling. The worker's state is a snapshot endpoint, not
-// part of the SSE stream, so the App polls it — but only while something is
-// in flight; otherwise it is fetched once on load, after a scan finishes and
-// after a settings save.
+// part of the SSE stream, so the App polls it — but only while the snapshot
+// says `active` (work in flight or queued, or a scan running); otherwise it
+// is fetched once on load, when a scan starts or finishes and after a
+// settings save. `active` is set synchronously on the server when work is
+// requested, so a single fetch after a trigger never misses it.
 const QUALITY_POLL_MS = 1000
-const QUALITY_ACTIVE = new Set<QualityStatus['state']>(['downloading', 'waiting', 'scoring'])
 // While photos are being rated, new ratings are pulled into the Library at
 // most this often (and once more when the pass ends).
 const RATINGS_REFRESH_MS = 10_000
 
 function sameQuality(a: QualityStatus | null, b: QualityStatus): boolean {
-  return !!a && a.enabled === b.enabled && a.state === b.state && a.received === b.received
+  return !!a && a.enabled === b.enabled && a.state === b.state && a.active === b.active && a.received === b.received
     && a.size === b.size && a.done === b.done && a.total === b.total && a.error === b.error
 }
 
@@ -70,14 +71,21 @@ export const App: React.FC = () => {
   const libraryFiltersRef = useRef<LibraryFilters>(DEFAULT_LIBRARY_FILTERS)
   const lastProgressKey = useRef('')
 
-  const refreshLibrary = useCallback(async () => {
+  // `background` = nobody asked (new ratings arrived): the request is marked
+  // so it does not postpone idle shutdown.
+  const refreshLibrary = useCallback(async (background = false) => {
     try {
-      const d = await fetchLibrary()
+      const d = await fetchLibrary(background)
       setLibrary(d)
     } catch (e) {
       toast.reject('Library load failed', { body: String(e) })
     }
   }, [])
+
+  // What screens get as their "refresh the Library" callback. A wrapper so
+  // that whatever a caller passes (a click event, say) can never be taken
+  // for refreshLibrary's `background` flag.
+  const refreshLibraryNow = useCallback(() => refreshLibrary(), [refreshLibrary])
 
   // Stable identity so Library's mirror effect only fires on real filter
   // changes, not on every App re-render (e.g. each SSE progress tick).
@@ -105,7 +113,7 @@ export const App: React.FC = () => {
     }
     setQuality(prev => (sameQuality(prev, s) ? prev : s))
     window.clearTimeout(qualityTimer.current)
-    if (QUALITY_ACTIVE.has(s.state)) {
+    if (s.active) {
       qualityTimer.current = window.setTimeout(refreshQuality, QUALITY_POLL_MS)
     }
   }, [])
@@ -128,10 +136,10 @@ export const App: React.FC = () => {
     const now = Date.now()
     if (active && quality.done !== seen.done && now - seen.at >= RATINGS_REFRESH_MS) {
       seen.at = now
-      refreshLibrary()
+      refreshLibrary(true)
     } else if (seen.active && !active) {
       seen.at = now
-      refreshLibrary()
+      refreshLibrary(true)
     }
     seen.active = active
     seen.done = quality.done
@@ -218,6 +226,10 @@ export const App: React.FC = () => {
   const showEmptyScanning = library !== null && library.clusters.length === 0 && isScanning
   const showEmptyDone = library !== null && library.clusters.length === 0 && scanDone && !isScanning
 
+  // A scan that starts later (e.g. after the CLIP model is installed) will
+  // hand the quality worker new photos: start watching it again.
+  useEffect(() => { if (isScanning) refreshQuality() }, [isScanning, refreshQuality])
+
   // AppBar scan indicator: appears once a scan has been running for
   // SCAN_INDICATOR_DELAY_MS, disappears the moment it finishes. Keyed on the
   // isScanning boolean only, so per-file ticks don't restart the timer.
@@ -246,11 +258,18 @@ export const App: React.FC = () => {
   // file_id → rating, from the Library payload. Focus reads ratings from here
   // so they update live without replacing its member objects (which its image
   // loader and prefetcher key on).
+  // The map keeps its identity while its contents are unchanged, so a Library
+  // refresh for another reason (a pick, say) is not mistaken by Focus for
+  // "new ratings arrived".
+  const ratingsRef = useRef<Map<number, number>>(new Map())
   const ratings = useMemo(() => {
     const m = new Map<number, number>()
     for (const c of library?.clusters ?? []) {
       for (const mem of c.members) if (typeof mem.quality === 'number') m.set(mem.file_id, mem.quality)
     }
+    const prev = ratingsRef.current
+    if (prev.size === m.size && [...m].every(([id, q]) => prev.get(id) === q)) return prev
+    ratingsRef.current = m
     return m
   }, [library])
   const qualityEnabled = !!quality?.enabled
@@ -280,7 +299,7 @@ export const App: React.FC = () => {
         onCluster={(id) => goFocus(id)}
         onSettings={goSettings}
         onLibrary={goLibrary}
-        onChanged={refreshLibrary}
+        onChanged={refreshLibraryNow}
       />
     )
   } else if (route.name === 'settings') {
@@ -302,7 +321,7 @@ export const App: React.FC = () => {
         onSettings={goSettings}
         onLibrary={goLibrary}
         picksDir={picksDir}
-        refresh={refreshLibrary}
+        refresh={refreshLibraryNow}
         initialScroll={libraryScrollRef.current}
         onScrollChange={(top) => { libraryScrollRef.current = top }}
         initialActiveClusterID={libraryActiveIDRef.current}

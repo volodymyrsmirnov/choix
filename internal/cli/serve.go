@@ -33,7 +33,7 @@ type servePipelineAdapter struct {
 	pipe     *pipeline.Pipeline
 	analyzer *local.Analyzer
 	preRun   func()
-	// onDone is called after every run ends (successfully or not), once
+	// onDone is called when a run ends (successfully or not), just before
 	// the adapter reports idle again. The quality worker uses it to look
 	// for newly analyzed photos.
 	onDone func()
@@ -100,14 +100,19 @@ func (a *servePipelineAdapter) Start(parent context.Context) (<-chan pipeline.Ev
 	go func() {
 		defer func() {
 			close(ch)
+			// Wake the quality worker while this run still counts as
+			// running: its status then stays "active" without a gap
+			// between the scan ending and the worker noticing, so a UI
+			// polling at that moment keeps watching. The worker itself
+			// waits until Running() turns false before rating anything.
+			if a.onDone != nil {
+				a.onDone()
+			}
 			a.mu.Lock()
 			a.run = false
 			a.mu.Unlock()
 			close(done)
 			slog.Info("pipeline goroutine exit")
-			if a.onDone != nil {
-				a.onDone()
-			}
 		}()
 		err := a.pipe.Run(ctx)
 		if err != nil {

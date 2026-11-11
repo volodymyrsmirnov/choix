@@ -255,12 +255,26 @@ func (s *Server) idleWatcher(ctx context.Context) {
 	}
 }
 
-// idleResetMiddleware updates lastReq on every non-SSE request.
+// BackgroundRequestHeader marks a request the SPA made on its own (status
+// polling, automatic refreshes) rather than because the user did something.
+// Such requests do not count as activity for the idle-shutdown timer.
+const BackgroundRequestHeader = "X-Choix-Background"
+
+// isBackgroundRequest reports whether r should be ignored by the idle timer.
+func isBackgroundRequest(r *http.Request) bool {
+	// SSE keepalives shouldn't count as activity — a long-lived
+	// /api/progress connection would defeat the timer. The same goes for
+	// anything the page fetches by itself: while the quality model downloads
+	// or photos are rated, an unattended tab polls /api/quality every second
+	// and refreshes the Library, which must not keep choix alive forever.
+	return r.URL.Path == "/api/progress" || r.Header.Get(BackgroundRequestHeader) != ""
+}
+
+// idleResetMiddleware updates lastReq on every request that reflects user
+// activity (see isBackgroundRequest).
 func (s *Server) idleResetMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// SSE keepalives shouldn't count as activity — a long-lived
-		// /api/progress connection would defeat the timer.
-		if r.URL.Path != "/api/progress" {
+		if !isBackgroundRequest(r) {
 			s.idleMu.Lock()
 			s.lastReq = s.Now()
 			s.idleMu.Unlock()

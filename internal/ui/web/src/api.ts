@@ -81,6 +81,10 @@ export type QualityState =
 export interface QualityStatus {
   enabled: boolean
   state: QualityState
+  // Keep polling while true: work is in flight or queued, or a scan is
+  // running that will hand the worker photos. Set synchronously server-side,
+  // so one fetch right after a trigger is enough to know.
+  active: boolean
   received: number // model download, bytes
   size: number     // 0 while unknown
   done: number     // photos rated in the current pass
@@ -96,14 +100,21 @@ export interface ProgressEvent {
   phase?: string
 }
 
-export async function fetchLibrary(): Promise<LibraryResponse> {
-  const r = await fetch('/api/library')
+// Requests the page makes by itself (status polling, automatic refreshes)
+// carry this header so the server does not count them as user activity and
+// idle shutdown still happens under an unattended tab. Mirrors
+// BackgroundRequestHeader in internal/server/server.go.
+const BACKGROUND: RequestInit = { headers: { 'X-Choix-Background': '1' } }
+
+// `background` marks a refresh nobody asked for (ratings arriving).
+export async function fetchLibrary(background = false): Promise<LibraryResponse> {
+  const r = await fetch('/api/library', background ? BACKGROUND : undefined)
   if (!r.ok) throw new Error(`library: ${r.status}`)
   return r.json()
 }
 
-export async function fetchCluster(id: number, signal?: AbortSignal): Promise<FocusResponse> {
-  const r = await fetch(`/api/clusters/${id}`, { signal })
+export async function fetchCluster(id: number, signal?: AbortSignal, background = false): Promise<FocusResponse> {
+  const r = await fetch(`/api/clusters/${id}`, { signal, ...(background ? BACKGROUND : {}) })
   if (!r.ok) throw new Error(`cluster ${id}: ${r.status}`)
   return r.json()
 }
@@ -125,7 +136,7 @@ export async function saveSettings(body: Partial<SettingsBody>): Promise<{ saved
 }
 
 export async function fetchQuality(): Promise<QualityStatus> {
-  const r = await fetch('/api/quality')
+  const r = await fetch('/api/quality', BACKGROUND)
   if (!r.ok) throw new Error(`quality: ${r.status}`)
   return r.json()
 }

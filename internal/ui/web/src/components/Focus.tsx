@@ -327,11 +327,15 @@ export const Focus: React.FC<{
   onLibrary: () => void
   onChanged: () => void
 }> = ({ clusterID, startFileID, totalPicked, totalCount, folder, advanceOnAction, ratings, qualityEnabled, onBack, onCluster, onSettings, onLibrary, onChanged }) => {
-  // The rating to show for a member, or undefined. Falls back to the value
-  // in this cluster's own payload for photos the Library omits (rejected
-  // photos while "Hide rejected" is on). Videos are never rated.
+  // Ratings for members the Library payload leaves out (rejected photos while
+  // "Hide rejected" is on), fetched from this cluster's own endpoint. Kept in
+  // its own map for the same reason as `ratings`: members stay untouched.
+  const [ownRatings, setOwnRatings] = useState<Map<number, number>>(() => new Map())
+  // The rating to show for a member, or undefined. Videos are never rated.
   const ratingOf = (m: Member): number | undefined =>
-    qualityEnabled && m.kind === 'photo' ? (ratings.get(m.file_id) ?? m.quality) : undefined
+    qualityEnabled && m.kind === 'photo'
+      ? (ratings.get(m.file_id) ?? ownRatings.get(m.file_id) ?? m.quality)
+      : undefined
   const [data, setData] = useState<FocusResponse | null>(null)
   const [current, setCurrent] = useState(0)
   const [showInfo, setShowInfo] = useState<boolean>(() => {
@@ -474,6 +478,35 @@ export const Focus: React.FC<{
   }, [clusterID, startFileID, goTo])
 
   useEffect(() => { load().catch(e => toast.reject('Load cluster failed', { body: String(e) })) }, [load])
+
+  // Whenever App delivers fresh ratings (it refetches the Library while
+  // photos are being rated), check whether a photo of this cluster is still
+  // unrated in every source. If so it is one the Library omits, so ask this
+  // cluster's endpoint — a background request that only fills `ownRatings`.
+  useEffect(() => { setOwnRatings(new Map()) }, [clusterID])
+  useEffect(() => {
+    if (!qualityEnabled) return
+    const missing = members.some(m =>
+      m.kind === 'photo' && typeof m.quality !== 'number' && !ratings.has(m.file_id))
+    if (!missing) return
+    const ctrl = new AbortController()
+    fetchCluster(clusterID, ctrl.signal, true)
+      .then(d => {
+        const next = new Map<number, number>()
+        for (const m of d.cluster.members) if (typeof m.quality === 'number') next.set(m.file_id, m.quality)
+        setOwnRatings(prev => {
+          if (prev.size === next.size && [...next].every(([id, q]) => prev.get(id) === q)) return prev
+          return next
+        })
+      })
+      .catch(() => { /* aborted, or the cluster is gone: keep what we have */ })
+    return () => ctrl.abort()
+    // Runs when ratings actually change (App keeps the map's identity
+    // otherwise) and once the cluster's members have loaded. Keyed on the
+    // member count, not `members`: marking a photo replaces that array and
+    // must not trigger a fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ratings, members.length, clusterID, qualityEnabled])
 
   // Focus stays mounted when Enter / Shift+Enter switches clusters, so state
   // tied to the previous cluster's member indices must be dropped here:

@@ -49,6 +49,10 @@ const (
 type Status struct {
 	Enabled bool  `json:"enabled"`
 	State   State `json:"state"`
+	// Active tells a poller whether to keep polling: work is in flight, a
+	// wake-up is queued (the state above may not reflect it yet), or a scan
+	// is running that will hand the worker photos when it ends.
+	Active bool `json:"active"`
 	// Download progress in bytes; Size is 0 while unknown.
 	Received int64 `json:"received"`
 	Size     int64 `json:"size"`
@@ -97,6 +101,9 @@ type Worker struct {
 	status   Status
 	opCancel context.CancelFunc // cancels the in-flight download or pass
 	started  bool
+	stopped  bool
+	queued   bool // a wake-up is waiting to be picked up by the loop
+	inCycle  bool // the loop is working through a cycle
 	stop     context.CancelFunc
 	done     chan struct{}
 
@@ -140,17 +147,31 @@ func (w *Worker) Start(ctx context.Context) {
 func (w *Worker) Stop() {
 	w.mu.Lock()
 	started, stop := w.started, w.stop
+	w.stopped = true // from here on Wake is a no-op
 	w.mu.Unlock()
 	if !started {
 		return
 	}
 	stop()
 	<-w.done
+	w.mu.Lock()
+	w.queued, w.inCycle = false, false
+	w.mu.Unlock()
 }
 
 // Wake asks the worker to look for work: call it when a scan finishes (new
 // photos may be pending) or after a failure the user wants retried.
+//
+// The wake-up is recorded synchronously: a Status read right after Wake
+// already reports Active, even though the loop has not reacted yet. Before
+// Start and after Stop it does nothing.
 func (w *Worker) Wake() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.started || w.stopped {
+		return
+	}
+	w.queued = true
 	select {
 	case w.wake <- struct{}{}:
 	default: // a wake-up is already queued
@@ -182,8 +203,14 @@ func (w *Worker) Enabled() bool {
 // Status returns a snapshot of what the worker is doing.
 func (w *Worker) Status() Status {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.status
+	st := w.status
+	busy := w.queued || w.inCycle
+	enabled := w.enabled
+	w.mu.Unlock()
+	// Busy is read outside the lock: it takes the pipeline adapter's own
+	// mutex, and nothing here depends on the two being consistent.
+	st.Active = enabled && (busy || (w.opts.Busy != nil && w.opts.Busy()))
+	return st
 }
 
 func (w *Worker) update(f func(s *Status)) {
@@ -204,7 +231,13 @@ func (w *Worker) run(ctx context.Context) {
 			return
 		case <-w.wake:
 		}
+		w.mu.Lock()
+		w.queued, w.inCycle = false, true
+		w.mu.Unlock()
 		w.cycle(ctx)
+		w.mu.Lock()
+		w.inCycle = false
+		w.mu.Unlock()
 	}
 }
 

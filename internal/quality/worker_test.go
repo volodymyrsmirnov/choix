@@ -403,3 +403,64 @@ func TestStopBeforeStartDoesNotHang(t *testing.T) {
 		t.Fatal("Stop before Start hung")
 	}
 }
+
+// A poller decides whether to keep polling from Status().Active. It must be
+// true from the instant work is requested — before the loop has had a chance
+// to change State — or a UI that polls once right after a trigger would see
+// the old idle state and stop watching.
+func TestStatusIsActiveAsSoonAsWorkIsQueued(t *testing.T) {
+	f := &fakeFetcher{installed: true}
+	s := newFakeScorer()
+	w := startWorker(t, Options{Fetcher: f, Scorer: s, Enabled: true})
+	waitFor(t, "settled", func() bool { return !w.Status().Active && w.Status().State == StateIdle })
+
+	release := make(chan struct{})
+	s.score = func(ctx context.Context, _ int64) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}
+	s.add(1)
+	w.Wake()
+	if !w.Status().Active {
+		t.Fatal("Status must be active immediately after Wake")
+	}
+	waitFor(t, "scoring", func() bool { return w.Status().State == StateScoring })
+	if !w.Status().Active {
+		t.Fatal("Status must be active while scoring")
+	}
+	close(release)
+	waitFor(t, "inactive once done", func() bool { return !w.Status().Active })
+}
+
+func TestStatusIsActiveWhileAScanRunsAndNeverWhenDisabled(t *testing.T) {
+	var busy atomic.Bool
+	f := &fakeFetcher{installed: true}
+	w := startWorker(t, Options{Fetcher: f, Scorer: newFakeScorer(), Enabled: true, Busy: busy.Load})
+	waitFor(t, "settled", func() bool { return !w.Status().Active })
+
+	// A running scan will hand over photos when it ends: keep watching.
+	busy.Store(true)
+	if !w.Status().Active {
+		t.Fatal("Status must be active while the pipeline is running")
+	}
+	w.SetEnabled(false)
+	waitFor(t, "disabled", func() bool { return w.Status().State == StateDisabled })
+	waitFor(t, "inactive when off", func() bool { return !w.Status().Active })
+}
+
+func TestWakeBeforeStartAndAfterStopLeavesStatusInactive(t *testing.T) {
+	w := New(Options{Fetcher: &fakeFetcher{installed: true}, Scorer: newFakeScorer(), Enabled: true})
+	w.Wake()
+	if w.Status().Active {
+		t.Fatal("a wake-up before Start must not make the worker look active forever")
+	}
+	w.Start(context.Background())
+	w.Stop()
+	w.Wake()
+	if w.Status().Active {
+		t.Fatal("a wake-up after Stop must not make the worker look active")
+	}
+}
