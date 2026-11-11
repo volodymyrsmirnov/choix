@@ -207,14 +207,19 @@ func (w *Worker) Enabled() bool {
 
 // Status returns a snapshot of what the worker is doing.
 func (w *Worker) Status() Status {
+	// Order matters. The pipeline hands over by waking the worker *before*
+	// it stops reporting busy, so the two signals overlap. Reading the
+	// pipeline first and the worker second can therefore never miss the
+	// handoff: if the scan was already over when we looked, its wake-up is
+	// already recorded by the time we read the worker. (The other order
+	// could see "worker idle", then "scan over", and wrongly report
+	// inactive.) Busy is called outside w.mu because it takes the pipeline
+	// adapter's own mutex.
+	pipelineBusy := w.opts.Busy != nil && w.opts.Busy()
 	w.mu.Lock()
 	st := w.status
-	busy := w.queued || w.inCycle
-	enabled := w.enabled
+	st.Active = w.enabled && (pipelineBusy || w.queued || w.inCycle)
 	w.mu.Unlock()
-	// Busy is read outside the lock: it takes the pipeline adapter's own
-	// mutex, and nothing here depends on the two being consistent.
-	st.Active = enabled && (busy || (w.opts.Busy != nil && w.opts.Busy()))
 	return st
 }
 

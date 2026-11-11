@@ -99,12 +99,16 @@ export const App: React.FC = () => {
     setAdvanceOnAction(!!s.advance_on_action)
   }, [])
 
-  // Poll the quality worker: one fetch, then keep going once a second only
-  // while it is downloading, waiting or rating. Any caller may kick it; the
-  // timer is cleared on both sides of the fetch so overlapping kicks never
-  // leave two timers running.
+  // Poll the quality worker: one fetch, then keep going once a second while
+  // the snapshot says `active`. Any caller may kick it.
   const qualityTimer = useRef<number | undefined>(undefined)
+  const qualityGen = useRef(0)
   const refreshQuality = useCallback(async () => {
+    // Each call supersedes the previous one. Responses can arrive out of
+    // order (a poll overlapping a settings save), and an older snapshot
+    // must neither overwrite a newer one nor decide whether to keep
+    // polling — so only the latest call may touch state and the timer.
+    const gen = ++qualityGen.current
     window.clearTimeout(qualityTimer.current)
     let s: QualityStatus
     try {
@@ -112,13 +116,13 @@ export const App: React.FC = () => {
     } catch {
       return // server unreachable (shutting down): stop quietly
     }
+    if (gen !== qualityGen.current) return
     setQuality(prev => (sameQuality(prev, s) ? prev : s))
-    window.clearTimeout(qualityTimer.current)
     if (s.active) {
       qualityTimer.current = window.setTimeout(refreshQuality, QUALITY_POLL_MS)
     }
   }, [])
-  useEffect(() => () => window.clearTimeout(qualityTimer.current), [])
+  useEffect(() => () => { qualityGen.current++; window.clearTimeout(qualityTimer.current) }, [])
 
   useEffect(() => {
     refreshLibrary()

@@ -480,3 +480,41 @@ func TestRatedCounterGrowsAcrossPasses(t *testing.T) {
 		t.Fatalf("per-pass progress = %d/%d, want 1/1 (only Rated is cumulative)", st.Done, st.Total)
 	}
 }
+
+// The pipeline wakes the worker and only then stops reporting busy. A Status
+// call racing with that handoff must still report active. The Busy hook
+// below plays the worst case: the scan ends (wake, then idle) at the very
+// moment Status asks the pipeline, which answers "idle". Status is correct
+// only if it looks at the worker *after* that answer, where the wake-up is
+// already recorded; sampling the worker first would report inactive and a
+// polling UI would stop watching work that is about to start.
+func TestStatusNeverMissesScanToWorkerHandoff(t *testing.T) {
+	f := &fakeFetcher{installed: true}
+	s := newFakeScorer()
+	block := make(chan struct{})
+	s.score = func(ctx context.Context, _ int64) error {
+		select {
+		case <-block:
+		case <-ctx.Done():
+		}
+		return nil
+	}
+	var w *Worker
+	var armed, handedOver atomic.Bool
+	busy := func() bool {
+		if armed.Load() && handedOver.CompareAndSwap(false, true) {
+			s.add(1)
+			w.Wake() // the adapter's onDone
+		}
+		return false // ...after which the pipeline reports idle
+	}
+	w = New(Options{Fetcher: f, Scorer: s, Enabled: true, Busy: busy, PollInterval: time.Millisecond})
+	w.Start(context.Background())
+	t.Cleanup(func() { close(block); w.Stop() })
+	waitFor(t, "settled", func() bool { return !w.Status().Active })
+
+	armed.Store(true)
+	if !w.Status().Active {
+		t.Fatal("Status reported inactive across the scan-to-worker handoff")
+	}
+}
