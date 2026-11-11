@@ -13,6 +13,51 @@ const ZOOM_STEP = 1.5 // multiplicative step for the +/- buttons and Z key
 
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
 
+// A pointer that moves less than this between down and up on a compare pane
+// counts as a click (activate the pane) rather than a pan drag.
+const CLICK_SLOP_PX = 4
+
+// Every successful Pick/Reject/Clear (and its Undo) reuses one toast slot so
+// fast culling doesn't stack a tower of 4-second toasts.
+const UNDO_TOAST_KEY = 'focus-undo'
+const UNDO_HINT = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘Z' : 'Ctrl+Z'
+
+type PickAction = 'pick' | 'unpick' | 'reject' | 'unreject'
+type Mark = { picked: boolean; rejected: boolean }
+
+// applyAction mirrors the server's picks state machine (internal/picks):
+// 'pick' on a rejected file overwrites the reject, 'reject' on a picked file
+// unexports it, and the un-* actions only clear their own flag.
+function applyAction(s: Mark, action: PickAction): Mark {
+  switch (action) {
+    case 'pick': return { picked: true, rejected: false }
+    case 'reject': return { picked: false, rejected: true }
+    case 'unpick': return { picked: false, rejected: s.rejected }
+    case 'unreject': return { picked: s.picked, rejected: false }
+  }
+}
+
+// undoActionFor returns the single server action that takes a file from `cur`
+// back to `prev`, or null when they already match. One action is always
+// enough because pick/reject each overwrite the other state.
+function undoActionFor(prev: Mark, cur: Mark): PickAction | null {
+  if (prev.picked) return cur.picked ? null : 'pick'
+  if (prev.rejected) return cur.rejected ? null : 'reject'
+  if (cur.picked) return 'unpick'
+  if (cur.rejected) return 'unreject'
+  return null
+}
+
+// paneDigit returns 1–4 for the pane-select keys, preferring e.key and falling
+// back to the physical key (AZERTY types '&', 'é', … on the digit row without
+// Shift). Like isLetter, the physical fallback is skipped under Alt/AltGr.
+function paneDigit(e: KeyboardEvent): number | null {
+  if (e.key >= '1' && e.key <= '4' && e.key.length === 1) return Number(e.key)
+  if (e.altKey || e.getModifierState('AltGraph')) return null
+  const m = /^Digit([1-4])$/.exec(e.code)
+  return m ? Number(m[1]) : null
+}
+
 // CrossfadeImage stacks a thumbnail and full-resolution image in the same
 // bounding box and crossfades when the full version finishes loading. Both
 // layers `object-contain` so they letterbox identically — only the sharpness
@@ -183,16 +228,45 @@ export const Focus: React.FC<{
       return v === '1'
     } catch { return true }
   })
-  const [members, setMembers] = useState<Member[]>([])
+  const [members, setMembersState] = useState<Member[]>([])
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [comparing, setComparing] = useState(false)
-  const [compareIdx, setCompareIdx] = useState<number[]>([])
-  // inflightRef is checked synchronously in toggle (including keyboard autorepeat paths).
+  const [comparing, setComparingState] = useState(false)
+  const [compareIdx, setCompareIdxState] = useState<number[]>([])
+  // members / current / comparing / compareIdx are mirrored into refs that are
+  // written *synchronously* alongside each setState. The keydown handler is
+  // only re-registered after React commits, so with keyboard autorepeat a
+  // second keydown can land on the previous render's closure; reading these
+  // refs instead means it acts on the photo the user actually sees now (e.g.
+  // the one advance-on-action just moved to), not the one before it.
+  const membersRef = useRef<Member[]>([])
+  const currentRef = useRef(0)
+  const comparingRef = useRef(false)
+  const compareIdxRef = useRef<number[]>([])
+  const goTo = useCallback((i: number) => { currentRef.current = i; setCurrent(i) }, [])
+  const setComparing = useCallback((on: boolean) => { comparingRef.current = on; setComparingState(on) }, [])
+  const setCompareIdx = useCallback((xs: number[]) => { compareIdxRef.current = xs; setCompareIdxState(xs) }, [])
+  const patchMember = useCallback((fileID: number, action: PickAction) => {
+    const patch = (ms: Member[]) => ms.map(m => m.file_id === fileID ? { ...m, ...applyAction(m, action) } : m)
+    membersRef.current = patch(membersRef.current)
+    setMembersState(patch)
+  }, [])
+  // inflightRef is checked synchronously in mutate (including keyboard autorepeat paths).
   // inflightIDs mirrors it as state only so the Pick/Reject buttons can be disabled.
   const inflightRef = useRef<Set<number>>(new Set())
   const [inflightIDs, setInflightIDs] = useState<Set<number>>(new Set())
+  // One level of undo: the last successful Pick/Reject/Clear. `prev` is the
+  // file's mark before the action, `next` the mark the action produced.
+  const undoRef = useRef<{ fileID: number; prev: Mark; next: Mark } | null>(null)
+  // The undo toast's action closure can outlive this render (and even this
+  // component, if the user clicks Undo from the Library), so it reaches
+  // onChanged through a ref rather than capturing a possibly stale prop.
+  const onChangedRef = useRef(onChanged)
+  useEffect(() => { onChangedRef.current = onChanged }, [onChanged])
   const dragState = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
+  // Where a pointer went down on a compare pane, to tell a click (activate
+  // that pane) from a pan drag.
+  const paneDown = useRef<{ x: number; y: number; idx: number } | null>(null)
   const railRef = useRef<HTMLElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -258,54 +332,135 @@ export const Focus: React.FC<{
     if (ctrl.signal.aborted) return
 
     setData(d)
-    setMembers(d.cluster.members)
+    membersRef.current = d.cluster.members
+    setMembersState(d.cluster.members)
     if (startFileID !== undefined) {
       const idx = d.cluster.members.findIndex(m => m.file_id === startFileID)
       // If the requested fileID is missing (cluster rebuilt), fall back to first.
-      setCurrent(idx >= 0 ? idx : 0)
+      goTo(idx >= 0 ? idx : 0)
     } else {
-      setCurrent(0)
+      goTo(0)
     }
-  }, [clusterID, startFileID])
+  }, [clusterID, startFileID, goTo])
 
   useEffect(() => { load().catch(e => toast.reject('Load cluster failed', { body: String(e) })) }, [load])
 
-  // Reset zoom + pan whenever the active photo changes.
-  useEffect(() => { setZoom(1); setPan({ x: 0, y: 0 }) }, [current])
+  // Focus stays mounted when Enter / Shift+Enter switches clusters, so state
+  // tied to the previous cluster's member indices must be dropped here:
+  // compareIdx holds *indices*, which would otherwise point at unrelated
+  // photos in the new cluster, and zoom/pan would survive when both clusters
+  // open on index 0 (the `current` effect below never fires).
+  useEffect(() => {
+    setComparing(false)
+    setCompareIdx([])
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }, [clusterID, setComparing, setCompareIdx])
+
+  // Reset zoom + pan whenever the active photo changes — except in compare
+  // mode, where `current` is just the active pane and every pane shares one
+  // zoom/pan so switching panes must keep the user's pixel-peep position.
+  useEffect(() => {
+    if (comparingRef.current) return
+    setZoom(1); setPan({ x: 0, y: 0 })
+  }, [current])
 
   const member = members[current]
 
-  const toggle = useCallback(async (k: 'picked' | 'rejected') => {
-    if (!member) return
+  // mutate posts one action for a file and patches local state on success.
+  // Returns false (without doing anything) when a mutation for the same file
+  // is already in flight; throws on server/network failure.
+  const mutate = useCallback(async (fileID: number, action: PickAction): Promise<boolean> => {
     // Per-file-id in-flight guard: checked synchronously via ref so keyboard
-    // autorepeat (rapid Space presses) can't queue a second mutation before
-    // React commits the state update from the first.
-    if (inflightRef.current.has(member.file_id)) return
-    inflightRef.current.add(member.file_id)
-    const wasOn = member[k]
-    const action = k === 'picked' ? (wasOn ? 'unpick' : 'pick') : (wasOn ? 'unreject' : 'reject')
+    // autorepeat (rapid Space presses) or an Undo can't queue a second
+    // mutation before the first one settles.
+    if (inflightRef.current.has(fileID)) return false
+    inflightRef.current.add(fileID)
     // Mirror to state so the Pick/Reject buttons reflect the in-flight status.
-    setInflightIDs(s => new Set(s).add(member.file_id))
+    setInflightIDs(s => new Set(s).add(fileID))
     try {
-      await postPick(member.file_id, action)
-      setMembers(ms => ms.map((m, i) => i === current ? {
-        ...m,
-        picked: k === 'picked' ? !wasOn : (k === 'rejected' && !wasOn ? false : m.picked),
-        rejected: k === 'rejected' ? !wasOn : (k === 'picked' && !wasOn ? false : m.rejected),
-      } : m))
-      onChanged()
-      toast.ok(action === 'pick' ? 'Picked' : action === 'reject' ? 'Rejected' : 'Cleared', { body: member.path })
-      // Auto-advance on accept/reject (not on un-accept/un-reject), wrapping at the end.
-      if (advanceOnAction && !wasOn && members.length > 1) {
-        setCurrent(c => (c + 1) % members.length)
+      await postPick(fileID, action)
+      // Patch by file id, not index: the user may have switched clusters
+      // while the request was in flight.
+      patchMember(fileID, action)
+      onChangedRef.current()
+      return true
+    } finally {
+      inflightRef.current.delete(fileID)
+      setInflightIDs(s => { const n = new Set(s); n.delete(fileID); return n })
+    }
+  }, [patchMember])
+
+  const undo = useCallback(async () => {
+    const slot = undoRef.current
+    if (!slot) return
+    const action = undoActionFor(slot.prev, slot.next)
+    if (!action) { undoRef.current = null; return }
+    try {
+      // Busy (a mutation on this file is still pending): keep the slot so the
+      // user can simply press ⌘Z again.
+      if (!(await mutate(slot.fileID, action))) return
+      // Only consume the slot if no newer action replaced it meanwhile; in
+      // that case the newer action's toast (and its Undo) stays up.
+      if (undoRef.current === slot) {
+        undoRef.current = null
+        toast.ok('Undone', { key: UNDO_TOAST_KEY, duration: 1500 })
+      }
+    } catch (e) {
+      toast.reject('Undo failed', { body: String(e) })
+    }
+  }, [mutate])
+
+  // actionTarget is what Space / X / Pick / Reject act on: the current photo,
+  // or in compare mode the active pane (none if `current` isn't compared).
+  const actionTarget = useCallback((): Member | undefined => {
+    const cur = currentRef.current
+    if (comparingRef.current && !compareIdxRef.current.includes(cur)) return undefined
+    return membersRef.current[cur]
+  }, [])
+
+  const toggle = useCallback(async (k: 'picked' | 'rejected') => {
+    const target = actionTarget()
+    if (!target) return
+    const wasOn = target[k]
+    const action: PickAction = k === 'picked' ? (wasOn ? 'unpick' : 'pick') : (wasOn ? 'unreject' : 'reject')
+    const prev: Mark = { picked: target.picked, rejected: target.rejected }
+    try {
+      if (!(await mutate(target.file_id, action))) return
+      undoRef.current = { fileID: target.file_id, prev, next: applyAction(prev, action) }
+      toast.ok(action === 'pick' ? 'Picked' : action === 'reject' ? 'Rejected' : 'Cleared', {
+        key: UNDO_TOAST_KEY,
+        action: { label: 'Undo', hint: UNDO_HINT, onClick: () => { void undo() } },
+      })
+      // Auto-advance on accept/reject (not on un-accept/un-reject), wrapping at
+      // the end. Never while comparing — the panes are the user's working set —
+      // and only if the user is still on the file they acted on (they may have
+      // moved on, or switched clusters, while the request was in flight).
+      const ms = membersRef.current
+      const cur = currentRef.current
+      if (advanceOnAction && !wasOn && !comparingRef.current && ms.length > 1 && ms[cur]?.file_id === target.file_id) {
+        goTo((cur + 1) % ms.length)
       }
     } catch (e) {
       toast.reject('Action failed', { body: String(e) })
-    } finally {
-      inflightRef.current.delete(member.file_id)
-      setInflightIDs(s => { const n = new Set(s); n.delete(member.file_id); return n })
     }
-  }, [member, current, advanceOnAction, members.length, onChanged])
+  }, [actionTarget, mutate, undo, advanceOnAction, goTo])
+
+  // step moves ←/→: through the whole cluster normally, or cycles the active
+  // pane among the compared members in compare mode. Both wrap.
+  const step = useCallback((dir: 1 | -1) => {
+    const n = membersRef.current.length
+    if (n === 0) return
+    const cur = currentRef.current
+    if (comparingRef.current) {
+      const sel = compareIdxRef.current
+      if (sel.length === 0) return
+      const pos = sel.indexOf(cur)
+      goTo(pos < 0 ? sel[0] : sel[(pos + dir + sel.length) % sel.length])
+      return
+    }
+    goTo((cur + dir + n) % n)
+  }, [goTo])
 
   const stepZoom = useCallback((dir: 1 | -1) => {
     setZoom(z => {
@@ -319,22 +474,51 @@ export const Focus: React.FC<{
   }, [])
 
   const toggleCompare = useCallback(() => {
-    setComparing(c => {
-      const next = !c
-      if (next) {
-        setCompareIdx(prev => prev.length > 0 ? prev : [current])
-      }
-      return next
-    })
-  }, [current])
+    if (comparingRef.current) { setComparing(false); return }
+    // Re-entering compare keeps the previous selection; the first time, the
+    // current photo becomes the first (and active) pane.
+    const sel = compareIdxRef.current.length > 0 ? compareIdxRef.current : [currentRef.current]
+    setCompareIdx(sel)
+    setComparing(true)
+    // The active pane is the one whose index equals `current`; if a retained
+    // selection doesn't include the current photo, activate its first pane
+    // so Space / X always have a visible target.
+    if (!sel.includes(currentRef.current)) goTo(sel[0])
+  }, [setComparing, setCompareIdx, goTo])
 
   const toggleCompareSelect = useCallback((i: number) => {
-    setCompareIdx(prev => {
-      if (prev.includes(i)) return prev.filter(x => x !== i)
-      if (prev.length >= 4) return prev // hard cap so the grid stays readable
-      return [...prev, i]
-    })
-  }, [])
+    const prev = compareIdxRef.current
+    let next: number[]
+    if (prev.includes(i)) next = prev.filter(x => x !== i)
+    else if (prev.length >= 4) return // hard cap so the grid stays readable
+    else next = [...prev, i]
+    setCompareIdx(next)
+    // Keep an active pane whenever there is one to activate: if the active
+    // member was removed, move to the pane that slid into its slot (or the
+    // new last one); if the set was empty, the newly added member is active.
+    const cur = currentRef.current
+    if (next.length > 0 && !next.includes(cur)) {
+      const removedAt = prev.indexOf(cur)
+      goTo(removedAt >= 0 ? next[Math.min(removedAt, next.length - 1)] : next[0])
+    }
+  }, [setCompareIdx, goTo])
+
+  // activatePane makes the Nth (1-based) compare pane active. Filtering to
+  // valid indices keeps the numbering identical to the rendered pane badges.
+  const activatePane = useCallback((n: number) => {
+    const idx = compareIdxRef.current.filter(i => i < membersRef.current.length)[n - 1]
+    if (idx !== undefined) goTo(idx)
+  }, [goTo])
+
+  // `data` still describes the previous cluster until the new fetch lands;
+  // ignore ↵ / ⇧↵ in that window so a quick ↵ then ⇧↵ can't follow the old
+  // cluster's neighbour ids to the wrong place.
+  const goNextCluster = useCallback(() => {
+    if (data && data.cluster.id === clusterID && data.next_cluster_id) onCluster(data.next_cluster_id)
+  }, [data, clusterID, onCluster])
+  const goPrevCluster = useCallback(() => {
+    if (data && data.cluster.id === clusterID && data.prev_cluster_id) onCluster(data.prev_cluster_id)
+  }, [data, clusterID, onCluster])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -350,24 +534,42 @@ export const Focus: React.FC<{
       if (focused && (focused.tagName === 'VIDEO' || focused.closest('video'))) {
         focused.blur()
       }
-      const member = members[current]
+      // ⌘/Ctrl chords belong to the browser (⌘C copy, ⌘+ page zoom, …), not to
+      // our single-key shortcuts — without this ⌘Z would toggle pixel-peep and
+      // ⌘X would reject. ⌘Z / Ctrl+Z is the one chord we own: undo. AltGr is
+      // reported as Ctrl+Alt on some layouts, so a Ctrl that comes with
+      // AltGraph is a character-producing key, not a chord; it falls through
+      // to the normal path where isLetter already rejects AltGr letters.
+      const altGr = e.getModifierState('AltGraph')
+      if (e.metaKey || (e.ctrlKey && !altGr)) {
+        if (!e.shiftKey && !e.altKey && isLetter(e, 'z')) {
+          e.preventDefault()
+          if (!e.repeat) void undo()
+        }
+        return
+      }
+      const member = membersRef.current[currentRef.current]
       const isVideoMember = member?.kind === 'video'
       if (e.key === 'Escape') {
         e.preventDefault()
         if (zoom > 1) { setZoom(1); setPan({ x: 0, y: 0 }); return }
-        if (comparing) { setComparing(false); return }
+        if (comparingRef.current) { setComparing(false); return }
         onBack()
         return
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         e.preventDefault(); e.stopImmediatePropagation()
-        if (members.length > 0) setCurrent(c => (c - 1 + members.length) % members.length)
+        step(-1)
         return
       }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
         e.preventDefault(); e.stopImmediatePropagation()
-        if (members.length > 0) setCurrent(c => (c + 1) % members.length)
+        step(1)
         return
+      }
+      if (comparingRef.current) {
+        const n = paneDigit(e)
+        if (n !== null) { e.preventDefault(); activatePane(n); return }
       }
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); e.stopImmediatePropagation(); toggle('picked'); return }
       if (isLetter(e, 'x')) { e.preventDefault(); toggle('rejected'); return }
@@ -385,13 +587,14 @@ export const Focus: React.FC<{
       if (e.key === '0') { e.preventDefault(); if (!isVideoMember) { setZoom(1); setPan({ x: 0, y: 0 }) } ; return }
       if (e.key === 'Enter') {
         e.preventDefault()
-        if (data?.next_cluster_id) onCluster(data.next_cluster_id)
+        if (e.shiftKey) goPrevCluster()
+        else goNextCluster()
         return
       }
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true } as unknown as EventListenerOptions)
-  }, [members, current, toggle, onBack, onCluster, data, zoom, stepZoom, comparing, toggleCompare])
+  }, [toggle, undo, step, activatePane, onBack, goNextCluster, goPrevCluster, zoom, stepZoom, toggleCompare, setComparing])
 
   // Smooth pinch-to-zoom inside the photo stage. The App-level handler
   // preventDefaults pinch gestures everywhere else; here we re-handle them so
@@ -493,9 +696,21 @@ export const Focus: React.FC<{
     ;(e.target as Element).releasePointerCapture?.(e.pointerId)
   }
 
-  const compareMembers = compareIdx.map(i => members[i]).filter(Boolean)
-  const compareCols = compareMembers.length <= 1 ? 1 : compareMembers.length === 2 ? 2 : 2
-  const compareRows = compareMembers.length <= 2 ? 1 : 2
+  const comparePanes = compareIdx.flatMap(idx => members[idx] ? [{ m: members[idx], idx }] : [])
+  const compareCols = comparePanes.length <= 1 ? 1 : comparePanes.length === 2 ? 2 : 2
+  const compareRows = comparePanes.length <= 2 ? 1 : 2
+  // What Space / X / Pick / Reject act on (see actionTarget): in compare mode
+  // only the active pane, so nothing when `current` isn't among the panes.
+  const target: Member | undefined = comparing && !compareIdx.includes(current) ? undefined : member
+  const infoVisible = showInfo && (exifRows.length > 0 || hasGPS) && !comparing
+
+  // `data` keeps the previous cluster's response until the next fetch lands,
+  // so a mismatched id means we're mid-load and must not claim "reviewed".
+  const loading = data.cluster.id !== clusterID
+  const clusterDone = !loading && members.length > 0 && reviewed === members.length
+  // Keep the end-of-cluster pill clear of native <video> controls, which sit
+  // along the bottom edge of the hero / compare panes.
+  const liftPill = comparing ? comparePanes.some(p => p.m.kind === 'video') : member.kind === 'video'
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-bg-1">
@@ -510,8 +725,12 @@ export const Focus: React.FC<{
         <span className="font-mono text-[11px] text-fg-2">
           Cluster {data.cluster_index} / {data.cluster_count} · {reviewed}/{members.length} reviewed
         </span>
-        <button className="btn btn-ghost" disabled={!data.next_cluster_id}
-                onClick={() => data.next_cluster_id && onCluster(data.next_cluster_id)}>
+        <button className="btn btn-ghost" disabled={!data.prev_cluster_id}
+                onClick={goPrevCluster} data-testid="prev-cluster">
+          Prev cluster <span className="kbd">⇧↵</span>
+        </button>
+        <button className={`btn ${clusterDone && data.next_cluster_id ? 'btn-primary' : 'btn-ghost'}`} disabled={!data.next_cluster_id}
+                onClick={goNextCluster} data-testid="next-cluster">
           Next cluster <span className="kbd">↵</span>
         </button>
       </div>
@@ -529,7 +748,7 @@ export const Focus: React.FC<{
               <button key={m.file_id}
                       onClick={() => {
                         if (comparing) toggleCompareSelect(i)
-                        else setCurrent(i)
+                        else goTo(i)
                       }}
                       data-testid="rail-thumb"
                       data-file-id={m.file_id}
@@ -559,29 +778,46 @@ export const Focus: React.FC<{
                    gridTemplateColumns: `repeat(${compareCols}, minmax(0, 1fr))`,
                    gridTemplateRows: `repeat(${compareRows}, minmax(0, 1fr))`,
                  }}>
-              {compareMembers.length === 0 && (
+              {comparePanes.length === 0 && (
                 <div className="col-span-full row-span-full flex items-center justify-center text-fg-2 text-xs">
-                  Click rail thumbnails to add to compare. Up to 4.
+                  Click rail thumbnails to add to compare (up to 4). Then 1–4 or ←/→ choose a pane; Space / X mark it.
                 </div>
               )}
-              {compareMembers.map((m) => (
-                <div key={m.file_id}
-                     className="relative bg-bg-1 rounded-md overflow-hidden border border-line-1 select-none"
-                     style={{ cursor: zoom > 1 ? (dragState.current ? 'grabbing' : 'grab') : 'default' }}
-                     onPointerDown={onPanStart}
-                     onPointerMove={onPanMove}
-                     onPointerUp={onPanEnd}
-                     onPointerCancel={onPanEnd}>
-                  <CrossfadeImage member={m} variant="compare"
-                                  pan={pan} zoom={zoom} dragging={!!dragState.current} />
-                  <div className="absolute top-2 left-2 px-2 py-1 rounded-md text-[11px] font-mono backdrop-blur-md z-10"
-                       style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-                    {m.path}
-                    {m.picked && <span className="ml-2 text-pick">● Pick</span>}
-                    {m.rejected && <span className="ml-2 text-reject">● Reject</span>}
+              {comparePanes.map(({ m, idx }, pos) => {
+                const active = idx === current
+                return (
+                  <div key={m.file_id}
+                       className="compare-pane relative bg-bg-1 rounded-md overflow-hidden border border-line-1 select-none"
+                       data-testid="compare-pane"
+                       data-active={active}
+                       style={{ cursor: zoom > 1 ? (dragState.current ? 'grabbing' : 'grab') : (active ? 'default' : 'pointer') }}
+                       onPointerDown={(e) => {
+                         if (e.button === 0) paneDown.current = { x: e.clientX, y: e.clientY, idx }
+                         onPanStart(e)
+                       }}
+                       onPointerMove={onPanMove}
+                       onPointerUp={(e) => {
+                         // A press-and-release that barely moved is a click
+                         // (activate this pane); anything more was a pan drag
+                         // over the shared zoom, which must not switch panes.
+                         const d = paneDown.current
+                         paneDown.current = null
+                         onPanEnd(e)
+                         if (d && d.idx === idx && Math.hypot(e.clientX - d.x, e.clientY - d.y) < CLICK_SLOP_PX) goTo(idx)
+                       }}
+                       onPointerCancel={(e) => { paneDown.current = null; onPanEnd(e) }}>
+                    <CrossfadeImage member={m} variant="compare"
+                                    pan={pan} zoom={zoom} dragging={!!dragState.current} />
+                    <div className="absolute top-2 left-2 px-2 py-1 rounded-md text-[11px] font-mono backdrop-blur-md z-10"
+                         style={{ background: 'oklch(0 0 0 / 0.5)' }}>
+                      <span className="kbd mr-2">{pos + 1}</span>
+                      {m.path}
+                      {m.picked && <span className="ml-2 text-pick">● Pick</span>}
+                      {m.rejected && <span className="ml-2 text-reject">● Reject</span>}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           ) : (
             <div className="absolute inset-0 p-6 select-none"
@@ -600,14 +836,19 @@ export const Focus: React.FC<{
             </div>
           )}
 
-          <div className="absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md"
-               style={{ background: 'oklch(0 0 0 / 0.5)' }}>
-            <span className="font-mono text-[11px] text-fg-0">
-              {String(current + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}
-            </span>
-            <span className="w-px h-3 bg-white/10" />
-            <span className="font-mono text-[11px] text-fg-1">{member.path}</span>
-          </div>
+          {/* Hidden while comparing: every pane carries its own numbered path
+              label in the same corner, and this overlay would sit on top of
+              pane 1's. */}
+          {!comparing && (
+            <div className="absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md"
+                 style={{ background: 'oklch(0 0 0 / 0.5)' }}>
+              <span className="font-mono text-[11px] text-fg-0">
+                {String(current + 1).padStart(2, '0')} / {String(members.length).padStart(2, '0')}
+              </span>
+              <span className="w-px h-3 bg-white/10" />
+              <span className="font-mono text-[11px] text-fg-1">{member.path}</span>
+            </div>
+          )}
 
           <div className="absolute top-3 right-3 flex items-center gap-1.5">
             {member.kind !== 'video' && (
@@ -627,7 +868,7 @@ export const Focus: React.FC<{
             )}
           </div>
 
-          {showInfo && (exifRows.length > 0 || hasGPS) && !comparing && (
+          {infoVisible && (
             <aside className="absolute top-14 right-3 bottom-3 w-[280px] rounded-lg border border-line-2 backdrop-blur-xl shadow-pop overflow-hidden flex flex-col"
                    style={{ background: 'oklch(0.20 0.005 240 / 0.92)' }}>
               <div className="px-3 py-2.5 border-b border-line-1 flex items-center gap-2">
@@ -661,22 +902,48 @@ export const Focus: React.FC<{
               </div>
             </aside>
           )}
+
+          {/* End-of-cluster cue. ←/→ and advance-on-action still wrap silently;
+              this pill just tells the user there's nothing left to mark here.
+              The wrapper stops short of the Info panel so the pill can never
+              cover it, is click-through except for the pill itself, and the
+              pill never takes focus (keyboard users already have ↵ / Esc).
+              The wrapper stays mounted so the live region announces the pill. */}
+          {!loading && (
+            <div className={`absolute left-3 flex justify-center pointer-events-none ${infoVisible ? 'right-[304px]' : 'right-3'} ${liftPill ? 'bottom-20' : 'bottom-3'}`}
+                 role="status" aria-live="polite">
+              {clusterDone && (
+                <button type="button" data-testid="cluster-done" tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={data.next_cluster_id ? goNextCluster : onBack}
+                        className="pointer-events-auto flex items-center gap-2 px-2.5 py-1.5 rounded-md border border-white/5 backdrop-blur-md cursor-pointer font-mono text-[11px] text-fg-0 hover:border-white/15"
+                        style={{ background: 'oklch(0 0 0 / 0.5)' }}>
+                  <CheckIcon className="text-pick" size={12} />
+                  <span>{data.next_cluster_id ? 'Cluster reviewed' : 'Last cluster reviewed'}</span>
+                  <span className="w-px h-3 bg-white/10" />
+                  <span className="kbd">{data.next_cluster_id ? '↵' : 'Esc'}</span>
+                  <span className="text-fg-1">{data.next_cluster_id ? 'Next cluster' : 'Library'}</span>
+                </button>
+              )}
+            </div>
+          )}
         </main>
       </div>
 
       <footer className="h-12 px-3 border-t border-line-1 bg-bg-2 flex items-center gap-1.5">
-        <button className="btn btn-ghost" onClick={() => setCurrent(c => (c - 1 + members.length) % members.length)} disabled={members.length <= 1 || comparing}>
+        {/* In compare mode ←/→ cycle the active pane, so they're useful with ≥2 panes. */}
+        <button className="btn btn-ghost" onClick={() => step(-1)} disabled={comparing ? comparePanes.length <= 1 : members.length <= 1}>
           <ArrowL /> <span className="kbd">←</span>
         </button>
-        <button className="btn btn-ghost" onClick={() => setCurrent(c => (c + 1) % members.length)} disabled={members.length <= 1 || comparing}>
+        <button className="btn btn-ghost" onClick={() => step(1)} disabled={comparing ? comparePanes.length <= 1 : members.length <= 1}>
           <span className="kbd">→</span> <ArrowR />
         </button>
         <div className="w-px h-[22px] bg-line-1 mx-1.5" />
-        <button className={`btn ${member.picked ? 'btn-pick-active' : ''}`} onClick={() => toggle('picked')} data-testid="pick-btn" disabled={comparing || inflightIDs.has(member.file_id)}>
-          <CheckIcon /> {member.picked ? 'Picked' : 'Pick'} <span className="kbd">Space</span>
+        <button className={`btn ${target?.picked ? 'btn-pick-active' : ''}`} onClick={() => toggle('picked')} data-testid="pick-btn" disabled={!target || inflightIDs.has(target.file_id)}>
+          <CheckIcon /> {target?.picked ? 'Picked' : 'Pick'} <span className="kbd">Space</span>
         </button>
-        <button className={`btn ${member.rejected ? 'btn-reject-active' : ''}`} onClick={() => toggle('rejected')} data-testid="reject-btn" disabled={comparing || inflightIDs.has(member.file_id)}>
-          <XIcon /> {member.rejected ? 'Rejected' : 'Reject'} <span className="kbd">X</span>
+        <button className={`btn ${target?.rejected ? 'btn-reject-active' : ''}`} onClick={() => toggle('rejected')} data-testid="reject-btn" disabled={!target || inflightIDs.has(target.file_id)}>
+          <XIcon /> {target?.rejected ? 'Rejected' : 'Reject'} <span className="kbd">X</span>
         </button>
         <div className="w-px h-[22px] bg-line-1 mx-1.5" />
         <button className={`btn ${comparing ? 'btn-pick-active' : 'btn-ghost'}`} onClick={toggleCompare} data-testid="compare-btn">

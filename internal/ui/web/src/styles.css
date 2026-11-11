@@ -127,3 +127,17 @@
   to { transform: rotate(360deg); }
 }
 .choix-spin { animation: choix-spin 1s linear infinite; }
+
+/* Focus compare mode: the active pane (target of Space / X / Pick / Reject)
+   gets the same sel-coloured border + ring as a selected thumb, and its 1–4
+   badge picks up the accent. Kept outside @layer so Tailwind never purges it
+   and the attribute selector outranks the pane's border-line-1 utility. */
+.compare-pane { transition: border-color 120ms, box-shadow 120ms; }
+.compare-pane[data-active="true"] {
+  border-color: theme('colors.sel.DEFAULT');
+  box-shadow: 0 0 0 3px theme('colors.sel.bg');
+}
+.compare-pane[data-active="true"] .kbd {
+  color: theme('colors.sel.DEFAULT');
+  border-color: theme('colors.sel.DEFAULT');
+}
