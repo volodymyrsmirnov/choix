@@ -92,6 +92,14 @@ func TestMeasure_ReferenceImages(t *testing.T) {
 		}), want{
 			0, 0, 0, 1e-9, 1e-9, 0.262770556, 0, -115.392025, 0, 0,
 		}},
+		// Resampled by the non-integer ratio 1.5625 to 1024×768.
+		{"F", refImage(1600, 1200, func(x, y int) (uint8, uint8, uint8) {
+			a := refA(x, y, 2)
+			return uint8(a), clamp255(a + 10), clamp255(a - 10) //nolint:gosec // a is in 0..255
+		}), want{
+			0.00193048378, 0.000166922077, 0.0116282353, 0.00191534455, 0.000166614319,
+			0.305494051, 0, -40.7327979, 9.634, 734_390_856,
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

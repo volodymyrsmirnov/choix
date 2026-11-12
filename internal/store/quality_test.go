@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -203,5 +204,40 @@ func TestUpsertOnRescan_ClearsPrint(t *testing.T) {
 	}
 	if n, err := s.Files().CountAnalyzedMissingPrint(testPrintID); err != nil || n != 1 {
 		t.Fatalf("CountAnalyzedMissingPrint = %d, %v; want 1", n, err)
+	}
+
+	// Both updates commit together or not at all: when clearing the print
+	// fails, the file keeps its old content hash and its rating too.
+	b := insertAnalyzed(t, s, "b.jpg", "photo", "b1")
+	if err := s.AISignals().UpsertPrint(b, testPrint(2), testPrintID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Files().SetQuality(b, "b1", sql.NullFloat64{Float64: 0.5, Valid: true}, testScorer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(context.Background(), `
+		CREATE TRIGGER test_refuse_print_update BEFORE UPDATE ON ai_signals
+		BEGIN SELECT RAISE(ABORT, 'refused for a test'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Files().UpsertOnRescan(File{Path: "b.jpg", Size: 3, Mtime: 3, ContentHash: "b2", Kind: "photo", Format: "jpeg"}, 3); err == nil {
+		t.Fatal("UpsertOnRescan succeeded although clearing the print failed")
+	}
+	f, err := s.Files().GetByID(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw sql.NullFloat64
+	var model sql.NullString
+	if err := s.DB().QueryRowContext(context.Background(),
+		`SELECT quality_raw, quality_model FROM files WHERE id = ?`, b).Scan(&raw, &model); err != nil {
+		t.Fatal(err)
+	}
+	if f.ContentHash != "b1" || f.ScanStatus != "analyzed" || !raw.Valid || model.String != testScorer {
+		t.Fatalf("after the failed rescan: hash %q, status %q, rating %+v %q; want the row untouched (b1, analyzed, 0.5 %q)",
+			f.ContentHash, f.ScanStatus, raw, model.String, testScorer)
+	}
+	if got, err := s.AISignals().GetByFileID(b); err != nil || got.Print == nil || got.PrintID != testPrintID {
+		t.Fatalf("after the failed rescan: print len %d, id %q, %v; want it kept", len(got.Print), got.PrintID, err)
 	}
 }

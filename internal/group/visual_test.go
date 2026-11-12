@@ -199,6 +199,36 @@ func TestCluster_MatchesNaive(t *testing.T) {
 	}
 }
 
+// Coarse vectors (components in {-1, 0, 1}) and repeated ones make many
+// linkages tie exactly, so the tie rule and the merge's key upkeep for ties
+// decide most cases.
+func TestCluster_MatchesNaiveWithTies(t *testing.T) {
+	r := rand.New(rand.NewPCG(99, 100))
+	for i := range 2000 {
+		n := 2 + r.IntN(25)
+		dim := 2 + r.IntN(4)
+		vectors := map[int64][]float32{}
+		var made [][]float32
+		for _, id := range r.Perm(1000)[:n] {
+			v := make([]float32, dim)
+			for k := range v {
+				v[k] = float32(r.IntN(3) - 1)
+			}
+			if len(made) > 0 && r.IntN(2) == 0 {
+				v = slices.Clone(made[r.IntN(len(made))])
+			}
+			made = append(made, v)
+			vectors[int64(id+1)] = v
+		}
+		threshold := -2 + 4*r.Float64()
+		got := mustCluster(t, vectors, threshold)
+		want := naiveCluster(vectors, threshold)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("case %d (n=%d, threshold %.4f): Cluster = %v; naive = %v", i, n, threshold, got, want)
+		}
+	}
+}
+
 func TestCluster_Ordering(t *testing.T) {
 	x := normalize([]float32{1, 0, 0})
 	y := normalize([]float32{0, 1, 0})
@@ -263,6 +293,76 @@ func TestCluster_TwoThousandUnderFiveSeconds(t *testing.T) {
 	}
 	if took := time.Since(start); took > 5*time.Second {
 		t.Fatalf("2,000 prints took %v; want under 5 s", took)
+	}
+}
+
+// timelapse returns n distinct but near-identical unit vectors of dim
+// dimensions: one base vector plus small seeded noise, so every pair is
+// above 0.9 and complete-link merges them all, one merge at a time.
+func timelapse(r *rand.Rand, n, dim int) map[int64][]float32 {
+	base := randomUnit(r, dim)
+	out := make(map[int64][]float32, n)
+	for i := range n {
+		v := make([]float32, dim)
+		for k := range v {
+			v[k] = base[k] + float32(0.004*r.NormFloat64())
+		}
+		out[int64(i+1)] = normalize(v)
+	}
+	return out
+}
+
+// The merge phase dominates a timelapse: 1,999 merges, each touching every
+// cluster. It too must fit in the 5 s budget.
+func TestCluster_TimelapseTwoThousandUnderFiveSeconds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	if raceEnabled {
+		t.Skip("timing test: the race detector slows the merge loop many times over")
+	}
+	vectors := timelapse(rand.New(rand.NewPCG(5, 6)), 2000, 768)
+	start := time.Now()
+	got, err := Cluster(context.Background(), vectors, 0.9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	took := time.Since(start)
+	if len(got) != 1 || len(got[0]) != 2000 {
+		t.Fatalf("Cluster = %d clusters; want the whole timelapse in one", len(got))
+	}
+	if took > 5*time.Second {
+		t.Fatalf("a 2,000-frame timelapse took %v; want under 5 s", took)
+	}
+	t.Logf("2,000-frame timelapse clustered in %v", took)
+}
+
+// A cancellation that lands during the merge phase (after the n row checks
+// of the matrix build) stops Cluster at its next merge.
+func TestCluster_CancelledDuringMerge(t *testing.T) {
+	const n = 600
+	vectors := timelapse(rand.New(rand.NewPCG(8, 9)), n, 768)
+	if got := mustCluster(t, vectors, 0.9); len(got) != 1 {
+		t.Fatalf("Cluster = %d clusters; want the timelapse merged into one", len(got))
+	}
+	ctx := newCountdownCtx(n + 100) // the matrix is built; 99 merges are made
+	flipped := make(chan time.Time, 1)
+	go func() {
+		<-ctx.Done()
+		flipped <- time.Now()
+	}()
+	_, err := Cluster(ctx, vectors, 0.9)
+	returned := time.Now()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Cluster = %v; want context.Canceled", err)
+	}
+	select {
+	case at := <-flipped:
+		if d := returned.Sub(at); d > time.Second {
+			t.Fatalf("Cluster returned %v after the cancellation", d)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Cluster returned before its context was cancelled")
 	}
 }
 
