@@ -335,7 +335,9 @@ tasks:
     preconditions:
       - sh: test -d bin/Choix.app
         msg: no bin/Choix.app; run task package, then task sign:developer-id
-      - sh: codesign -dv bin/Choix.app 2>&1 | grep -q '^Authority=Developer ID Application:'
+      # codesign prints the certificate chain (Authority=) only from
+      # verbosity 2: -dv prints none, so -dvv.
+      - sh: codesign -dvv bin/Choix.app 2>&1 | grep -q '^Authority=Developer ID Application:'
         msg: bin/Choix.app is not signed with a Developer ID; run task sign:developer-id first
     cmds:
       - rm -f bin/Choix-notarize.zip
@@ -427,7 +429,8 @@ tasks:
     preconditions:
       - sh: test -f "{{.DMG}}"
         msg: no {{.DMG}}; run task dmg with CHOIX_SIGN_IDENTITY set
-      - sh: codesign -dv "{{.DMG}}" 2>&1 | grep -q '^Authority=Developer ID Application:'
+      # Authority= needs verbosity 2 (-dvv), as in notarize.
+      - sh: codesign -dvv "{{.DMG}}" 2>&1 | grep -q '^Authority=Developer ID Application:'
         msg: '{{.DMG}} is not signed with a Developer ID; run task dmg with CHOIX_SIGN_IDENTITY set'
     cmds:
       - task: notarize:submit
