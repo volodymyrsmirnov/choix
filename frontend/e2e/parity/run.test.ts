@@ -1,8 +1,17 @@
 // run.mjs (`task parity`): its options, the busy-port check that keeps it
-// from touching a server it did not start, and the start / stop of a server.
+// from touching a server it did not start, the start / stop of a server, and
+// the fixture build it runs in place of the `fixtures` setup project.
 import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { parseArgs, portBusy, startServer, stop } from './run.mjs'
+import { FIXTURE_BUILD, parseArgs, portBusy, startServer, stop } from './run.mjs'
+
+test('the fixture page is built with the command of the fixtures setup project (DESIGN_NO_BUILD=1 skips that one)', () => {
+  const setup = readFileSync(new URL('../../tools/fixtures/build.setup.ts', import.meta.url), 'utf8')
+  const [cmd, args] = FIXTURE_BUILD as [string, string[]]
+  expect(setup).toContain(`'${cmd}', [${args.map((a) => `'${a}'`).join(', ')}]`)
+  expect(setup).toContain('if (process.env.DESIGN_NO_BUILD) return')
+})
 
 test('ports default to 8801 (app) and 8811 (prototype); Playwright arguments follow --', () => {
   expect(parseArgs([])).toEqual({ appPort: 8801, protoPort: 8811, playwright: [] })

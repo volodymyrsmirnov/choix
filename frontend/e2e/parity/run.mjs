@@ -5,8 +5,10 @@
 //  1. Refuses to start when anything already listens at either port, on
 //     127.0.0.1 or [::1] (it never stops a server it did not start).
 //  2. Builds the prototype (`bun run proto:build`, what `task design:build`
-//     runs) and the app's parity build (`bun run build:parity`), one after
-//     the other.
+//     runs), the test-only fixture page the parity self-test opens
+//     (FIXTURE_BUILD → .design/fixtures-dist/, what the `fixtures` setup
+//     project builds) and the app's parity build (`bun run build:parity`),
+//     one after the other.
 //  3. Serves both on 127.0.0.1 — the prototype with tools/serve.mjs (what
 //     `task design:serve` runs), the app with serve-app.mjs (what
 //     `task parity:app` runs) — and waits until each says it is serving.
@@ -14,7 +16,11 @@
 //     their pids and can always stop them.
 //  4. Runs `bunx playwright test -c playwright.design.config.ts --project
 //     parity <args>` with PARITY_APP_URL set to the app and DESIGN_NO_BUILD=1
-//     (the prototype was built in step 2; it is not rebuilt while served).
+//     (everything was built in step 2; the prototype is not rebuilt while
+//     served). DESIGN_NO_BUILD=1 also turns the `fixtures` setup project into
+//     a no-op, which is why step 2 builds the fixture page: without it a
+//     fresh checkout has no .design/fixtures-dist/ and every self-test times
+//     out waiting for the page's harness.
 //  5. Stops both servers whatever happened (also on Ctrl-C), and exits with
 //     Playwright's status.
 import { spawn, spawnSync } from 'node:child_process'
@@ -25,6 +31,12 @@ import { fileURLToPath } from 'node:url'
 
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const READY_MS = 30_000
+
+/**
+ * The fixture page's build: the command tools/fixtures/build.setup.ts runs
+ * (run.test.ts keeps the two equal).
+ */
+export const FIXTURE_BUILD = ['bunx', ['vite', 'build', '--config', 'tools/fixtures/vite.config.ts', '--logLevel', 'error']]
 
 /**
  * The options and the Playwright arguments; throws on a bad option.
@@ -147,6 +159,7 @@ async function main() {
   }
   try {
     run('build the prototype (bun run proto:build)', 'bun', ['run', 'proto:build'])
+    run('build the self-test fixture page (tools/fixtures)', ...FIXTURE_BUILD)
     run('build the app on the mock bindings (bun run build:parity)', 'bun', ['run', 'build:parity'])
     const proto = startServer('the prototype server', ['tools/serve.mjs', '--port', String(opts.protoPort)], opts.protoPort)
     children.push(proto.child)

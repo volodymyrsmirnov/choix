@@ -129,10 +129,10 @@ tasks:
       APP_PORT: '{{.APP_PORT | default "8801"}}'
       PROTO_PORT: '{{.PROTO_PORT | default "8811"}}'
     cmds:
-      # e2e/parity/run.mjs runs design:build's and parity:app's builds, starts
-      # the servers of design:serve and parity:app itself (so it owns their
-      # pids and always stops them), refuses ports already in use, and exits
-      # with Playwright's status.
+      # e2e/parity/run.mjs runs design:build's build, the self-test's fixture
+      # page build and parity:app's build, starts the servers of design:serve
+      # and parity:app itself (so it owns their pids and always stops them),
+      # refuses ports already in use, and exits with Playwright's status.
       - node e2e/parity/run.mjs --app-port {{.APP_PORT}} --proto-port {{.PROTO_PORT}} -- {{.CLI_ARGS}}
 
   test:frontend:
