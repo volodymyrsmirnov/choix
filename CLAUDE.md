@@ -420,4 +420,4 @@ These are the source of truth for *intent*. If you're adding a feature, find it 
 - **The design gate:** when a hook blocks a gated edit, or a change would re-stale every state, stop and tell the owner. Never approve.
 - **Destructive operations on the user's data** — modifying originals, deleting `.choix/state.db` or `library.db`, renaming files in a folder: confirm first. Auto mode is not a license to destroy.
 - **Signing and release:** identities, certificates, profiles and secrets belong to the owner. Never write them into the repository, never log them, never invent them.
-- **Anything a person must do by hand** (key presses for spike S2, a pick through the real open panel, the hardened Developer ID run): write the runbook and hand it to the owner.
+- **Anything a person must do by hand** (key presses for spike S2, a pick through the real open panel, the first launch of a released disk image): write the runbook and hand it to the owner.

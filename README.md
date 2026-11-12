@@ -16,15 +16,17 @@ to Luminar Neo, Lightroom, or whatever editor you use.
 - **Choix 2.0** is a sandboxed desktop app built with [Wails v3](https://v3.wails.io).
   It replaces the 1.x command-line tool and its localhost web UI, which were removed.
 - macOS 14 or later, Apple Silicon only. There is no Intel build and no universal binary.
-- No signed release has been published yet. Until one is, build it from source (below).
+- Signed and notarized releases are on
+  [GitHub Releases](https://github.com/volodymyrsmirnov/choix/releases) and in the
+  Homebrew tap (below); 2.0.0 was the first. Developers can also build it from source (below).
   See [`v2.md`](v2.md) for what is intentionally out of scope.
 
 ## Install
 
-> **Planned.** None of the channels below is live until the first 2.x release is
-> published. Each release tag `v2.x.y` makes the release workflow
-> (`.github/workflows/release.yml`) sign, notarize and publish the disk image and
-> update the cask ([`docs/release/signing-checklist.md`](docs/release/signing-checklist.md)).
+Each release tag `v2.x.y` makes the release workflow
+(`.github/workflows/release.yml`) sign, notarize and publish the disk image on
+GitHub Releases and update the cask
+([`docs/release/signing-checklist.md`](docs/release/signing-checklist.md)).
 
 - **Homebrew cask** — the notarized disk image from GitHub Releases, through the owner's tap:
 
@@ -32,10 +34,12 @@ to Luminar Neo, Lightroom, or whatever editor you use.
   brew install --cask volodymyrsmirnov/tap/choix
   ```
 
+  `brew upgrade --cask choix` installs a newer release.
 - **Disk image** — download `Choix-<version>-arm64.dmg` from
   [GitHub Releases](https://github.com/volodymyrsmirnov/choix/releases), open it and drag
   Choix to Applications. It is signed with a Developer ID and notarized by Apple.
-- **Mac App Store** — the same sandboxed app, free (`task package:mas` builds the package).
+- **Mac App Store** — planned, not available yet: the same sandboxed app, free.
+  `task package:mas` builds the package.
 
 ## First launch
 
@@ -52,8 +56,8 @@ to Luminar Neo, Lightroom, or whatever editor you use.
    the system picker, or drop folders on the window. You never have to wait for
    the models: a folder scanned before CLIP is ready is grouped by time only,
    and regrouped when CLIP arrives.
-3. **Cull.** Folders scan in the background, one at a time; the one you open
-   goes first. Open a folder to see its clusters, then pick (Space) or reject
+3. **Cull.** Folders scan in the background, up to two at a time; the one you
+   open goes first. Open a folder to see its clusters, then pick (Space) or reject
    (X), move with the arrow keys, compare (C), pixel-peep (Z), undo with ⌘Z.
    Press `?` for every shortcut. **Open Picks** (⌘P) shows the copies in Finder.
 
