@@ -1,6 +1,6 @@
 ---
 branch: feat/photo-culling-features-f6d28a
-states: [202-213, 215, 217-227, 229, 231, 500-504, 507-509, 512-513, 518-520, 702-703, 803, 805, 807]
+states: [202-213, 215, 217-227, 229, 231, 500-504, 507-509, 512-513, 518-520, 603, 605, 702-703, 803, 805, 807]
 retired: [11-17, 112, 120, 216, 228, 505, 506, 514-517]
 ui: true
 ---
@@ -24,3 +24,7 @@ change. Gallery: 803 shows the slider at the new default, 805 the quality
 indicator's rating pass only and two of the page's real banners in place
 of the download banners, 807 a Folder title bar rating quality in place of
 the quality model download.
+
+Overlays: the sample info toast in 603 and 605 announced that visual
+grouping was ready, which nothing announces any more; it now shows a toast
+the app really shows, a folder (“Film scans”) that left the Library.

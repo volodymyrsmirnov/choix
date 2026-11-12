@@ -18,8 +18,8 @@ describe('toasts', () => {
     const toasts = createToasts()
     let changes = 0
     toasts.subscribe(() => changes++)
-    const id = toasts.push({ tone: 'info', title: 'Visual grouping is ready' })
-    expect(toasts.items()).toEqual([{ id, tone: 'info', title: 'Visual grouping is ready' }])
+    const id = toasts.push({ tone: 'info', title: '“Film scans” left the Library' })
+    expect(toasts.items()).toEqual([{ id, tone: 'info', title: '“Film scans” left the Library' }])
 
     jest.advanceTimersByTime(TOAST_MS - 1)
     expect(toasts.items()).toHaveLength(1)

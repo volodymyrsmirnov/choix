@@ -54,7 +54,7 @@ export default async function overlays(page: Page, proto: ProtoHandle): Promise<
   await proto.open(604)
   await dismiss(page, 'unreadable')
   await proto.open(605)
-  await dismiss(page, 'clip-ready')
+  await dismiss(page, 'left-library')
 
   // 603: Escape closes the newest toast first.
   await proto.open(603)
@@ -62,7 +62,7 @@ export default async function overlays(page: Page, proto: ProtoHandle): Promise<
   await expect(toasts).toHaveCount(3)
   for (const [left, gone] of [
     [2, 'picked'],
-    [1, 'clip-ready'],
+    [1, 'left-library'],
     [0, 'unreadable'],
   ] as const) {
     await page.keyboard.press('Escape')

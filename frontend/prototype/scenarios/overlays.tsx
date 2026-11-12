@@ -30,10 +30,10 @@ export const TOAST_WARN: ToastItem = {
   body: 'They are left out; every other photo is ready to review.',
 }
 export const TOAST_INFO: ToastItem = {
-  id: 'clip-ready',
+  id: 'left-library',
   tone: 'info',
-  title: 'Visual grouping is ready',
-  body: 'Folders scanned without it are being grouped again.',
+  title: '“Film scans” left the Library',
+  body: 'The folder was deleted or moved to the Trash in Finder.',
 }
 
 function OverLibrary({ ctx, toasts = [], sheet = false }: { ctx: ScenarioCtx; toasts?: ToastItem[]; sheet?: boolean }) {
