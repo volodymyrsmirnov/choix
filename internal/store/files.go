@@ -411,7 +411,10 @@ func (r *FilesRepo) UpsertOnRescan(f File, run int64) (id int64, inserted bool, 
 }
 
 // resetChanged rewrites the row id of a file whose content changed and
-// clears its rating and its stored print, in one transaction.
+// clears its rating and its stored print, in one transaction. When the
+// content hash changed, migration 007's trigger has already cleared the
+// print with the first update; the second one also covers a change of size
+// or mtime under the same content hash, which covers only the file's ends.
 func (r *FilesRepo) resetChanged(f File, run, id int64) error {
 	ctx := context.Background()
 	tx, err := r.db.BeginTx(ctx, nil)

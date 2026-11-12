@@ -206,8 +206,24 @@ func TestUpsertOnRescan_ClearsPrint(t *testing.T) {
 		t.Fatalf("CountAnalyzedMissingPrint = %d, %v; want 1", n, err)
 	}
 
+	// A change of size or mtime under the same content hash (the hash covers
+	// only the ends of a large file) clears the print too: the schema trigger
+	// of migration 007 does not fire then, UpsertOnRescan's own update does.
+	if err := s.AISignals().UpsertPrint(id, testPrint(1), testPrintID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Files().UpsertOnRescan(File{Path: "a.jpg", Size: 2, Mtime: 3, ContentHash: "h2", Kind: "photo", Format: "jpeg"}, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AISignals().GetByFileID(id); err != nil || got.Print != nil || got.PrintID != "" {
+		t.Fatalf("after an mtime change under the same hash: print len %d, id %q, %v; want both cleared", len(got.Print), got.PrintID, err)
+	}
+	checkPick()
+
 	// Both updates commit together or not at all: when clearing the print
-	// fails, the file keeps its old content hash and its rating too.
+	// fails, the file keeps its old size, mtime and status and its rating
+	// too. The rescan keeps the content hash, so the schema trigger does not
+	// fire and only UpsertOnRescan's own clearing meets the refusal.
 	b := insertAnalyzed(t, s, "b.jpg", "photo", "b1")
 	if err := s.AISignals().UpsertPrint(b, testPrint(2), testPrintID); err != nil {
 		t.Fatal(err)
@@ -220,7 +236,7 @@ func TestUpsertOnRescan_ClearsPrint(t *testing.T) {
 		BEGIN SELECT RAISE(ABORT, 'refused for a test'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.Files().UpsertOnRescan(File{Path: "b.jpg", Size: 3, Mtime: 3, ContentHash: "b2", Kind: "photo", Format: "jpeg"}, 3); err == nil {
+	if _, _, err := s.Files().UpsertOnRescan(File{Path: "b.jpg", Size: 3, Mtime: 3, ContentHash: "b1", Kind: "photo", Format: "jpeg"}, 4); err == nil {
 		t.Fatal("UpsertOnRescan succeeded although clearing the print failed")
 	}
 	f, err := s.Files().GetByID(b)
@@ -233,9 +249,9 @@ func TestUpsertOnRescan_ClearsPrint(t *testing.T) {
 		`SELECT quality_raw, quality_model FROM files WHERE id = ?`, b).Scan(&raw, &model); err != nil {
 		t.Fatal(err)
 	}
-	if f.ContentHash != "b1" || f.ScanStatus != "analyzed" || !raw.Valid || model.String != testScorer {
-		t.Fatalf("after the failed rescan: hash %q, status %q, rating %+v %q; want the row untouched (b1, analyzed, 0.5 %q)",
-			f.ContentHash, f.ScanStatus, raw, model.String, testScorer)
+	if f.Size != 1 || f.Mtime != 1 || f.ScanStatus != "analyzed" || !raw.Valid || model.String != testScorer {
+		t.Fatalf("after the failed rescan: size %d, mtime %d, status %q, rating %+v %q; want the row untouched (1, 1, analyzed, 0.5 %q)",
+			f.Size, f.Mtime, f.ScanStatus, raw, model.String, testScorer)
 	}
 	if got, err := s.AISignals().GetByFileID(b); err != nil || got.Print == nil || got.PrintID != testPrintID {
 		t.Fatalf("after the failed rescan: print len %d, id %q, %v; want it kept", len(got.Print), got.PrintID, err)

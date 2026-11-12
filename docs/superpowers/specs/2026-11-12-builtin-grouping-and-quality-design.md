@@ -183,6 +183,12 @@ Migration `internal/store/migrations/007_vision_print.sql`:
 ```sql
 ALTER TABLE ai_signals ADD COLUMN vision_print BLOB;
 ALTER TABLE ai_signals ADD COLUMN vision_print_id TEXT;
+CREATE TRIGGER files_content_changed_clears_print
+AFTER UPDATE OF content_hash ON files
+WHEN OLD.content_hash IS NOT NEW.content_hash
+BEGIN
+    UPDATE ai_signals SET vision_print = NULL, vision_print_id = NULL WHERE file_id = NEW.id;
+END;
 PRAGMA user_version = 7;
 ```
 
@@ -196,6 +202,7 @@ PRAGMA user_version = 7;
   - `CountAnalyzedMissingPrint(printID)` and `BumpAnalyzedMissingPrint(printID)`: analyzed files with no `ai_signals` row, or with `vision_print_id` NULL or different. They replace the two `…MissingEmbedding` methods.
 - A stored blob whose length is not 3,072 bytes is treated as no print.
 - **A changed file loses its print.** When a file's content changed, `UpsertOnRescan` clears `vision_print` and `vision_print_id` (in `ai_signals`) together with the quality rating (in `files`): two updates in one transaction, both rolled back if either fails. Without that, a file changed while grouping was off would keep a print of its old content under the current id. Picks are untouched.
+- **The schema clears it too, for any writer.** The released 2.0.0 build opens a version-7 `state.db` as it is (none of its migrations is above the stored version) and knows nothing of the print columns: rescanning an edited photo, it rewrites `content_hash` and leaves the old print stamped with the current id, which this build's backfill would never redo. The trigger above clears `vision_print` and `vision_print_id` whenever `content_hash` changes to a different value, whoever writes it. `UpsertOnRescan` keeps its own clearing, which also covers a change of size or mtime under the same content hash (the hash covers only the ends of a large file).
 
 ### 5.4 Clustering
 
