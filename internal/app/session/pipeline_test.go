@@ -662,6 +662,97 @@ func TestScorer_SharedAndRatesThePreview(t *testing.T) {
 	}
 }
 
+// A preview row whose file is gone does not make the photo unratable when
+// the preview is at its standard place (thumb.CachePath): the scorer rates it.
+func TestScorer_StalePreviewRowUsesTheStandardCachePath(t *testing.T) {
+	h := newSessionTestHarness(t, sessionTestOptions{})
+	id, root := h.folder(t, "stalescore")
+	s, release := h.acquire(t, id)
+	defer release()
+
+	fid := sessionTestInsertAnalyzed(t, s.Store, "a.jpg", sessionTestDay, nil)
+	if _, err := thumb.WriteCache(root, fid, thumb.TierPreview, platformtest.MakeJPEG(t, 512, 512)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Store.Thumbs().Upsert(store.Thumb{FileID: fid, Tier: thumb.TierPreview,
+		RelPath: ".choix/thumbs/00/gone-preview.jpg", Width: 512, Height: 512}); err != nil {
+		t.Fatal(err)
+	}
+	q := s.Scorer()
+	items, err := q.ListPending(0, 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("pending = %+v, %v; want the one photo", items, err)
+	}
+	if err := q.Score(context.Background(), items[0]); err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	var raw sql.NullFloat64
+	var model string
+	if err := s.Store.DB().QueryRowContext(context.Background(),
+		`SELECT quality_raw, quality_model FROM files WHERE id = ?`, fid).Scan(&raw, &model); err != nil {
+		t.Fatal(err)
+	}
+	if !raw.Valid || model != quality.ScorerID {
+		t.Fatalf("stored raw=%+v model=%q; want a score stamped %q", raw, model, quality.ScorerID)
+	}
+}
+
+// sessionThumbPath stays inside the thumbnail cache: a row naming an
+// original, or a path that leaves .choix/thumbs/, is not used, nor is a
+// symbolic link at the standard cache path; the row's own file wins over
+// the standard path.
+func TestSessionThumbPath_StaysInTheCache(t *testing.T) {
+	h := newSessionTestHarness(t, sessionTestOptions{})
+	id, root := h.folder(t, "confined")
+	sessionTestWriteJPEG(t, root, "a.jpg")
+	s, release := h.acquire(t, id)
+	defer release()
+	fid := sessionTestInsertAnalyzed(t, s.Store, "a.jpg", sessionTestDay, nil)
+	setRow := func(rel string) {
+		t.Helper()
+		if err := s.Store.Thumbs().Upsert(store.Thumb{FileID: fid, Tier: thumb.TierPreview, RelPath: rel, Width: 8, Height: 8}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{"a.jpg", ".choix/thumbs/../../a.jpg", ".choix/thumbs/../state.db", "/etc/hosts"} {
+		setRow(rel)
+		if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err == nil {
+			t.Errorf("row %q resolved to %s; want it refused", rel, p)
+		}
+	}
+
+	std := thumb.CachePath(s.Root, fid, thumb.TierPreview)
+	if err := os.MkdirAll(filepath.Dir(std), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(s.Root, "a.jpg"), std); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err == nil {
+		t.Errorf("a symbolic link at the standard path resolved to %s; want it refused", p)
+	}
+	if err := os.Remove(std); err != nil {
+		t.Fatal(err)
+	}
+
+	stdRel, err := thumb.WriteCache(s.Root, fid, thumb.TierPreview, platformtest.MakeJPEG(t, 8, 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setRow("a.jpg")
+	if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err != nil || p != std {
+		t.Errorf("with a refused row: %s, %v; want the standard path %s", p, err, std)
+	}
+	other := filepath.ToSlash(filepath.Join(filepath.Dir(filepath.FromSlash(stdRel)), "other-preview.jpg"))
+	if err := os.WriteFile(filepath.Join(s.Root, filepath.FromSlash(other)), platformtest.MakeJPEG(t, 8, 8), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setRow(other)
+	if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err != nil || p != filepath.Join(s.Root, filepath.FromSlash(other)) {
+		t.Errorf("with a usable row: %s, %v; want the row's file, not the standard one", p, err)
+	}
+}
+
 // The cluster stage reports done of total in files, like the other stages,
 // so the Folder page's checklist and the indicators show a real count.
 func TestNewPipeline_ClusterStageReportsFiles(t *testing.T) {

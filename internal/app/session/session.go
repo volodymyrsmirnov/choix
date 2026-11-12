@@ -18,6 +18,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -341,24 +342,63 @@ func sessionWritable(dir string) error {
 	return nil
 }
 
-// sessionThumbPath returns the absolute path of the file's cached thumbnail
-// of tier: the thumbs row's path, or the deterministic cache layout when the
-// row is missing and the file exists there.
+// sessionCachePrefix is where every thumbnail tier lives inside a folder.
+// A thumbs row naming any other place (an original among them) is not used.
+const sessionCachePrefix = ".choix/thumbs/"
+
+// sessionThumbPath is the one resolver of a file's cached image of tier, for
+// the analyze stage and the quality scorer: the thumbs row's path when it
+// names a regular file, otherwise the tier's standard cache path
+// (thumb.CachePath) when a regular file is there. A row whose file is gone
+// (a stale row) therefore does not hide the file at its standard place.
+//
+// Both candidates stay inside the folder's thumbnail cache: the row's path
+// must be a local, slash-separated path under .choix/thumbs/, and the last
+// element of either must be a regular file, not a symbolic link. Nothing
+// here opens an original.
+//
+// With neither, the error names the tier and why the row could not be used
+// (or, without a row, "not found").
 func sessionThumbPath(st *store.Store, root string, fileID int64, tier string) (string, error) {
 	t, err := st.Thumbs().Get(fileID, tier)
-	if err == nil && t.RelPath != "" && filepath.IsLocal(filepath.FromSlash(t.RelPath)) {
-		return filepath.Join(root, filepath.FromSlash(t.RelPath)), nil
+	if err == nil {
+		var p string
+		if p, err = sessionRowCachePath(root, t.RelPath); err == nil {
+			if err = sessionRegularFile(p); err == nil {
+				return p, nil
+			}
+		}
 	}
 	abs := thumb.CachePath(root, fileID, tier)
-	if _, statErr := os.Stat(abs); statErr == nil {
+	if sessionRegularFile(abs) == nil {
 		return abs, nil
-	}
-	if err == nil {
-		err = errors.New("its cache entry is unusable")
 	}
 	name := "thumbnail"
 	if tier == thumb.TierPreview {
 		name = "preview"
 	}
 	return "", fmt.Errorf("no cached %s image for this file (%w)", name, err)
+}
+
+// sessionRowCachePath returns the absolute path a thumbs row's rel names,
+// or an error when rel is not a local path under .choix/thumbs/.
+func sessionRowCachePath(root, rel string) (string, error) {
+	slash := filepath.ToSlash(rel)
+	if rel == "" || !filepath.IsLocal(filepath.FromSlash(rel)) || !strings.HasPrefix(path.Clean(slash), sessionCachePrefix) {
+		return "", fmt.Errorf("its cache entry %q is unusable", rel)
+	}
+	return filepath.Join(root, filepath.FromSlash(rel)), nil
+}
+
+// sessionRegularFile reports why p is not usable as a cached image: it does
+// not exist, or it is not a regular file (a symbolic link is refused).
+func sessionRegularFile(p string) error {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", p)
+	}
+	return nil
 }

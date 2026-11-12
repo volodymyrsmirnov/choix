@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -303,9 +302,9 @@ func (t *sessionThumbStage) Build(ctx context.Context, fileID int64) error {
 
 // sessionAnalyzeStage adapts analyze.Analyzer to pipeline.AnalyzeProcessor:
 // it hands the analyzer the file's preview tier (at most 1600 px) or, when
-// the file has no usable preview (no row, or its cache file is gone), its
-// thumb tier, as the media handler does: Choix 1.x made only a thumb for a
-// video. A file with neither is failed, so it cannot stall the stage —
+// the file has no usable preview (neither its row's file nor a file at the
+// tier's standard cache path), its thumb tier, as the media handler does:
+// Choix 1.x made only a thumb for a video. A file with neither is failed, so it cannot stall the stage —
 // unless the folder is unreachable, which leaves it as it was
 // (pipeline.ErrFolderUnavailable). The analyzer runs under the session's
 // context, so its native calls are counted in the session's Inflight.
@@ -333,20 +332,16 @@ func (a *sessionAnalyzeStage) Analyze(ctx context.Context, fileID int64) error {
 }
 
 // sessionAnalyzeInput returns the cached image the analyze stage reads for
-// fileID: its preview tier when that file exists, otherwise its thumb tier
-// when that one does. With neither, the error names the preview.
+// fileID: its preview tier, otherwise its thumb tier, each resolved by
+// sessionThumbPath (the row's file, else the tier's standard cache path).
+// With neither, the error names the preview.
 func sessionAnalyzeInput(st *store.Store, root string, fileID int64) (string, error) {
 	p, err := sessionThumbPath(st, root, fileID, thumb.TierPreview)
 	if err == nil {
-		if _, err = os.Stat(p); err == nil {
-			return p, nil
-		}
-		err = fmt.Errorf("no cached preview image for this file (%w)", err)
+		return p, nil
 	}
 	if tp, terr := sessionThumbPath(st, root, fileID, thumb.TierThumb); terr == nil {
-		if _, serr := os.Stat(tp); serr == nil {
-			return tp, nil
-		}
+		return tp, nil
 	}
 	return "", err
 }

@@ -1746,6 +1746,69 @@ func TestJob_V1FolderBackfillUsesThumbWithoutPreview(t *testing.T) {
 	}
 }
 
+// TestJob_StaleTierRowsUseTheStandardCachePath: a thumbs row whose file is
+// gone does not hide the tier's cache file at its standard place
+// (thumb.CachePath). A stale preview row with the preview there is analyzed
+// from that preview, not from the 256 px thumb; stale rows for both tiers
+// with the files there are analyzed, not failed; and with the preview gone
+// too, the thumb at its standard place is used.
+func TestJob_StaleTierRowsUseTheStandardCachePath(t *testing.T) {
+	vis := &platformtest.Vision{}
+	h := newJobTestHarness(t, sessionTestOptions{vision: vis})
+	id, root := h.folder(t, "v1stale")
+	sessionTestCopyV1(t, root)
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		for _, q := range []string{
+			`UPDATE thumbs SET rel_path = '.choix/thumbs/01/1-preview-old.jpg' WHERE file_id = 1 AND tier = 'preview'`,
+			`UPDATE thumbs SET rel_path = '.choix/thumbs/02/2-' || tier || '-old.jpg' WHERE file_id = 2`,
+			`UPDATE thumbs SET rel_path = '.choix/thumbs/04/4-' || tier || '-old.jpg' WHERE file_id = 4`,
+		} {
+			if _, err := s.Store.DB().ExecContext(context.Background(), q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	}()
+	if err := os.Remove(filepath.Join(root, ".choix", "thumbs", "04", "4-preview.jpg")); err != nil {
+		t.Fatal(err)
+	}
+
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	prints := jobTestPrints(t, s.Store)
+	for _, fid := range []int64{1, 2, 4} {
+		f, err := s.Store.Files().GetByID(fid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.ScanStatus != "analyzed" || prints[fid] == nil {
+			t.Errorf("file %d is %q (%s), print %v; want analyzed with a print", fid, f.ScanStatus, f.ErrMsg.String, prints[fid] != nil)
+		}
+	}
+	calls := vis.Calls()
+	for _, want := range []string{
+		thumb.CachePath(s.Root, 1, thumb.TierPreview),
+		thumb.CachePath(s.Root, 2, thumb.TierPreview),
+		thumb.CachePath(s.Root, 4, thumb.TierThumb),
+	} {
+		if !slices.Contains(calls, want) {
+			t.Errorf("Vision was not called with %s; calls %v", want, calls)
+		}
+	}
+	for _, unwanted := range []string{
+		thumb.CachePath(s.Root, 1, thumb.TierThumb),
+		thumb.CachePath(s.Root, 2, thumb.TierThumb),
+	} {
+		if slices.Contains(calls, unwanted) {
+			t.Errorf("Vision was called with %s although the preview is there", unwanted)
+		}
+	}
+}
+
 func TestJob_OutcomeClassification(t *testing.T) {
 	h := newJobTestHarness(t, sessionTestOptions{})
 	j := h.job(nil)

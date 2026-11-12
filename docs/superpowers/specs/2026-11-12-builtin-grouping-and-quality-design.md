@@ -164,6 +164,7 @@ func (a *Analyzer) Analyze(ctx context.Context, fileID int64, previewPath string
 
 - The stage reads the **preview tier** (`thumb.TierPreview`, at most 1600 px), not the thumb tier. That is the input the benchmark measured. For a video it is the preview made from the first keyframe.
 - **When a file has no preview tier, the stage uses its thumb tier**, as the media handler does. v1 made only a thumb for a video, so without this fallback the backfill would mark every video of a v1 folder `failed`.
+- **One resolver finds a tier's file**, for the stage (preview, then thumb) and for the quality scorer (preview only): the `thumbs` row's path when it names a regular file, otherwise the tier's standard cache path (`thumb.CachePath`) when a regular file is there. A stale row therefore never hides a cache file at its standard place. Both candidates stay inside `.choix/thumbs/` (a row naming any other place is not used) and a symbolic link is refused, so no original is opened here.
 - The session's printer wraps `platform.Vision` and answers `analyze.ErrPrintsOff` while `visual_grouping` is off, read live for every file, as `sessionGatedEmbedder` does today.
 - `Analyze` L2-normalises the vector before storing it and rejects a vector whose length is not `platform.FeaturePrintLen` or whose norm is zero or not finite.
 - Outcomes, each ending with the file `analyzed` unless noted:
