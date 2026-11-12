@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/color"
 	"image/jpeg"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,6 +26,7 @@ var (
 	_ platform.Workspace    = (*platformtest.Workspace)(nil)
 	_ platform.Stills       = (*platformtest.Stills)(nil)
 	_ platform.Video        = (*platformtest.Video)(nil)
+	_ platform.Vision       = (*platformtest.Vision)(nil)
 	_ platform.TitleBar     = (*platformtest.TitleBar)(nil)
 	_ platform.WindowChrome = (*platformtest.WindowChrome)(nil)
 )
@@ -503,5 +507,150 @@ func TestFakeWorkspace_RecordsCalls(t *testing.T) {
 	}
 	if got := w.Calls(); !slices.Equal(got, want) {
 		t.Fatalf("Calls() = %+v; want %+v", got, want)
+	}
+}
+
+// visionNorm is the L2 norm of v.
+func visionNorm(v []float32) float64 {
+	var s float64
+	for _, x := range v {
+		s += float64(x) * float64(x)
+	}
+	return math.Sqrt(s)
+}
+
+// checkerJPEG is a w×h black and white checkerboard of 8 px squares.
+func checkerJPEG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			c := color.NRGBA{A: 255}
+			if (x/8+y/8)%2 == 0 {
+				c.R, c.G, c.B = 255, 255, 255
+			}
+			img.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestVisionFake_Vectors(t *testing.T) {
+	v := &platformtest.Vision{}
+	ctx := context.Background()
+	gradient := platformtest.MakeJPEG(t, 160, 120)
+	path := filepath.Join(t.TempDir(), "a.jpg")
+	if err := os.WriteFile(path, gradient, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fromData, err := v.FeaturePrint(ctx, platform.ImageInput{Data: gradient})
+	if err != nil {
+		t.Fatalf("FeaturePrint(data): %v", err)
+	}
+	fromPath, err := v.FeaturePrint(ctx, platform.ImageInput{Path: path})
+	if err != nil {
+		t.Fatalf("FeaturePrint(path): %v", err)
+	}
+	if len(fromData) != platform.FeaturePrintLen {
+		t.Fatalf("len = %d, want %d", len(fromData), platform.FeaturePrintLen)
+	}
+	if n := visionNorm(fromData); math.Abs(n-1) > 1e-5 {
+		t.Fatalf("norm = %v, want 1", n)
+	}
+	if !slices.Equal(fromData, fromPath) {
+		t.Fatal("the same image as data and as a file gives different vectors")
+	}
+	decoded, err := jpeg.Decode(bytes.NewReader(gradient))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(fromData, platformtest.FeaturePrintOf(decoded)) {
+		t.Fatal("FeaturePrintOf differs from what the fake returned")
+	}
+
+	other, err := v.FeaturePrint(ctx, platform.ImageInput{Data: checkerJPEG(t, 160, 120)})
+	if err != nil {
+		t.Fatalf("FeaturePrint(checkerboard): %v", err)
+	}
+	var d float64
+	for i := range other {
+		d += float64(other[i]) * float64(fromData[i])
+	}
+	if d >= 0.999 {
+		t.Fatalf("gradient·checkerboard = %v, want < 0.999", d)
+	}
+
+	// A uniform image still gives a unit vector.
+	flat := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for i := range flat.Pix {
+		flat.Pix[i] = 128
+	}
+	if n := visionNorm(platformtest.FeaturePrintOf(flat)); math.Abs(n-1) > 1e-5 {
+		t.Fatalf("uniform image: norm = %v, want 1", n)
+	}
+
+	if got := v.Calls(); !slices.Equal(got, []string{"", path, ""}) {
+		t.Fatalf("Calls = %q", got)
+	}
+}
+
+func TestVisionFake_Unreadable(t *testing.T) {
+	v := &platformtest.Vision{}
+	ctx := context.Background()
+	empty := filepath.Join(t.TempDir(), "empty.jpg")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []platform.ImageInput{
+		{Path: empty},
+		{Path: filepath.Join(t.TempDir(), "missing.jpg")},
+		{Data: []byte("not an image")},
+		{},
+		{Path: "/x/a.jpg", Data: []byte{1}},
+	} {
+		if _, err := v.FeaturePrint(ctx, in); err == nil {
+			t.Errorf("FeaturePrint(%q, %d bytes): want an error", in.Path, len(in.Data))
+		}
+	}
+}
+
+func TestVisionFake_FailAndGate(t *testing.T) {
+	wantErr := errors.New("vision: no print")
+	v := &platformtest.Vision{
+		Fail: map[string]error{"/x/bad.jpg": wantErr},
+		Gate: make(chan struct{}),
+	}
+	ctx := context.Background()
+	data := platformtest.MakeJPEG(t, 32, 24)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := v.FeaturePrint(ctx, platform.ImageInput{Data: data})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("FeaturePrint returned %v before the gate opened", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(v.Gate)
+	if err := <-done; err != nil {
+		t.Fatalf("FeaturePrint: %v", err)
+	}
+	if _, err := v.FeaturePrint(ctx, platform.ImageInput{Path: "/x/bad.jpg"}); !errors.Is(err, wantErr) {
+		t.Fatalf("FeaturePrint err = %v; want %v", err, wantErr)
+	}
+
+	held := &platformtest.Vision{Gate: make(chan struct{})}
+	defer close(held.Gate)
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if _, err := held.FeaturePrint(cctx, platform.ImageInput{Data: data}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("held FeaturePrint err = %v; want context.DeadlineExceeded", err)
 	}
 }
