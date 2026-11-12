@@ -164,7 +164,8 @@ export function createShell(): Shell {
         library.start(),
         // The parity fixture's toasts; does nothing outside the parity build (parityUi.ts).
         seedParityToasts(toasts),
-        // Back to the app: a drive may have come or gone meanwhile.
+        // Back to the app: a drive may have come or gone meanwhile. (The
+        // quality store reloads itself on the same event: qualityStore.ts.)
         on('common:WindowFocus', () => {
           Library.CheckNow().then(undefined, () => {})
         }),
