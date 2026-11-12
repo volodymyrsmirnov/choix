@@ -487,8 +487,9 @@ func (e *fakeEmbedder) Embed(image.Image) ([]float32, error) {
 	return v, nil
 }
 
-// fakeInferer is the shared quality session; a test can hold calls.
-type fakeInferer struct {
+// scoreGate observes the photos the rating passes score (the runtime's
+// scoreHook); a test can hold them.
+type scoreGate struct {
 	calls   atomic.Int64
 	entered chan struct{}
 
@@ -496,7 +497,7 @@ type fakeInferer struct {
 	hold chan struct{}
 }
 
-func (f *fakeInferer) holdCalls() (release func()) {
+func (f *scoreGate) holdCalls() (release func()) {
 	ch := make(chan struct{})
 	f.mu.Lock()
 	f.hold = ch
@@ -505,7 +506,8 @@ func (f *fakeInferer) holdCalls() (release func()) {
 	return func() { once.Do(func() { close(ch) }) }
 }
 
-func (f *fakeInferer) QualityCrop([]float32) (float64, error) {
+// score runs before each photo is scored.
+func (f *scoreGate) score() {
 	f.calls.Add(1)
 	f.mu.Lock()
 	hold := f.hold
@@ -517,7 +519,6 @@ func (f *fakeInferer) QualityCrop([]float32) (float64, error) {
 		}
 		<-hold
 	}
-	return 0.5, nil
 }
 
 // fakePicker is the folder picker: it returns what the test set.
@@ -665,7 +666,7 @@ type harness struct {
 	video        *platformtest.Video
 	dl           *fakeDownloader
 	emb          *fakeEmbedder
-	inf          *fakeInferer
+	scores       *scoreGate
 	em           *recEmitter
 	picker       *fakePicker
 	confirm      *fakeConfirmer
@@ -698,7 +699,7 @@ func newHarness(t *testing.T) *harness {
 		video:   &platformtest.Video{},
 		dl:      dl,
 		emb:     &fakeEmbedder{dl: dl, log: log, entered: make(chan struct{}, 1)},
-		inf:     &fakeInferer{entered: make(chan struct{}, 1)},
+		scores:  &scoreGate{entered: make(chan struct{}, 1)},
 		em:      newRecEmitter(log),
 		picker:  &fakePicker{},
 		confirm: &fakeConfirmer{},
@@ -723,19 +724,18 @@ func (h *harness) setConfig(t *testing.T, edit func(*config.Config)) {
 
 func (h *harness) deps() Deps {
 	return Deps{
-		Bookmarks:   h.bm,
-		Volumes:     h.vols,
-		Workspace:   h.ws,
-		Stills:      h.stills,
-		Video:       h.video,
-		Downloader:  h.dl,
-		Emit:        h.em,
-		Picker:      h.picker,
-		Confirm:     h.confirm,
-		Home:        h.parent,
-		Embedder:    h.emb,
-		CropInferer: h.inf,
-		MenuState:   h.menu,
+		Bookmarks:  h.bm,
+		Volumes:    h.vols,
+		Workspace:  h.ws,
+		Stills:     h.stills,
+		Video:      h.video,
+		Downloader: h.dl,
+		Emit:       h.em,
+		Picker:     h.picker,
+		Confirm:    h.confirm,
+		Home:       h.parent,
+		Embedder:   h.emb,
+		MenuState:  h.menu,
 	}
 }
 
@@ -748,6 +748,7 @@ func (h *harness) newRuntime(t *testing.T) *Runtime {
 		t.Fatalf("New: %v", err)
 	}
 	r.presenceEvery = time.Hour
+	r.scoreHook = h.scores.score
 	t.Cleanup(r.Shutdown)
 	return r
 }

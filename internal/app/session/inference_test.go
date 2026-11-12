@@ -186,9 +186,9 @@ func (s *turnTestScorer) Score(context.Context, store.QualityItem) error {
 	return nil
 }
 
-// A rating pass waiting for the inference turn stops at once when its job
-// is cancelled; it never scores the photo.
-func TestJobScorer_WaitForTheInferenceTurnIsCancellable(t *testing.T) {
+// A rating pass takes no inference turn: it scores with the built-in
+// formula while another job holds the turn.
+func TestJobScorer_DoesNotTakeTheInferenceTurn(t *testing.T) {
 	inner := &turnTestScorer{}
 	sc := &jobScorer{
 		Scorer:  inner,
@@ -198,31 +198,16 @@ func TestJobScorer_WaitForTheInferenceTurnIsCancellable(t *testing.T) {
 		rated:   func() {},
 	}
 	releaseTurn := holdInference(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	defer releaseTurn()
 	errc := make(chan error, 1)
-	go func() { errc <- sc.Score(ctx, store.QualityItem{FileID: 1}) }()
+	go func() { errc <- sc.Score(context.Background(), store.QualityItem{FileID: 1}) }()
 	select {
 	case err := <-errc:
-		t.Fatalf("Score returned while another photo held the turn: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-	cancel()
-	select {
-	case err := <-errc:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Score = %v; want context.Canceled", err)
+		if err != nil {
+			t.Fatalf("Score: %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("Score did not return within 1 s of its cancellation")
-	}
-	releaseTurn()
-	if inner.scored != 0 {
-		t.Errorf("scored %d photos; want 0", inner.scored)
-	}
-
-	// With the turn free, the photo is scored.
-	if err := sc.Score(context.Background(), store.QualityItem{FileID: 1}); err != nil {
-		t.Fatalf("Score: %v", err)
+		t.Fatal("Score waited for the inference turn")
 	}
 	if inner.scored != 1 {
 		t.Errorf("scored %d photos; want 1", inner.scored)

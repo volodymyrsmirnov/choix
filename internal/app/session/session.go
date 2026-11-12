@@ -32,6 +32,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/meta"
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/safefs"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
@@ -64,15 +65,14 @@ func init() {
 }
 
 // Deps are what sessions are built from. Settings returns the live
-// machine-wide settings; Embedder and CropInferer are the app's shared ONNX
-// sessions (owned and closed elsewhere) and may be nil.
+// machine-wide settings; Embedder is the app's shared CLIP session (owned
+// and closed elsewhere) and may be nil.
 type Deps struct {
-	Library     *library.Library
-	Settings    func() config.Config
-	Stills      platform.Stills
-	Video       platform.Video
-	Embedder    local.Embedder
-	CropInferer local.CropInferer
+	Library  *library.Library
+	Settings func() config.Config
+	Stills   platform.Stills
+	Video    platform.Video
+	Embedder local.Embedder
 }
 
 // The folder's working directory and database, relative to its root.
@@ -123,7 +123,7 @@ type Session struct {
 	picksMissing atomic.Int64
 
 	scorerOnce sync.Once
-	scorer     *local.QualityScorer
+	scorer     *quality.FileScorer
 }
 
 // Context returns parent carrying the session's Inflight: every native call
@@ -190,16 +190,11 @@ func sessionCleanPicksDir(d string) (string, error) {
 	return clean, nil
 }
 
-// Scorer returns the folder's quality scorer, built once. It runs crops
-// through Deps.CropInferer; without one, Score fails with
-// local.ErrQualityUnavailable.
-func (s *Session) Scorer() *local.QualityScorer {
+// Scorer returns the folder's quality scorer, built once. It rates each
+// photo's preview with the built-in formula (quality.Measure).
+func (s *Session) Scorer() *quality.FileScorer {
 	s.scorerOnce.Do(func() {
-		var inf local.CropInferer = sessionNoInferer{}
-		if s.deps.CropInferer != nil {
-			inf = s.deps.CropInferer
-		}
-		s.scorer = local.NewQualityScorer(s.Store, inf, func(fileID int64) (string, error) {
+		s.scorer = quality.NewFileScorer(s.Store, func(fileID int64) (string, error) {
 			return sessionThumbPath(s.Store, s.Root, fileID, thumb.TierPreview)
 		})
 		// A preview unreadable because the folder is gone leaves the photo
@@ -217,13 +212,6 @@ func (s *Session) reachable() bool { return sessionRootReachable(s.Root) }
 func sessionRootReachable(root string) bool {
 	fi, err := os.Lstat(root)
 	return err == nil && fi.IsDir()
-}
-
-// sessionNoInferer is the CropInferer of a session built without one.
-type sessionNoInferer struct{}
-
-func (sessionNoInferer) QualityCrop([]float32) (float64, error) {
-	return 0, local.ErrQualityUnavailable
 }
 
 // errSessionVisualGroupingOff is what the analyze stage's embedder answers while

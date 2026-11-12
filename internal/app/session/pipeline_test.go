@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
@@ -567,7 +568,9 @@ func TestScorer_FolderGoneLeavesPhotoPending(t *testing.T) {
 	}
 }
 
-func TestScorer_SharedAndUnavailableWithoutInferer(t *testing.T) {
+// The session's scorer is shared, rates the file's preview with the
+// built-in formula and stamps the scorer id.
+func TestScorer_SharedAndRatesThePreview(t *testing.T) {
 	h := newSessionTestHarness(t, sessionTestOptions{})
 	id, root := h.folder(t, "score")
 	s, release := h.acquire(t, id)
@@ -589,8 +592,17 @@ func TestScorer_SharedAndUnavailableWithoutInferer(t *testing.T) {
 	if err != nil || len(items) != 1 {
 		t.Fatalf("pending = %+v, %v; want the one photo", items, err)
 	}
-	if err := q.Score(context.Background(), items[0]); !errors.Is(err, local.ErrQualityUnavailable) {
-		t.Fatalf("Score without an inferer = %v; want local.ErrQualityUnavailable", err)
+	if err := q.Score(context.Background(), items[0]); err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	var raw sql.NullFloat64
+	var model string
+	if err := s.Store.DB().QueryRowContext(context.Background(),
+		`SELECT quality_raw, quality_model FROM files WHERE id = ?`, fid).Scan(&raw, &model); err != nil {
+		t.Fatal(err)
+	}
+	if !raw.Valid || model != quality.ScorerID {
+		t.Fatalf("stored raw=%+v model=%q; want a score stamped %q", raw, model, quality.ScorerID)
 	}
 }
 

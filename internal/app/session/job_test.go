@@ -22,6 +22,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
@@ -60,14 +61,6 @@ func (e *jobTestEmbedder) Embed(image.Image) ([]float32, error) {
 		return nil, local.ErrModelMissing
 	}
 	return sessionTestUnit(0), nil
-}
-
-// jobTestInferer is a quality model that scores every crop 0.5.
-type jobTestInferer struct{ calls atomic.Int64 }
-
-func (i *jobTestInferer) QualityCrop([]float32) (float64, error) {
-	i.calls.Add(1)
-	return 0.5, nil
 }
 
 // jobTestTracker is a QualityRun that records how the job used it. With
@@ -565,10 +558,8 @@ func TestJob_FolderVanishesMidScan(t *testing.T) {
 func TestJob_FolderVanishesDuringQualityPass(t *testing.T) {
 	// The rating is advisory, so the pass's own errors never end the job;
 	// the check between steps still finds the folder gone.
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "unplugged")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	var once sync.Once
@@ -951,12 +942,11 @@ func TestJob_VisualGroupingOffSkipsBackfill(t *testing.T) {
 	}
 }
 
+// The rating pass needs no model: with quality_rating on, the job rates
+// every photo with the built-in formula and reports the pass to the tracker.
 func TestJob_QualityStepUsesTracker(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
-	inf := &jobTestInferer{}
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "rated")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tracker := &jobTestTracker{}
@@ -975,9 +965,6 @@ func TestJob_QualityStepUsesTracker(t *testing.T) {
 	if tracker.rated != 3 || tracker.err != nil {
 		t.Fatalf("end(%d, %v); want end(3, nil)", tracker.rated, tracker.err)
 	}
-	if inf.calls.Load() == 0 {
-		t.Fatal("the quality model was never run")
-	}
 	if n := h.folderChanged(id, "ratings"); n == 0 {
 		t.Fatal("no folder:changed ratings event")
 	}
@@ -985,6 +972,14 @@ func TestJob_QualityStepUsesTracker(t *testing.T) {
 	defer release()
 	if n, err := s.Scorer().CountPending(); err != nil || n != 0 {
 		t.Fatalf("photos pending a rating = %d, %v; want 0", n, err)
+	}
+	var rated int
+	if err := s.Store.DB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM files WHERE quality_raw IS NOT NULL AND quality_model = ?`, quality.ScorerID).Scan(&rated); err != nil {
+		t.Fatal(err)
+	}
+	if rated != 3 {
+		t.Fatalf("photos rated by %s = %d; want 3", quality.ScorerID, rated)
 	}
 }
 
@@ -1000,10 +995,8 @@ func TestJob_RatingsEventsAreThrottled(t *testing.T) {
 		{"a second apart", time.Second, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			models := &jobTestModels{}
-			models.set(local.ModelQuality, true)
 			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+			h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 			id, root := h.folder(t, "throttle")
 			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -1030,10 +1023,8 @@ func TestJob_RatingsEventsAreThrottled(t *testing.T) {
 }
 
 func TestJob_QualityCancelledByTrackerStillFinishes(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "switched-off")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tracker := &jobTestTracker{cancelAfter: 1}
@@ -1060,10 +1051,8 @@ func TestJob_QualityCancelledByTrackerStillFinishes(t *testing.T) {
 }
 
 func TestJob_QualitySettingOffStopsThePass(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "off")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	// No tracker cancels the pass: the job itself stops rating once the
@@ -1176,16 +1165,14 @@ func TestJob_DisconnectReconnectResumes(t *testing.T) {
 // photo stays pending and the job is suspended — only the scorer's guard saw
 // the outage.
 func TestJob_FolderVanishesBetweenCheckAndPreviewRead(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "external")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	reconnect := func() {}
 	j := h.job(trackerHook{inner: &jobTestTracker{}, onEnd: func() { reconnect() }})
 	calls := 0
-	j.scoreHook = func() {
+	j.o.BeforeScore = func() {
 		calls++
 		if calls == 3 { // the last photo
 			reconnect = sessionTestDisconnect(t, root)
@@ -1205,10 +1192,8 @@ func TestJob_FolderVanishesBetweenCheckAndPreviewRead(t *testing.T) {
 // Once a run has seen the folder gone it is suspended, even when the folder
 // is back before the job returns.
 func TestJob_FolderBackBeforeEndIsStillSuspended(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "flaky")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	var (
@@ -1234,39 +1219,34 @@ func TestJob_FolderBackBeforeEndIsStillSuspended(t *testing.T) {
 	}
 }
 
-func TestJob_QualityOffOrModelMissingSkipsPass(t *testing.T) {
-	for name, setup := range map[string]func(h *jobTestHarness){
-		"setting off":   func(h *jobTestHarness) { h.settings.set(func(c *config.Config) { c.QualityRating = false }) },
-		"model missing": func(h *jobTestHarness) { h.models.set(local.ModelQuality, false) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			models := &jobTestModels{}
-			models.set(local.ModelQuality, true)
-			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-			inf := &jobTestInferer{}
-			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
-			id, root := h.folder(t, "skip")
-			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg")
-			setup(h)
-			tracker := &jobTestTracker{}
+func TestJob_QualityOffSkipsPass(t *testing.T) {
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	id, root := h.folder(t, "skip")
+	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg")
+	h.settings.set(func(c *config.Config) { c.QualityRating = false })
+	tracker := &jobTestTracker{}
 
-			if o, msg := h.run(context.Background(), h.job(tracker), id, JobFull); o != Done {
-				t.Fatalf("Run = %v %q; want Done", o, msg)
-			}
-			tracker.mu.Lock()
-			defer tracker.mu.Unlock()
-			if tracker.begun != 0 || inf.calls.Load() != 0 {
-				t.Fatalf("Begin called %d times, model run %d times; want no pass", tracker.begun, inf.calls.Load())
-			}
-			// Without a pass the job publishes its clusters once, at its end:
-			// one refresh, one grid reload, no ratings.
-			if n := h.afterJob.Load(); n != 1 {
-				t.Fatalf("AfterJob called %d times; want 1", n)
-			}
-			if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
-				t.Fatalf("folder:changed reasons = %v; want [clusters]", got)
-			}
-		})
+	if o, msg := h.run(context.Background(), h.job(tracker), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.begun != 0 {
+		t.Fatalf("Begin called %d times; want no pass", tracker.begun)
+	}
+	// Without a pass the job publishes its clusters once, at its end:
+	// one refresh, one grid reload, no ratings.
+	if n := h.afterJob.Load(); n != 1 {
+		t.Fatalf("AfterJob called %d times; want 1", n)
+	}
+	if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
+		t.Fatalf("folder:changed reasons = %v; want [clusters]", got)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	if n, err := s.Scorer().CountPending(); err != nil || n != 1 {
+		t.Fatalf("photos pending a rating = %d, %v; want 1 (none rated)", n, err)
 	}
 }
 
@@ -1276,10 +1256,8 @@ func TestJob_QualityOffOrModelMissingSkipsPass(t *testing.T) {
 // grid while the ratings are computed. The pass ends with a "ratings" event,
 // not a second grid reload or refresh.
 func TestJob_ClustersPublishedBeforeTheRatingPass(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 	id, root := h.folder(t, "early")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -1297,7 +1275,7 @@ func TestJob_ClustersPublishedBeforeTheRatingPass(t *testing.T) {
 	release := sync.OnceFunc(func() { close(gate) })
 	defer release()
 	var first sync.Once
-	j.scoreHook = func() {
+	j.o.BeforeScore = func() {
 		first.Do(func() {
 			close(entered)
 			<-gate
@@ -1361,11 +1339,8 @@ func TestJob_CancelledWhilePublishingClusters(t *testing.T) {
 		{"no rating pass", false, Done},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			models := &jobTestModels{}
-			models.set(local.ModelQuality, true)
 			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-			inf := &jobTestInferer{}
-			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
+			h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
 			h.settings.set(func(c *config.Config) { c.QualityRating = tc.quality })
 			id, root := h.folder(t, "preempted")
 			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg")
@@ -1390,8 +1365,8 @@ func TestJob_CancelledWhilePublishingClusters(t *testing.T) {
 			}
 			tracker.mu.Lock()
 			defer tracker.mu.Unlock()
-			if tracker.begun != 0 || inf.calls.Load() != 0 {
-				t.Fatalf("Begin called %d times, model run %d times; want no pass after the cancellation", tracker.begun, inf.calls.Load())
+			if tracker.begun != 0 {
+				t.Fatalf("Begin called %d times; want no pass after the cancellation", tracker.begun)
 			}
 		})
 	}

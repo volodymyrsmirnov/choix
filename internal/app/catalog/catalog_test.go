@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
@@ -25,6 +24,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/safefs"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
@@ -1365,7 +1365,7 @@ func TestRatings_OffIsEmpty(t *testing.T) {
 // catalogTestRate gives fileID a current quality rating.
 func catalogTestRate(t *testing.T, st *store.Store, fileID int64, hash string) {
 	t.Helper()
-	ok, err := st.Files().SetQuality(fileID, hash, sql.NullFloat64{Float64: 0.6, Valid: true}, local.QualityScorerID)
+	ok, err := st.Files().SetQuality(fileID, hash, sql.NullFloat64{Float64: -46, Valid: true}, quality.ScorerID)
 	if err != nil || !ok {
 		t.Fatalf("SetQuality(%d) = %v, %v", fileID, ok, err)
 	}

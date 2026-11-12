@@ -1,28 +1,30 @@
 package catalog
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/group"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
 // Moved without behavioural change from v1's internal/server (library.go
 // and quality.go), which keeps its own copies until it is deleted.
 
-// memberQuality returns the 0–10 rating to show for a cluster member, or nil.
-// A rating is shown only for photos, only while the feature is on, and only
-// when it was produced by the scorer this binary uses — during a re-score
-// after a model or recipe change, old-scale numbers are hidden rather than
-// mixed with new ones.
+// memberQuality returns the 0–10 rating to show for a cluster member, or nil:
+// quality.Display of its raw score, rounded to one decimal as the badge shows
+// it. A rating is shown only for photos, only while the feature is on, and
+// only when it was produced by the scorer this binary uses (quality.ScorerID)
+// — during a re-score after a formula change, old-scale numbers are hidden
+// rather than mixed with new ones.
 func memberQuality(m store.ClusterMemberView, show bool) *float64 {
-	if !show || m.Kind != "photo" || !m.QualityRaw.Valid || m.QualityModel.String != local.QualityScorerID {
+	if !show || m.Kind != "photo" || !m.QualityRaw.Valid || m.QualityModel.String != quality.ScorerID {
 		return nil
 	}
-	v := local.QualityDisplay(m.QualityRaw.Float64)
+	v := math.Round(quality.Display(m.QualityRaw.Float64)*10) / 10
 	return &v
 }
 

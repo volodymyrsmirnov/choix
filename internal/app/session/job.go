@@ -57,6 +57,10 @@ type JobOptions struct {
 	// session's context, so its native calls are counted in the session's
 	// Inflight. nil: nothing.
 	AfterJob func(ctx context.Context, s *Session)
+	// BeforeScore runs before each photo of a rating pass is scored, after
+	// the job's own checks. Tests use it to hold a photo in flight. nil:
+	// nothing.
+	BeforeScore func()
 }
 
 // Reasons of the folder:changed events a job emits.
@@ -87,8 +91,8 @@ var errJobFolderGone = errors.New("session: the folder's directory is gone")
 //     the open folder shows its grid and the Library row its counts and
 //     previews while the ratings are computed. Without a quality pass to
 //     come, this is the job's last step.
-//  6. The quality-rating pass, while quality_rating is on and its model is
-//     ready. It writes only ratings: its photos are announced by
+//  6. The quality-rating pass, while quality_rating is on. It writes only
+//     ratings: its photos are announced by
 //     folder:changed "ratings", the last one as the pass ends, and nothing
 //     published in step 5 is refreshed or announced again.
 //
@@ -98,9 +102,6 @@ type Job struct {
 	o JobOptions
 	// now is the clock that throttles the ratings events.
 	now func() time.Time
-	// scoreHook, when set by a test, runs before each photo is scored, after
-	// the job's own checks.
-	scoreHook func()
 }
 
 var _ Runner = (*Job)(nil)
@@ -238,8 +239,7 @@ func (j *Job) backfillEmbeddings(ctx context.Context, s *Session, p *pipeline.Pi
 	return nil
 }
 
-// rate runs the quality-rating pass when quality_rating is on and its model
-// is ready. The rating is advisory: the pass's errors are handed to the
+// rate runs the quality-rating pass when quality_rating is on. The rating is advisory: the pass's errors are handed to the
 // tracker and logged, not returned. The pass also stops at the next photo
 // once the setting reads off, whether or not a tracker cancelled it, and as
 // soon as the folder is found unreachable — before a photo, or by the
@@ -276,13 +276,9 @@ func (j *Job) rate(ctx context.Context, s *Session) error {
 		root:    s.Root,
 		stop:    cancel,
 		rated:   notify,
-		hook:    j.scoreHook,
+		hook:    j.o.BeforeScore,
 	}
-	pass := &quality.Pass{
-		Scorer:        sc,
-		IsUnavailable: func(err error) bool { return errors.Is(err, local.ErrQualityUnavailable) },
-		OnProgress:    progress,
-	}
+	pass := &quality.Pass{Scorer: sc, OnProgress: progress}
 	rated, err := pass.Run(s.Context(passCtx))
 	end(rated, err)
 	cause := context.Cause(passCtx)
@@ -309,7 +305,7 @@ var errJobQualityOff = errors.New("session: the quality rating was switched off"
 // photo dealt with, and stops the pass — cancelling it with the reason as
 // its cause — instead of scoring once the setting reads off or the folder is
 // unreachable, and when the scorer found the folder unreachable while
-// reading a preview. Each photo is scored holding the inference turn.
+// reading a preview.
 type jobScorer struct {
 	quality.Scorer
 	enabled func() bool
@@ -328,16 +324,10 @@ func (sc *jobScorer) Score(ctx context.Context, item store.QualityItem) error {
 		sc.stop(fmt.Errorf("%w: %s", errJobFolderGone, sc.root))
 		return context.Canceled
 	}
-	// One photo at a time across the jobs; the wait ends with ctx.
-	release, err := acquireInference(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 	if sc.hook != nil {
 		sc.hook()
 	}
-	err = sc.Scorer.Score(ctx, item)
+	err := sc.Scorer.Score(ctx, item)
 	switch {
 	case errors.Is(err, pipeline.ErrFolderUnavailable):
 		sc.stop(err)
@@ -377,10 +367,9 @@ func (j *Job) ratingsNotifier(folderID string) (rated, flush func()) {
 	return rated, flush
 }
 
-// rating reports whether a quality-rating pass is due: quality_rating is on
-// and its model is ready.
+// rating reports whether a quality-rating pass is due: quality_rating is on.
 func (j *Job) rating() bool {
-	return j.o.Settings().QualityRating && j.ready(local.ModelQuality)
+	return j.o.Settings().QualityRating
 }
 
 // ready reports whether the model of kind is ready.

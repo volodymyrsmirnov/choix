@@ -125,7 +125,6 @@ type sessionTestOptions struct {
 	stills   *platformtest.Stills
 	video    *platformtest.Video
 	embedder local.Embedder
-	inferer  local.CropInferer
 }
 
 func newSessionTestHarness(t *testing.T, o sessionTestOptions) *sessionTestHarness {
@@ -161,12 +160,11 @@ func newSessionTestHarness(t *testing.T, o sessionTestOptions) *sessionTestHarne
 		parent:   parent,
 	}
 	h.mgr = NewManager(Deps{
-		Library:     lib,
-		Settings:    h.settings.get,
-		Stills:      stills,
-		Video:       video,
-		Embedder:    o.embedder,
-		CropInferer: o.inferer,
+		Library:  lib,
+		Settings: h.settings.get,
+		Stills:   stills,
+		Video:    video,
+		Embedder: o.embedder,
 	})
 	h.mgr.hook = h.events.record
 	t.Cleanup(func() {

@@ -9,9 +9,9 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
-// Scorer rates photos. See local.QualityScorer for the contract of Score:
-// nil means the photo was dealt with (rated, unratable or superseded); an
-// error leaves it pending.
+// Scorer rates photos. See FileScorer for the contract of Score: nil means
+// the photo was dealt with (rated, unratable or superseded); an error leaves
+// it pending.
 type Scorer interface {
 	CountPending() (int, error)
 	ListPending(afterID int64, limit int) ([]store.QualityItem, error)
@@ -29,10 +29,6 @@ const listBatch = 50
 // Scorer is required; the other fields are optional.
 type Pass struct {
 	Scorer Scorer
-	// IsUnavailable reports whether a Score error means scoring cannot
-	// work at all in this process (as opposed to one failed photo). Such an
-	// error ends the pass at once. nil → never.
-	IsUnavailable func(error) bool
 	// OnProgress is called after every photo with the photos dealt with so
 	// far and the number pending when the pass started.
 	OnProgress func(done, total int)
@@ -41,8 +37,8 @@ type Pass struct {
 // Run rates every pending photo and returns how many were dealt with. ctx
 // is checked before every photo; on cancellation Run returns ctx's error.
 // A photo whose Score fails stays pending for a later pass and the pass
-// goes on, unless the error is unavailable (IsUnavailable) or it is the
-// third such failure in a row: then Run stops and returns that error.
+// goes on, unless it is the third such failure in a row: then Run stops and
+// returns that error.
 func (p *Pass) Run(ctx context.Context) (rated int, err error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -80,12 +76,9 @@ func (p *Pass) Run(ctx context.Context) (rated int, err error) {
 			case ctx.Err() != nil:
 				slog.Info("quality rating pass cancelled", "rated", rated)
 				return rated, ctx.Err()
-			case p.IsUnavailable != nil && p.IsUnavailable(err):
-				slog.Warn("quality rating cannot run", "err", err)
-				return rated, fmt.Errorf("quality: rate file %d: %w", item.FileID, err)
 			default:
-				// Not the photo's fault (inference or database error): it
-				// stays pending for a later pass.
+				// Not the photo's fault (a database error, say): it stays
+				// pending for a later pass.
 				failed, streak = failed+1, streak+1
 				slog.Warn("quality: rating failed", "file_id", item.FileID, "err", err)
 				if streak >= maxConsecutiveFailures {

@@ -14,8 +14,7 @@
 //     CLIP ready, queues a backfill of every reachable folder;
 //   - a model downloaded in this process, while its setting is on → a
 //     backfill of every reachable folder (a model already on disk at launch
-//     queues nothing, call C17); every model status change and every
-//     scan:state → quality.Changed;
+//     queues nothing, call C17); every scan:state → quality.Changed;
 //   - Library: a folder offline → its job suspended and the catalog lets go
 //     of it; removed → its job cancelled and the catalog lets go; online →
 //     its pending job resumed;
@@ -122,10 +121,9 @@ type Deps struct {
 	// the defaults of local.SessionOptions).
 	CPUOnly map[local.ModelKind]bool
 
-	// Embedder and CropInferer replace the inference engine's CLIP and
-	// quality sessions (tests inject fakes). nil: the engine's.
-	Embedder    local.Embedder
-	CropInferer local.CropInferer
+	// Embedder replaces the inference engine's CLIP session (tests inject a
+	// fake). nil: the engine's.
+	Embedder local.Embedder
 }
 
 // Runtime holds the app's cores and the bindings over them. The exported
@@ -173,6 +171,9 @@ type Runtime struct {
 	// detached (goClose); tests replace it, before Start, to choose when the
 	// close runs.
 	closeLater func(closeFn func())
+	// scoreHook, when set by a test before Start, runs before each photo a
+	// rating pass scores.
+	scoreHook func()
 
 	// lifeMu orders Start against Shutdown: once shut is set nothing more
 	// is started.
@@ -256,22 +257,16 @@ func New(d Deps) (*Runtime, error) {
 	if embedder == nil {
 		embedder = r.engine.Embedder(func() bool { return r.settings.Get().VisualGrouping })
 	}
-	inferer := d.CropInferer
-	if inferer == nil {
-		inferer = r.engine.CropInferer()
-	}
 	r.sessions = session.NewManager(session.Deps{
-		Library:     r.lib,
-		Settings:    r.settings.Get,
-		Stills:      d.Stills,
-		Video:       d.Video,
-		Embedder:    embedder,
-		CropInferer: inferer,
+		Library:  r.lib,
+		Settings: r.settings.Get,
+		Stills:   d.Stills,
+		Video:    d.Video,
+		Embedder: embedder,
 	})
 
 	r.quality = session.NewQualityTracker(session.QualityOptions{
 		Enabled: func() bool { return r.settings.Get().QualityRating },
-		Model:   func() events.ModelStatus { return r.modelStatus(local.ModelQuality) },
 		Busy:    func() bool { return !r.queue.Idle() },
 		Emit:    r.coalescer,
 	})
@@ -283,6 +278,11 @@ func New(d Deps) (*Runtime, error) {
 		Quality:  r.quality,
 		Emit:     r.coalescer,
 		AfterJob: r.afterJob,
+		BeforeScore: func() {
+			if r.scoreHook != nil {
+				r.scoreHook()
+			}
+		},
 	})
 	r.queue = session.NewQueue(session.QueueOptions{
 		Library:     r.lib,
@@ -486,16 +486,6 @@ func (r *Runtime) modelEnabled(kind local.ModelKind) bool {
 		return cfg.QualityRating
 	}
 	return false
-}
-
-// modelStatus returns kind's download status.
-func (r *Runtime) modelStatus(kind local.ModelKind) events.ModelStatus {
-	for _, s := range r.models.Status() {
-		if s.Kind == kind.String() {
-			return s
-		}
-	}
-	return events.ModelStatus{Kind: kind.String()}
 }
 
 // onSettingsChanged runs while saves are serialised: it must be quick and
@@ -882,16 +872,16 @@ func (g *gatedEmitter) close() {
 }
 
 // tapEmitter is the coalescer's output: it forwards to the gated emitter and
-// tells the quality tracker when a model's status or the queue changed —
-// a scan state, or the last progress of a run that stopped — since both feed
-// the quality status. QualityTracker.Changed returns at once, so it is safe
-// here, under the queue's and the models' locks.
+// tells the quality tracker when the queue changed — a scan state, or the
+// last progress of a run that stopped — since it feeds the quality status.
+// QualityTracker.Changed returns at once, so it is safe here, under the
+// queue's lock.
 type tapEmitter struct{ r *Runtime }
 
 func (t tapEmitter) Emit(name string, data any) {
 	t.r.out.Emit(name, data)
 	switch name {
-	case events.ModelsProgress, events.ScanState, events.ScanProgress:
+	case events.ScanState, events.ScanProgress:
 		if q := t.r.quality; q != nil {
 			q.Changed()
 		}

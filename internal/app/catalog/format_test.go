@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/group"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
@@ -61,9 +61,9 @@ func TestFormatBucketLabel(t *testing.T) {
 }
 
 func TestMemberQuality(t *testing.T) {
-	raw := sql.NullFloat64{Float64: 0.6, Valid: true}
-	current := sql.NullString{String: local.QualityScorerID, Valid: true}
-	want := local.QualityDisplay(0.6)
+	raw := sql.NullFloat64{Float64: -46, Valid: true}
+	current := sql.NullString{String: quality.ScorerID, Valid: true}
+	want := 7.0
 	tests := []struct {
 		name string
 		m    store.ClusterMemberView
@@ -75,7 +75,7 @@ func TestMemberQuality(t *testing.T) {
 		{"video", store.ClusterMemberView{Kind: "video", QualityRaw: raw, QualityModel: current}, true, nil},
 		{"unrated", store.ClusterMemberView{Kind: "photo", QualityModel: current}, true, nil},
 		{"another scorer", store.ClusterMemberView{Kind: "photo", QualityRaw: raw,
-			QualityModel: sql.NullString{String: "old", Valid: true}}, true, nil},
+			QualityModel: sql.NullString{String: "other-scorer/v0", Valid: true}}, true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,5 +87,15 @@ func TestMemberQuality(t *testing.T) {
 				t.Errorf("= %v; want %v", got, *tt.want)
 			}
 		})
+	}
+}
+
+// The rating shown is quality.Display of the raw score, rounded to one
+// decimal as the badge shows it.
+func TestMemberQuality_RoundsDisplay(t *testing.T) {
+	m := store.ClusterMemberView{Kind: "photo", QualityRaw: sql.NullFloat64{Float64: -40.7055461, Valid: true},
+		QualityModel: sql.NullString{String: quality.ScorerID, Valid: true}}
+	if got := memberQuality(m, true); got == nil || *got != 9.6 {
+		t.Fatalf("memberQuality = %v; want 9.6", got)
 	}
 }

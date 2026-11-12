@@ -228,8 +228,8 @@ func TestRuntime_SettingSwitchedOnQueuesBackfill(t *testing.T) {
 	r := h.start(t)
 	id := h.add(t, r, root)
 	waitReady(t, r, id)
-	if n := h.inf.calls.Load(); n != 0 {
-		t.Fatalf("quality crops while the rating is off = %d; want none", n)
+	if n := h.scores.calls.Load(); n != 0 {
+		t.Fatalf("photos scored while the rating is off = %d; want none", n)
 	}
 
 	if _, err := r.Settings.Save(settings.Patch{QualityRating: ptr(true)}); err != nil {
@@ -245,12 +245,12 @@ func TestRuntime_SettingSwitchedOnQueuesBackfill(t *testing.T) {
 func TestRuntime_QualityOffStopsScoringAtOnce(t *testing.T) {
 	h := newHarness(t)
 	h.setConfig(t, func(c *config.Config) { c.QualityRating = true })
-	release := h.inf.holdCalls()
+	release := h.scores.holdCalls()
 	defer release()
 	root := h.folder(t, "Trip", 3, 512, 512)
 	r := h.start(t)
 	id := h.add(t, r, root)
-	receive(t, "a quality crop in flight", h.inf.entered)
+	receive(t, "a photo being scored", h.scores.entered)
 
 	if _, err := r.Settings.Save(settings.Patch{QualityRating: ptr(false)}); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -266,8 +266,8 @@ func TestRuntime_QualityOffStopsScoringAtOnce(t *testing.T) {
 	waitReady(t, r, id)
 
 	// The photo in flight may finish; no other photo is scored.
-	if n := h.inf.calls.Load(); n > 5 {
-		t.Fatalf("quality crops = %d; want at most one photo's five", n)
+	if n := h.scores.calls.Load(); n > 1 {
+		t.Fatalf("photos scored = %d; want at most the one in flight", n)
 	}
 	if n := countRows(t, openState(t, root), `SELECT COUNT(*) FROM files WHERE quality_model IS NOT NULL`); n > 1 {
 		t.Fatalf("photos rated = %d; want at most the one in flight", n)
@@ -281,12 +281,12 @@ func TestRuntime_QualityOffStopsScoringAtOnce(t *testing.T) {
 func TestRuntime_ClustersShowWhileRatingRuns(t *testing.T) {
 	h := newHarness(t)
 	h.setConfig(t, func(c *config.Config) { c.QualityRating = true })
-	release := h.inf.holdCalls()
+	release := h.scores.holdCalls()
 	defer release()
 	root := h.folder(t, "Trip", 3, 512, 512)
 	r := h.start(t)
 	id := h.add(t, r, root)
-	receive(t, "a quality crop in flight", h.inf.entered)
+	receive(t, "a photo being scored", h.scores.entered)
 
 	waitFor(t, "the Library row's counts and previews during the rating pass", func() bool {
 		s := summary(t, r, id)
