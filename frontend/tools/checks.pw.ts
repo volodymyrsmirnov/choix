@@ -91,6 +91,42 @@ test('s102 passes every check at every size', async ({ browser, browserName }) =
   expect(findings).toEqual([])
 })
 
+test('open() resolves after the page has rendered, however far the fixed clock runs ahead', async ({ browser }) => {
+  // The scripted renders' fixed clock (Playwright's clock) turns
+  // requestAnimationFrame into a 16 ms timer. Running that clock ahead while
+  // a state opens makes those timer "frames" outrun the page's real
+  // rendering updates, as on a slow runner. open() must still resolve only
+  // once s220's "+N" pills, which the strips set from a ResizeObserver
+  // (first without the pill, then again in the column the pill takes), have
+  // settled; the snapshot hashes what open() leaves.
+  const context = await newDesignContext(browser, 'default')
+  const page = await context.newPage()
+  await page.goto(`${protoUrl()}?bare&freeze#s220`)
+  await waitForHarness(page)
+  for (let run = 0; run < 3; run++) {
+    let opened = false
+    const atOpen = page
+      .evaluate(async () => {
+        await window.__choixProto!.open(220)
+        return Array.from(document.querySelectorAll('[data-testid="strip-more"]'), (p) => p.textContent)
+      })
+      .finally(() => {
+        opened = true
+      })
+    while (!opened) {
+      await page.clock.runFor(16)
+      await new Promise((r) => setTimeout(r, 4))
+    }
+    const pills = await atOpen
+    // Real time (Node's timer) for the page to render whatever was left.
+    await new Promise((r) => setTimeout(r, 300))
+    const settled = await page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="strip-more"]'), (p) => p.textContent))
+    expect(settled.length, 's220 shows "+N" pills, or this test proves nothing').toBeGreaterThan(0)
+    expect(pills, `run ${run}: what open() left`).toEqual(settled)
+  }
+  await context.close()
+})
+
 test('switch thumbs sit 1 px inside the track: centred, at the left edge off, at the right edge on', async ({ browser }) => {
   // A dedicated assertion (not data-inset-pair): the centred check holds the
   // thumb's vertical centre; this pins both horizontal ends in gallery s803,
