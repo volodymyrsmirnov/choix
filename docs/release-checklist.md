@@ -15,11 +15,6 @@ list points to; nothing here replaces them.
 3. Rehearse once: locally (the signing checklist's "Rehearsing a release
    locally"), then with a dry run of the workflow (Actions → Release → Run
    workflow), which signs and notarizes but publishes nothing.
-4. **The tap still has the old v1 formula `Formula/choix.rb`.** With a formula
-   and a cask of the same name in one tap, `brew install choix` picks the
-   formula. Remove `Formula/choix.rb` from `volodymyrsmirnov/homebrew-tap` when
-   the first cask ships (the release workflow only writes `Casks/choix.rb`;
-   it never deletes anything there).
 
 ## Before tagging
 

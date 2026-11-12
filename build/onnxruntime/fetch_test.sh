@@ -5,6 +5,12 @@
 # `sh build/onnxruntime/fetch_test.sh`; prints `ok` on success.
 set -eu
 
+# Tool output is compared below: no colour, whatever the caller's CI,
+# FORCE_COLOR or CLICOLOR_FORCE (see build/taskfile_test.sh).
+NO_COLOR=1
+export NO_COLOR
+unset FORCE_COLOR CLICOLOR_FORCE
+
 here=$(cd "$(dirname "$0")" && pwd)
 fetch="$here/fetch.sh"
 

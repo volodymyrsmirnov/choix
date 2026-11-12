@@ -29,6 +29,16 @@
 # what `go` itself may need.
 set -eu
 
+# This script parses Task's output. Task colours it when CI is set (GitHub
+# Actions sets CI=true) or FORCE_COLOR is, even into a pipe, and then no
+# line matches. NO_COLOR=1 turns colour off for every task run below
+# (`task --help`: "Set flag to false or use NO_COLOR=1 to disable") and wins
+# over FORCE_COLOR; FORCE_COLOR and CLICOLOR_FORCE are dropped for the other
+# tools.
+NO_COLOR=1
+export NO_COLOR
+unset FORCE_COLOR CLICOLOR_FORCE
+
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 taskfile="$root/Taskfile.yml"
