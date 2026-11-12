@@ -1,8 +1,8 @@
 // What the Settings page does with the saved values and the user's edits,
 // apart from React: the draft, its errors, Save, Revert, leaving with
-// unsaved edits, the sidebar's section and the models' Retry. Everything it
-// talks to is passed in (the bindings, the shell's stores, the router, the
-// toasts), so it runs under `bun test` with fakes.
+// unsaved edits and the sidebar's section. Everything it talks to is passed
+// in (the binding, the shell's settings store, the router, the toasts), so
+// it runs under `bun test` with fakes.
 //
 // The rules (v1 Settings.tsx, design screens/settings):
 //   - The draft is the design's draftOf(saved): numeric fields that are
@@ -29,7 +29,7 @@
 import { dirtySections, draftOf, DEFAULTS } from '../../design/screens/settings/draft'
 import type { SettingsDraft, SettingsErrors, SettingsProps, SettingsSection } from '../../design/screens/settings/props'
 import { minutesTextToSeconds, validateSettings } from '../../design/screens/settings/validate'
-import type { ModelStatus, SettingsBody } from '../../design/types'
+import type { SettingsBody } from '../../design/types'
 import { appError, errorText, fieldCopy } from '../shell/errors'
 import type { SessionState } from '../shell/folderSession'
 import type { Route, Router } from '../shell/router'
@@ -82,21 +82,14 @@ export interface SettingsDraftState {
   errors: SettingsErrors
   activeSection: SettingsSection
   saving: boolean
-  /** The quality model's Retry is in flight. */
-  retrying: boolean
   leavePrompt: boolean
 }
 
 export interface SettingsDraftDeps {
   /** Settings.Save. */
   save(patch: SettingsPatch): PromiseLike<{ reclustered: boolean }>
-  /** Models.Retry. */
-  retry(kind: ModelStatus['kind']): PromiseLike<unknown>
   /** The shell's saved settings. */
   settings: Store<SettingsBody>
-  /** The shell's models and quality stores (read again after a Retry). */
-  models: { reload(): Promise<void> }
-  quality: { reload(): Promise<void> }
   router: Pick<Router, 'navigate' | 'back' | 'settingsFrom' | 'setGuard' | 'held'>
   toast(t: ToastInput): void
   /** Milliseconds; Date.now by default. */
@@ -127,7 +120,6 @@ export interface SettingsDraftController {
   confirmLeave(leave: boolean): void
   /** Try Again after a failed load. */
   reload(): Promise<void>
-  retry(kind: ModelStatus['kind']): Promise<void>
 }
 
 export function createSettingsDraft(deps: SettingsDraftDeps): SettingsDraftController {
@@ -144,7 +136,6 @@ export function createSettingsDraft(deps: SettingsDraftDeps): SettingsDraftContr
   /** The revealed field's section, until the form first appears (its opening scroll). */
   let revealHold: SettingsSection | null = null
   let saving = false
-  const retrying = new Set<ModelStatus['kind']>()
   let leavePrompt = false
   /** A load the page waits for (Try Again, or the one on opening): show Loading, not the error. */
   let reloading = 0
@@ -161,7 +152,6 @@ export function createSettingsDraft(deps: SettingsDraftDeps): SettingsDraftContr
       errors: errors(),
       activeSection,
       saving,
-      retrying: retrying.has('quality'),
       leavePrompt,
     }
   }
@@ -219,8 +209,7 @@ export function createSettingsDraft(deps: SettingsDraftDeps): SettingsDraftContr
       const unsubscribe = settings.subscribe(sync)
       router.setGuard(guard)
       sync()
-      // Values another screen saved since the app loaded them (the Library's
-      // model switches) are read again on opening.
+      // Values saved since the app loaded them are read again on opening.
       void reload()
       return () => {
         unsubscribe()
@@ -315,22 +304,5 @@ export function createSettingsDraft(deps: SettingsDraftDeps): SettingsDraftContr
       if (leave) router.navigate(to, { force: true })
     },
     reload,
-    async retry(kind) {
-      if (retrying.has(kind)) return
-      retrying.add(kind)
-      publish()
-      try {
-        await deps.retry(kind)
-        // Go has settled the new state when Retry returns; read it rather
-        // than wait for the event, so the failed card does not flash back.
-        await Promise.all([deps.models.reload(), deps.quality.reload()])
-      } catch (e) {
-        const err = appError(e)
-        if (err.code !== 'unavailable') deps.toast({ tone: 'reject', title: 'Retry failed', body: errorText(err) })
-      } finally {
-        retrying.delete(kind)
-        publish()
-      }
-    },
   }
 }

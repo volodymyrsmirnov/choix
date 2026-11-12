@@ -3,17 +3,8 @@
 // own filter, menu and cursor, and its handlers. Pure, so every prop's source
 // is tested without a window.
 import { filterClusters } from '../../design/screens/folder/filter'
-import type { FolderGrouping, FolderMenu, FolderProps } from '../../design/screens/folder/props'
-import type {
-  Cluster,
-  FolderFilter,
-  FolderSummary,
-  MediaURLs,
-  ModelStatus,
-  QualityStatus,
-  ScanProgress,
-  SettingsBody,
-} from '../../design/types'
+import type { FolderMenu, FolderProps } from '../../design/screens/folder/props'
+import type { Cluster, FolderFilter, FolderSummary, MediaURLs, QualityStatus, ScanProgress, SettingsBody } from '../../design/types'
 import type { ToastProps } from '../shell/context'
 import type { FolderScan } from '../shell/scanStore'
 import type { FolderData, FolderSnapshot } from './folderStore'
@@ -39,22 +30,6 @@ export function scanOf(entry: FolderScan | undefined, clusters: Cluster[] | null
   if (entry.state === 'scanning') return SCAN_STARTING
   if (entry.state === 'queued' && clusters !== null && clusters.length === 0) return SCAN_STARTING
   return null
-}
-
-/** How the folder is grouped: visual grouping off, or the CLIP model's state. */
-export function groupingOf(settings: SettingsBody | undefined, models: ModelStatus[] | undefined): FolderGrouping {
-  if (settings && !settings.visual_grouping) return 'time-off'
-  switch (models?.find((m) => m.kind === 'clip')?.state) {
-    case 'queued':
-    case 'downloading':
-      return 'time-downloading'
-    case 'failed':
-      return 'time-failed'
-    case 'disabled':
-      return 'time-off'
-    default:
-      return 'visual'
-  }
 }
 
 /**
@@ -122,7 +97,6 @@ export interface FolderInputs {
   /** The folder's entry in the shared scan store. */
   scan: FolderScan | undefined
   settings: SettingsBody | undefined
-  models: ModelStatus[] | undefined
   quality: QualityStatus | null | undefined
   filter: FolderFilter
   chosen: number | null
@@ -150,7 +124,6 @@ export function folderScreenProps(i: FolderInputs): FolderProps {
       hide_rejected_photos: i.settings?.hide_rejected_photos ?? SETTINGS_DEFAULT.hide_rejected_photos,
       quality_rating: i.settings?.quality_rating ?? SETTINGS_DEFAULT.quality_rating,
     },
-    grouping: groupingOf(i.settings, i.models),
     quality: i.quality ?? null,
     reclustering: i.snap.reclustering,
     failedFiles: data?.failed ?? 0,

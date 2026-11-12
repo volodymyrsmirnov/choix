@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
@@ -384,70 +383,11 @@ func encodeJPEG(w, h int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// fakeDownloader is a models.Downloader: a model is installed when the test
-// says so or when its download completes; a held model's download waits
-// until released or cancelled.
-type fakeDownloader struct {
-	mu      sync.Mutex
-	has     map[local.ModelKind]bool
-	hold    map[local.ModelKind]chan struct{}
-	started map[local.ModelKind]int
-}
-
-func newFakeDownloader(installed ...local.ModelKind) *fakeDownloader {
-	d := &fakeDownloader{has: map[local.ModelKind]bool{}, hold: map[local.ModelKind]chan struct{}{}, started: map[local.ModelKind]int{}}
-	for _, k := range installed {
-		d.has[k] = true
-	}
-	return d
-}
-
-func (d *fakeDownloader) Has(kind local.ModelKind) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.has[kind]
-}
-
-func (d *fakeDownloader) holdKind(kind local.ModelKind) (release func()) {
-	ch := make(chan struct{})
-	d.mu.Lock()
-	d.hold[kind] = ch
-	d.mu.Unlock()
-	var once sync.Once
-	return func() { once.Do(func() { close(ch) }) }
-}
-
-func (d *fakeDownloader) downloads(kind local.ModelKind) int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.started[kind]
-}
-
-func (d *fakeDownloader) Download(ctx context.Context, kind local.ModelKind, onProgress func(received, total int64)) error {
-	d.mu.Lock()
-	d.started[kind]++
-	hold := d.hold[kind]
-	d.mu.Unlock()
-	if onProgress != nil {
-		onProgress(1, 10)
-	}
-	if hold != nil {
-		select {
-		case <-hold:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	d.mu.Lock()
-	d.has[kind] = true
-	d.mu.Unlock()
-	return nil
-}
-
-// fakeEmbedder is the shared CLIP session: a unit vector once the CLIP
-// model is installed, local.ErrModelMissing before. A test can hold calls.
-type fakeEmbedder struct {
-	dl      *fakeDownloader
+// fakeVision makes feature prints: the same unit vector for every image,
+// as the analyze stage's input check passed. Each call is logged as "print"
+// when it starts; a test can hold calls inside the detached function, as a
+// slow native call would be.
+type fakeVision struct {
 	log     *orderLog
 	calls   atomic.Int64
 	entered chan struct{}
@@ -456,39 +396,43 @@ type fakeEmbedder struct {
 	hold chan struct{}
 }
 
-func (e *fakeEmbedder) holdCalls() (release func()) {
+var _ platform.Vision = (*fakeVision)(nil)
+
+func (v *fakeVision) holdCalls() (release func()) {
 	ch := make(chan struct{})
-	e.mu.Lock()
-	e.hold = ch
-	e.mu.Unlock()
+	v.mu.Lock()
+	v.hold = ch
+	v.mu.Unlock()
 	var once sync.Once
 	return func() { once.Do(func() { close(ch) }) }
 }
 
-func (e *fakeEmbedder) Embed(image.Image) ([]float32, error) {
-	e.calls.Add(1)
-	e.log.add("embed start")
-	defer e.log.add("embed end")
-	e.mu.Lock()
-	hold := e.hold
-	e.mu.Unlock()
-	if hold != nil {
-		select {
-		case e.entered <- struct{}{}:
-		default:
+func (v *fakeVision) FeaturePrint(ctx context.Context, in platform.ImageInput) ([]float32, error) {
+	v.calls.Add(1)
+	v.log.add("print")
+	v.mu.Lock()
+	hold := v.hold
+	v.mu.Unlock()
+	return platform.Detach(ctx, func() ([]float32, error) {
+		if hold != nil {
+			select {
+			case v.entered <- struct{}{}:
+			default:
+			}
+			<-hold
 		}
-		<-hold
-	}
-	if !e.dl.Has(local.ModelCLIP) {
-		return nil, local.ErrModelMissing
-	}
-	v := make([]float32, 512)
-	v[0] = 1
-	return v, nil
+		if _, err := os.Stat(in.Path); in.Path != "" && err != nil {
+			return nil, fmt.Errorf("fake vision: %w", err)
+		}
+		p := make([]float32, platform.FeaturePrintLen)
+		p[0] = 1
+		return p, nil
+	})
 }
 
-// fakeInferer is the shared quality session; a test can hold calls.
-type fakeInferer struct {
+// scoreGate observes the photos the rating passes score (the runtime's
+// scoreHook); a test can hold them.
+type scoreGate struct {
 	calls   atomic.Int64
 	entered chan struct{}
 
@@ -496,7 +440,7 @@ type fakeInferer struct {
 	hold chan struct{}
 }
 
-func (f *fakeInferer) holdCalls() (release func()) {
+func (f *scoreGate) holdCalls() (release func()) {
 	ch := make(chan struct{})
 	f.mu.Lock()
 	f.hold = ch
@@ -505,7 +449,8 @@ func (f *fakeInferer) holdCalls() (release func()) {
 	return func() { once.Do(func() { close(ch) }) }
 }
 
-func (f *fakeInferer) QualityCrop([]float32) (float64, error) {
+// score runs before each photo is scored.
+func (f *scoreGate) score() {
 	f.calls.Add(1)
 	f.mu.Lock()
 	hold := f.hold
@@ -517,7 +462,6 @@ func (f *fakeInferer) QualityCrop([]float32) (float64, error) {
 		}
 		<-hold
 	}
-	return 0.5, nil
 }
 
 // fakePicker is the folder picker: it returns what the test set.
@@ -663,9 +607,8 @@ type harness struct {
 	vols         *platformtest.Volumes
 	stills       *fakeStills
 	video        *platformtest.Video
-	dl           *fakeDownloader
-	emb          *fakeEmbedder
-	inf          *fakeInferer
+	vision       *fakeVision
+	scores       *scoreGate
 	em           *recEmitter
 	picker       *fakePicker
 	confirm      *fakeConfirmer
@@ -673,9 +616,8 @@ type harness struct {
 	menu         system.MenuState // nil: no native menu
 }
 
-// newHarness points CHOIX_DATA_DIR at a new directory, writes a config with
-// the quality rating off (tests that need it switch it on) and installs
-// both models in the fake downloader.
+// newHarness points CHOIX_DATA_DIR at a new directory and writes a config
+// with the quality rating off (tests that need it switch it on).
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	data := t.TempDir()
@@ -687,7 +629,6 @@ func newHarness(t *testing.T) *harness {
 	log := &orderLog{}
 	vols := &platformtest.Volumes{}
 	vols.Add(parent, platform.VolumeInfo{UUID: "UUID-TEST", Name: "Test HD"})
-	dl := newFakeDownloader(local.ModelCLIP, local.ModelQuality)
 	h := &harness{
 		data:    data,
 		parent:  parent,
@@ -696,9 +637,8 @@ func newHarness(t *testing.T) *harness {
 		vols:    vols,
 		stills:  newFakeStills(log),
 		video:   &platformtest.Video{},
-		dl:      dl,
-		emb:     &fakeEmbedder{dl: dl, log: log, entered: make(chan struct{}, 1)},
-		inf:     &fakeInferer{entered: make(chan struct{}, 1)},
+		vision:  &fakeVision{log: log, entered: make(chan struct{}, 1)},
+		scores:  &scoreGate{entered: make(chan struct{}, 1)},
 		em:      newRecEmitter(log),
 		picker:  &fakePicker{},
 		confirm: &fakeConfirmer{},
@@ -723,19 +663,17 @@ func (h *harness) setConfig(t *testing.T, edit func(*config.Config)) {
 
 func (h *harness) deps() Deps {
 	return Deps{
-		Bookmarks:   h.bm,
-		Volumes:     h.vols,
-		Workspace:   h.ws,
-		Stills:      h.stills,
-		Video:       h.video,
-		Downloader:  h.dl,
-		Emit:        h.em,
-		Picker:      h.picker,
-		Confirm:     h.confirm,
-		Home:        h.parent,
-		Embedder:    h.emb,
-		CropInferer: h.inf,
-		MenuState:   h.menu,
+		Bookmarks: h.bm,
+		Volumes:   h.vols,
+		Workspace: h.ws,
+		Stills:    h.stills,
+		Video:     h.video,
+		Vision:    h.vision,
+		Emit:      h.em,
+		Picker:    h.picker,
+		Confirm:   h.confirm,
+		Home:      h.parent,
+		MenuState: h.menu,
 	}
 }
 
@@ -748,6 +686,7 @@ func (h *harness) newRuntime(t *testing.T) *Runtime {
 		t.Fatalf("New: %v", err)
 	}
 	r.presenceEvery = time.Hour
+	r.scoreHook = h.scores.score
 	t.Cleanup(r.Shutdown)
 	return r
 }

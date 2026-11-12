@@ -5,29 +5,28 @@
 // prototype shows. The fixture hands the app the same data the way Go would:
 //   - Settings.Get: the saved values; never answering while the state is
 //     still loading (510); refused with the state's message (511, `calls`);
-//   - Models.Status and Models.Quality: both downloads and the quality
-//     worker, as the state shows them, except where the state's values reach
-//     the page as Go's events (SETTINGS_EVENTS): there the bindings answer
-//     what Go reported before, and `events` holds the events, which the case
-//     emits once the page shows those earlier values;
+//   - Catalog.QualityStatus: the quality worker, as the state shows it, except where the state's value reaches the page as
+//     Go's event (SETTINGS_EVENTS): there the bindings answer what Go
+//     reported before, and `events` holds the event, which the case emits
+//     once the page shows that earlier value;
 //   - Library.List: no folder (the Settings page shows none);
 //   - `calls`: Settings.Save kept in flight where the state shows a save
-//     (504), Models.Retry kept in flight where it shows a retry (515);
+//     (504);
 //   - the "Save failed" toast of 512, seeded (the app's own toast leaves
 //     after 4 s, which a comparison could outlast; ../settingsCases.test.tsx
 //     holds the app's own failed save to the same copy);
 //   - `ui['settings.reveal']`: the opening scroll to the quality field of the
-//     quality states (505, 506, 509, 513–515), which no binding, event, route
+//     quality states (509, 513), which no binding, event, route
 //     or input can give the app (SettingsContainer.tsx reads it through
 //     uiOverride).
 // What the user does — typing into a field, flipping a switch, choosing a
-// section in the sidebar, pressing Save, Back or Retry — is done by the
+// section in the sidebar, pressing Save or Back — is done by the
 // state's case (cases.ts, SETTINGS_STEPS).
-import { model, quality } from '../../../prototype/mock/data'
+import { quality } from '../../../prototype/mock/data'
 import type { Scenario, ScenarioCtx } from '../../../prototype/registry'
 import { scenarios } from '../../../prototype/scenarios/settings'
 import type { SettingsProps } from '../../../src/design/screens/settings/props'
-import type { ModelStatus, QualityStatus } from '../../../src/design/types'
+import type { QualityStatus } from '../../../src/design/types'
 import type { ParityEvent, ParityFixture } from '../mock-bindings/control'
 
 /** A scenario context with an empty store: every state shows its defaults. */
@@ -45,21 +44,15 @@ export function settingsScenarioProps(n: number, list: Scenario[] = scenarios): 
 }
 
 /**
- * The states whose models or quality worker reach the page as Go's events,
- * and what Go reported before them (the bindings' answers):
+ * The states whose quality worker reaches the page as Go's event, and what
+ * Go reported before it (the bindings' answer):
  *   - 509: the worker was waiting for a scan; `quality:status` says it is
- *     rating photos;
- *   - 516: both downloads were queued; `models:progress` says CLIP started
- *     (a state change, with its first bytes).
+ *     rating photos.
  */
-export const SETTINGS_EVENTS: Record<number, { before: { models?: ModelStatus[]; quality?: QualityStatus }; events: (p: SettingsProps) => ParityEvent[] }> = {
+export const SETTINGS_EVENTS: Record<number, { before: { quality?: QualityStatus }; events: (p: SettingsProps) => ParityEvent[] }> = {
   509: {
     before: { quality: quality({ state: 'waiting' }) },
     events: (p) => [{ name: 'quality:status', data: p.quality }],
-  },
-  516: {
-    before: { models: [model('clip', 'queued'), model('quality', 'queued')] },
-    events: (p) => [{ name: 'models:progress', data: p.models.find((m) => m.kind === 'clip') }],
   },
 }
 
@@ -72,12 +65,10 @@ export function settingsFixture(p: SettingsProps, n?: number): ParityFixture {
   const calls: NonNullable<ParityFixture['calls']> = {}
   if (p.saved === null && p.loadError !== null) calls['Settings.Get'] = { code: 'internal', message: p.loadError }
   if (p.saving) calls['Settings.Save'] = 'pending'
-  if (p.retrying) calls['Models.Retry'] = 'pending'
   return plain({
     route: '#/settings',
     folders: [],
     settings: p.saved ?? 'pending',
-    models: ev?.before.models ?? p.models,
     ...(p.quality ? { quality: ev?.before.quality ?? p.quality } : {}),
     ...(p.toasts.length > 0 ? { toasts: p.toasts } : {}),
     ...(p.reveal !== undefined ? { ui: { 'settings.reveal': p.reveal } } : {}),

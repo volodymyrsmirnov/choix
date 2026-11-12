@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 )
@@ -92,10 +91,8 @@ func TestQualityStatus_JSON(t *testing.T) {
 
 // The job begins its pass with its folder's id.
 func TestJob_BeginsThePassWithItsFolder(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "which")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg")
 	tr := &jobTestTracker{}

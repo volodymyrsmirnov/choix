@@ -1,5 +1,7 @@
 # Advisory photo quality rating — plan
 
+Superseded in part by `2026-11-12-builtin-grouping-and-quality-design.md`: the models, ONNX Runtime and the download are gone.
+
 Date: 2026-11-11. Status: revised after two plan reviews (see "Review log" at the end); implemented in the same PR.
 
 ## Goal

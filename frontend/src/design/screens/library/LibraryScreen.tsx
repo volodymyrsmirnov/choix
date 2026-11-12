@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react'
+import { useRef } from 'react'
 import {
   AlertReplica,
   Button,
@@ -8,10 +8,7 @@ import {
   FolderRow,
   IconButton,
   LibraryFilterBar,
-  ModelBanner,
   MonthHeader,
-  QualityIndicator,
-  qualityIndicatorVisible,
   showLabel,
   Spinner,
   TitleBar,
@@ -20,7 +17,6 @@ import {
 import { dialog } from '../../dialogs'
 import { FOLDER_ROW_MENU, folderFlags } from '../../menus'
 import type { FolderSummary, LibraryFilter, QualityStatus } from '../../types'
-import { WelcomePanel } from '../welcome/WelcomePanel'
 import { filterFolders, isFiltered, LIBRARY_FILTER, libraryGroups } from './filter'
 import { librarySummary, monthCount } from './months'
 import { LIBRARY_OVERLAYS, type LibraryProps } from './props'
@@ -28,16 +24,13 @@ import { LIBRARY_OVERLAYS, type LibraryProps } from './props'
 
 /**
  * The Library (spec §4.1, Layout A): the title bar, then the loading state,
- * the welcome panel (no folders, a model still to come), the drop zone (no
- * folders) or the folder rows under a summary line that carries the toolbar
- * (search, filter, order): the month timeline in a capture-date order, one
- * list in a name or added order; a compact banner for a model download in
- * progress or failed.
+ * the drop zone (no folders) or the folder rows under a summary line that
+ * carries the toolbar (search, filter, order): the month timeline in a
+ * capture-date order, one list in a name or added order.
  */
 export function LibraryScreen(p: LibraryProps) {
   const { folders } = p
   const filter = p.filter ?? LIBRARY_FILTER
-  const settled = p.models.every((m) => m.state === 'disabled' || m.state === 'ready')
   const removing = p.removePrompt ? folders?.find((f) => f.id === p.removePrompt) : undefined
 
   let body
@@ -46,16 +39,6 @@ export function LibraryScreen(p: LibraryProps) {
       <div className="h-full flex items-center justify-center">
         <Spinner label="Loading the Library" />
       </div>
-    )
-  } else if (folders.length === 0 && !settled) {
-    body = (
-      <WelcomePanel
-        models={p.models}
-        online={p.online}
-        onAdd={p.onAdd}
-        onRetryModel={p.onRetryModel}
-        onToggleModel={p.onToggleModel}
-      />
     )
   } else if (folders.length === 0) {
     body = (
@@ -71,10 +54,11 @@ export function LibraryScreen(p: LibraryProps) {
 
   return (
     <div className="relative flex flex-col h-full min-h-0">
+      {/* No indicator: a status lives on the element it describes (the
+          owner's rule), and scans and rating passes show in their rows. */}
       <TitleBar
         title="Library"
         titleHidden
-        indicator={indicatorOf(p)}
         trailing={
           <>
             <Button variant="primary" icon="plus" kbd="⌘O" onClick={p.onAdd}>
@@ -97,18 +81,6 @@ export function LibraryScreen(p: LibraryProps) {
       )}
     </div>
   )
-}
-
-/**
- * The Library title bar's indicator. A status lives on the element it
- * describes, and the bar shows one only when nothing else on the screen does
- * (the owner's rule): scans and rating passes show in their folder's row,
- * model downloads in the welcome panel or the compact banner. What is left
- * is "Quality rating stopped", which nothing else on the Library shows.
- */
-function indicatorOf(p: LibraryProps): ReactNode {
-  const q = p.quality
-  return q && q.enabled && q.state === 'error' ? <QualityIndicator status={q} /> : undefined
 }
 
 /** A folder's rating pass in flight (its own counts), for its row. */
@@ -154,17 +126,9 @@ function Timeline(p: LibraryProps & { folders: FolderSummary[]; filter: LibraryF
   const visible = filterFolders(p.folders, p.filter)
   const narrowed = isFiltered(p.filter)
   const summary = librarySummary(visible)
-  const busy = p.models.filter((m) => m.state === 'downloading' || m.state === 'failed')
   return (
     <div className="h-full overflow-y-auto" data-scroll>
       <div ref={list} className="px-7 pt-[22px] pb-7">
-        {busy.length > 0 && (
-          <div className="flex flex-col gap-2 mb-5">
-            {busy.map((m) => (
-              <ModelBanner key={m.kind} model={m} onRetry={() => p.onRetryModel(m.kind)} />
-            ))}
-          </div>
-        )}
         {/* The summary line: what is shown on the left, the toolbar at its right end. */}
         <div className="flex items-center gap-4 min-w-0">
           {visible.length > 0 && (

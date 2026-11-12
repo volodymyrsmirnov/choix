@@ -6,18 +6,16 @@
 // and never loads the bindings.
 import * as Catalog from '@bindings/catalog/service'
 import * as Library from '@bindings/library/service'
-import * as Models from '@bindings/models/service'
 import * as Settings from '@bindings/settings/service'
 import * as System from '@bindings/system/service'
 
-export { Catalog, Library, Models, Settings, System }
+export { Catalog, Library, Settings, System }
 
 export type { FocusResponse, FolderView, PickResult } from '@bindings/catalog/models'
 export type {
   FolderChangedEvent,
   LibraryChangedEvent,
   MenuActionEvent,
-  ModelStatus as ModelStatusEvent,
   Progress,
   Quality as QualityEvent,
   ScanProgressEvent,

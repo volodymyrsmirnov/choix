@@ -21,8 +21,8 @@ import (
 type JobKind int
 
 const (
-	// JobBackfill fills in what an earlier run left out (a model became
-	// available) without walking the folder. Stored as "backfill".
+	// JobBackfill fills in what an earlier run left out (a setting was
+	// switched on) without walking the folder. Stored as "backfill".
 	JobBackfill JobKind = iota
 	// JobFull walks the folder first, then does everything a backfill does.
 	// Stored as "full".
@@ -110,12 +110,10 @@ const (
 	stateError    = "error"
 )
 
-// DefaultSlots is how many folder jobs the app runs at once. Inference is
-// serialised process-wide and native calls are capped by
-// platform.NativeSlots whatever the number of jobs, so a second job lets
-// another folder scan while one is in its long, inference-bound quality
-// pass; a third would add disk and memory pressure and no inference
-// throughput.
+// DefaultSlots is how many folder jobs the app runs at once. Native calls
+// are capped by platform.NativeSlots whatever the number of jobs, so a
+// second job lets another folder scan while one is in its quality pass; a
+// third would add disk and memory pressure and little throughput.
 const DefaultSlots = 2
 
 // Runner does one job: the pipeline pass over a folder. It returns how the

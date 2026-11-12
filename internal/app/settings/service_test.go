@@ -29,7 +29,7 @@ func TestGet_Defaults(t *testing.T) {
 	}
 	want := Body{
 		BucketSize:         600,
-		Similarity:         0.92,
+		Similarity:         0.90,
 		PicksDir:           "picks",
 		AdvanceOnAction:    false,
 		HideRejectedPhotos: false,
@@ -59,7 +59,7 @@ func TestSave_PartialPatchKeepsOtherFields(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	want := Body{
-		BucketSize: 120, Similarity: 0.92, PicksDir: "selects",
+		BucketSize: 120, Similarity: 0.90, PicksDir: "selects",
 		HideRejectedPhotos: true, QualityRating: true, VisualGrouping: true,
 	}
 	if got != want {
@@ -132,7 +132,7 @@ func TestSave_ReclustersOnlyWhenClusteringChanged(t *testing.T) {
 		{"cross-device merging", Patch{CrossDeviceMerging: ptr(true)}, true},
 		{"visual grouping", Patch{VisualGrouping: ptr(false)}, true},
 		{"same bucket size", Patch{BucketSize: ptr(600)}, false},
-		{"same similarity", Patch{Similarity: ptr(0.92)}, false},
+		{"same similarity", Patch{Similarity: ptr(0.90)}, false},
 		{"picks dir", Patch{PicksDir: ptr("selects")}, false},
 		{"advance on action", Patch{AdvanceOnAction: ptr(true)}, false},
 		{"hide rejected", Patch{HideRejectedPhotos: ptr(true)}, false},

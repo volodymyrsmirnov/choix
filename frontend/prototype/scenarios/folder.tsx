@@ -57,7 +57,6 @@ export interface FolderState {
   selected?: number
   hideRejected?: boolean
   quality?: boolean
-  grouping?: FolderProps['grouping']
   /** The quality worker's status, for the title bar's indicator. */
   qualityStatus?: QualityStatus | null
   reclustering?: boolean
@@ -96,7 +95,6 @@ export function folderProps(ctx: ScenarioCtx, s: FolderState): FolderProps {
       hide_rejected_photos: s.hideRejected ?? false,
       quality_rating: s.quality ?? true,
     },
-    grouping: s.grouping ?? 'visual',
     quality: s.qualityStatus ?? null,
     reclustering: s.reclustering ?? false,
     failedFiles: s.failedFiles ?? 0,
@@ -165,7 +163,6 @@ const SUBJECT: Record<number, string> = {
   213: FIRST,
   214: '[data-empty-state]',
   215: '[data-testid="recluster"]',
-  216: '[data-testid="notice-time-only"]',
   217: SECOND,
   218: '[role="menu"]',
   219: `[data-testid="device-filter"], ${FIRST}`,
@@ -177,7 +174,6 @@ const SUBJECT: Record<number, string> = {
   225: '[data-testid="notice-read-only"]',
   226: '[data-testid="notice-picks-missing"]',
   227: FIRST,
-  228: '[data-testid="notice-time-only"]',
   229: '[data-testid="quality-progress"]',
   230: '[data-testid="scan-checklist"]',
   231: '[data-testid="scan-progress"]',
@@ -207,7 +203,6 @@ export const scenarios: Scenario[] = [
   folder(213, 'Video cluster (S3)', { clusters: REVIEWED, filter: { sort: 'time-desc' } }),
   folder(214, 'No photos or videos found', { clusters: [], folder: EMPTY_FOLDER }, EMPTY),
   folder(215, 'Re-clustering busy', { clusters: REVIEWED, reclustering: true }),
-  folder(216, 'Time-only notice (model downloading)', { clusters: REVIEWED, grouping: 'time-downloading' }, NEW),
   folder(217, 'Cluster fully reviewed', { clusters: withSecond(REVIEWED, DONE_CLUSTER) }),
   folder(218, 'Sort menu open', { clusters: REVIEWED, openMenu: 'sort' }, GRID, [FOLDER_OVERLAYS.sort]),
   folder(219, 'Camera filter applied', { clusters: REVIEWED, filter: { device: IPHONE } }),
@@ -221,9 +216,10 @@ export const scenarios: Scenario[] = [
   folder(225, 'Read-only volume while open', { clusters: REVIEWED, folder: summaryOf(REVIEWED, ON_CARD), notice: 'read-only' }, NEW),
   folder(226, 'Picks missing their copies (notice)', { clusters: REVIEWED, picksMissing: 4 }, NEW),
   // Visual grouping off is the user's choice: the page shows no notice for
-  // it (kept as a state so parity proves the app shows none either).
-  folder(227, 'Visual grouping off (no notice)', { clusters: REVIEWED, grouping: 'time-off' }, NEW),
-  folder(228, 'Time-only notice (model download failed)', { clusters: REVIEWED, grouping: 'time-failed' }, NEW),
+  // it, so it draws as 203 does (kept as a state so parity proves the app
+  // shows none either: its fixture turns visual grouping off). 216 and 228,
+  // the notices of a model download, are retired.
+  folder(227, 'Visual grouping off (no notice)', { clusters: REVIEWED }, NEW),
   folder(
     229,
     'Title bar with quality indicator',

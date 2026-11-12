@@ -55,15 +55,15 @@ describe('createStore', () => {
   })
 
   test('an event during a load does not regress the loaded value', async () => {
-    // The reviewer's reproduction: Go's snapshot says `ready`; a `downloading`
+    // The reviewer's reproduction: Go's snapshot says `idle`; a `scoring`
     // event emitted before that snapshot arrives while the load is in flight.
-    type Model = { kind: string; state: string }
-    let server: Model = { kind: 'clip', state: 'ready' }
+    type Quality = { state: string; active: boolean }
+    let server: Quality = { state: 'idle', active: false }
     const loads: Array<() => void> = []
-    let reconcile: Setter<Model> = () => {}
+    let reconcile: Setter<Quality> = () => {}
     const store = createStore(
       () =>
-        new Promise<Model>((resolve) => {
+        new Promise<Quality>((resolve) => {
           const answer = { ...server }
           loads.push(() => resolve(answer))
         }),
@@ -73,16 +73,16 @@ describe('createStore', () => {
       },
     )
     store.start()
-    reconcile({ kind: 'clip', state: 'downloading' })
+    reconcile({ state: 'scoring', active: true })
     loads[0]()
     await flush()
-    expect(store.get().value).toEqual({ kind: 'clip', state: 'ready' })
+    expect(store.get().value).toEqual({ state: 'idle', active: false })
     // The follow-up reload answers with the authoritative value again.
     expect(loads).toHaveLength(2)
-    server = { kind: 'clip', state: 'ready' }
+    server = { state: 'idle', active: false }
     loads[1]()
     await flush()
-    expect(store.get()).toMatchObject({ status: 'ready', value: { kind: 'clip', state: 'ready' } })
+    expect(store.get()).toMatchObject({ status: 'ready', value: { state: 'idle', active: false } })
   })
 
   test('events during a load trigger exactly one follow-up reload', async () => {

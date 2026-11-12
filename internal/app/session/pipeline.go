@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/group"
 	"github.com/volodymyrsmirnov/choix/internal/meta"
@@ -21,36 +21,44 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
 
-// Pipeline tuning, as v1's (internal/cli/pipeline_build.go).
+// Pipeline tuning. Feature-print calls are independent and already bounded
+// by platform.NativeSlots, so analysis runs on a few workers.
 const (
-	sessionAnalyzeWorkers = 1 // inference is serialised anyway
+	sessionAnalyzeWorkers = 4
 	sessionBatchSize      = 100
 )
 
-// Grouping defaults applied when a setting is unset (zero), as v1's.
+// Grouping defaults applied when a setting is unset (zero).
 const (
-	sessionDefaultBucketSec = 600
-	sessionDefaultThreshold = 0.92
+	sessionDefaultBucketSec  = 600
+	sessionDefaultSimilarity = 0.90
 )
 
-// ClusterParams identifies the settings a clustering was built with. The
-// value is stored in the folder's kv under "cluster_params" after every
-// clustering; EnsureClustered compares it with the current settings.
+// sessionClusterMethod names how clusters are built: complete-link over the
+// feature prints stamped analyze.PrintID. It is part of ClusterParams, so a
+// folder clustered another way (by an earlier build) re-clusters once.
+const sessionClusterMethod = analyze.PrintID + "+complete"
+
+// ClusterParams identifies the settings and the method a clustering was
+// built with. The value is stored in the folder's kv under "cluster_params"
+// after every clustering; EnsureClustered compares it with the current
+// settings.
 func ClusterParams(cfg config.Config) string {
-	return fmt.Sprintf("b=%d;t=%.4f;x=%t;v=%t",
-		cfg.BucketSizeSec, cfg.VisualClusterThreshold, cfg.CrossDeviceMerging, cfg.VisualGrouping)
+	return fmt.Sprintf("b=%d;t=%.4f;x=%t;v=%t;m=%s",
+		cfg.BucketSizeSec, cfg.VisualSimilarity, cfg.CrossDeviceMerging, cfg.VisualGrouping, sessionClusterMethod)
 }
 
 // NewPipeline wires the folder's pipeline (ported from v1's
 // internal/cli/pipeline_build.go): metadata and thumbnails on NumCPU
-// workers, analysis on one, batches of 100, and a progress channel the
-// pipeline's Reporter feeds without blocking.
+// workers, analysis on sessionAnalyzeWorkers, batches of 100, and a progress
+// channel the pipeline's Reporter feeds without blocking.
 //
 // settings is read live:
 //   - each walk skips the folder's effective picks directory and its other
 //     export directories, except one CheckDir refuses (it holds scanned
 //     originals), which is walked as originals;
-//   - the analyze stage embeds only while visual grouping is on;
+//   - the analyze stage makes feature prints only while visual grouping is
+//     on;
 //   - the cluster stage is the session's live clusterer (see Recluster).
 //
 // Every native call the stages make is counted in the session's Inflight,
@@ -58,16 +66,16 @@ func ClusterParams(cfg config.Config) string {
 func (s *Session) NewPipeline(settings func() config.Config) (*pipeline.Pipeline, <-chan pipeline.Progress) {
 	progress := make(chan pipeline.Progress, pipeline.ProgressBufferSize)
 
-	var embedder local.Embedder // a nil Deps.Embedder must stay a nil interface
-	if s.deps.Embedder != nil {
-		embedder = &sessionGatedEmbedder{inner: s.deps.Embedder, settings: settings}
+	var printer analyze.Printer // a nil Deps.Vision must stay a nil interface
+	if s.deps.Vision != nil {
+		printer = &sessionPrinter{vision: s.deps.Vision, settings: settings}
 	}
 
 	// A file whose stage fails while the folder is unreachable is left as it
 	// was (pipeline.ErrFolderUnavailable), never marked failed.
 	ext := meta.NewExtractor(&meta.NativeReader{Stills: s.deps.Stills, Video: s.deps.Video}, s.Store, s.Root)
 	ext.FailureGuard = s.reachable
-	analyzer := local.NewAnalyzer(s.Store, embedder)
+	analyzer := analyze.New(s.Store, printer)
 	analyzer.FailureGuard = s.reachable
 
 	p := &pipeline.Pipeline{
@@ -81,7 +89,7 @@ func (s *Session) NewPipeline(settings func() config.Config) (*pipeline.Pipeline
 			Video:        s.deps.Video,
 			FailureGuard: s.reachable,
 		}},
-		Analyzer: &sessionAnalyzeStage{s: s, a: analyzer, embeds: embedder != nil},
+		Analyzer: &sessionAnalyzeStage{s: s, a: analyzer},
 		Grouper:  &sessionClusterer{s: s, settings: settings},
 		Reporter: pipeline.NewReporter(progress),
 		Concurrency: map[string]int{
@@ -158,12 +166,14 @@ func (s *Session) clusterLocked(ctx context.Context, cfg config.Config, progress
 	if bucket <= 0 {
 		bucket = sessionDefaultBucketSec
 	}
-	threshold := cfg.VisualClusterThreshold
-	if threshold <= 0 {
-		threshold = sessionDefaultThreshold
+	similarity := cfg.VisualSimilarity
+	if similarity <= 0 {
+		similarity = sessionDefaultSimilarity
 	}
-	g := group.NewGrouper(s.Store, bucket, threshold, cfg.CrossDeviceMerging)
-	g.SetUseEmbeddings(cfg.VisualGrouping)
+	g := group.NewGrouper(s.Store, bucket, similarity, cfg.CrossDeviceMerging)
+	if cfg.VisualGrouping {
+		g.UsePrints(analyze.PrintID)
+	}
 	if err := g.RebuildAllProgress(ctx, progress); err != nil {
 		return fmt.Errorf("session: cluster: %w", err)
 	}
@@ -290,23 +300,24 @@ func (t *sessionThumbStage) Build(ctx context.Context, fileID int64) error {
 	return t.b.Build(t.s.Context(ctx), fileID)
 }
 
-// sessionAnalyzeStage adapts local.Analyzer to pipeline.AnalyzeProcessor: it
-// hands the analyzer the file's tier-1 thumbnail. A file without one is
-// failed, so it cannot stall the stage — unless the folder is unreachable,
-// which leaves it as it was (pipeline.ErrFolderUnavailable). With an
-// embedder, every file is analyzed holding the inference turn; the wait for
-// it ends with ctx, leaving the file as it was.
+// sessionAnalyzeStage adapts analyze.Analyzer to pipeline.AnalyzeProcessor:
+// it hands the analyzer the file's preview tier (at most 1600 px) or, when
+// the file has no usable preview (neither its row's file nor a file at the
+// tier's standard cache path), its thumb tier, as the media handler does:
+// Choix 1.x made only a thumb for a video. A file with neither is failed, so it cannot stall the stage —
+// unless the folder is unreachable, which leaves it as it was
+// (pipeline.ErrFolderUnavailable). The analyzer runs under the session's
+// context, so its native calls are counted in the session's Inflight.
 type sessionAnalyzeStage struct {
-	s      *Session
-	a      *local.Analyzer
-	embeds bool // the analyzer has an embedder: the engine may be called
+	s *Session
+	a *analyze.Analyzer
 }
 
 func (a *sessionAnalyzeStage) Analyze(ctx context.Context, fileID int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	p, err := sessionThumbPath(a.s.Store, a.s.Root, fileID, thumb.TierThumb)
+	p, err := sessionAnalyzeInput(a.s.Store, a.s.Root, fileID)
 	if err != nil {
 		err = fmt.Errorf("cannot analyze: %w", err)
 		if !a.s.reachable() {
@@ -317,17 +328,20 @@ func (a *sessionAnalyzeStage) Analyze(ctx context.Context, fileID int64) error {
 		}
 		return err
 	}
-	actx := a.s.Context(ctx)
-	// Whether the file is embedded is decided by the live setting just
-	// before the engine is called (sessionGatedEmbedder), so the turn is
-	// taken whenever the stage can embed at all: no read of the setting here
-	// can let an embedding bypass it.
-	if a.embeds {
-		release, err := acquireInference(actx)
-		if err != nil {
-			return err
-		}
-		defer release()
+	return a.a.Analyze(a.s.Context(ctx), fileID, p)
+}
+
+// sessionAnalyzeInput returns the cached image the analyze stage reads for
+// fileID: its preview tier, otherwise its thumb tier, each resolved by
+// sessionThumbPath (the row's file, else the tier's standard cache path).
+// With neither, the error names the preview.
+func sessionAnalyzeInput(st *store.Store, root string, fileID int64) (string, error) {
+	p, err := sessionThumbPath(st, root, fileID, thumb.TierPreview)
+	if err == nil {
+		return p, nil
 	}
-	return a.a.Analyze(actx, fileID, p)
+	if tp, terr := sessionThumbPath(st, root, fileID, thumb.TierThumb); terr == nil {
+		return tp, nil
+	}
+	return "", err
 }

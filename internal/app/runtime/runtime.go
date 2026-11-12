@@ -8,14 +8,11 @@
 //
 // The connections between the cores:
 //
-//   - settings change → models.Refresh and quality.SettingChanged (switching
-//     the rating off cancels the pass in flight at once); quality_rating
-//     switched on with its model ready, or visual_grouping switched on with
-//     CLIP ready, queues a backfill of every reachable folder;
-//   - a model downloaded in this process, while its setting is on → a
-//     backfill of every reachable folder (a model already on disk at launch
-//     queues nothing, call C17); every model status change and every
-//     scan:state → quality.Changed;
+//   - settings change → quality.SettingChanged (switching the rating off
+//     cancels the pass in flight at once); quality_rating or visual_grouping
+//     switched on queues a backfill of every reachable folder (nothing is
+//     queued at launch for finished folders); every scan:state →
+//     quality.Changed;
 //   - Library: a folder offline → its job suspended and the catalog lets go
 //     of it; removed → its job cancelled and the catalog lets go; online →
 //     its pending job resumed;
@@ -36,13 +33,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/catalog"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
-	"github.com/volodymyrsmirnov/choix/internal/app/inference"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/app/media"
-	"github.com/volodymyrsmirnov/choix/internal/app/models"
 	"github.com/volodymyrsmirnov/choix/internal/app/opgate"
 	"github.com/volodymyrsmirnov/choix/internal/app/session"
 	"github.com/volodymyrsmirnov/choix/internal/app/settings"
@@ -69,41 +63,32 @@ const (
 )
 
 // Steps of Shutdown, in order, reported to Runtime.hook (tests) as each
-// ends. stepInferenceClosed and stepLibraryClosed are reported only when
-// that resource was free and was closed.
+// ends. stepLibraryClosed is reported only when library.db was free and was
+// closed.
 const (
-	stepGateClosed      = "gate closed"
-	stepCancelled       = "context cancelled"
-	stepSilenced        = "emitter closed"
-	stepQueueStopped    = "queue stopped"
-	stepCatalogClosed   = "catalog closed"
-	stepModelsStopped   = "models stopped"
-	stepSessionsClosed  = "sessions closed"
-	stepInferenceClosed = "inference closed"
-	stepLibraryClosed   = "library closed"
-	stepDone            = "done"
+	stepGateClosed     = "gate closed"
+	stepCancelled      = "context cancelled"
+	stepSilenced       = "emitter closed"
+	stepQueueStopped   = "queue stopped"
+	stepCatalogClosed  = "catalog closed"
+	stepSessionsClosed = "sessions closed"
+	stepLibraryClosed  = "library closed"
+	stepDone           = "done"
 )
 
-// Model states (events.ModelStatus.State) during which a download is in
-// flight: running, or waiting for its turn or a retry.
-const (
-	modelDownloading = "downloading"
-	modelQueued      = "queued"
-)
-
-// Deps are what the runtime is built from: the platform, the model
-// downloader, the frontend's event sink, the native dialogs and menu and the
-// window's title bar.
-// Bookmarks, Volumes, Workspace, Stills, Video, Downloader, Picker and
-// Confirm are required.
+// Deps are what the runtime is built from: the platform, the frontend's
+// event sink, the native dialogs and menu and the window's title bar.
+// Bookmarks, Volumes, Workspace, Stills, Video, Vision, Picker and Confirm
+// are required.
 type Deps struct {
 	Bookmarks platform.Bookmarks
 	Volumes   platform.Volumes
 	Workspace platform.Workspace
 	Stills    platform.Stills
 	Video     platform.Video
+	// Vision makes the feature prints of visual grouping.
+	Vision platform.Vision
 
-	Downloader models.Downloader
 	// Emit receives every event for the frontend; nil sends none. If it also
 	// has a Close method (Close() or Close() error), Shutdown calls it once
 	// the runtime has stopped emitting — cmd/choix's emitter has one.
@@ -118,14 +103,6 @@ type Deps struct {
 	// Empty: it is read from the password database, never from $HOME, which
 	// inside the App Sandbox is the app's container.
 	Home string
-	// CPUOnly lists the models that skip the CoreML execution provider (nil:
-	// the defaults of local.SessionOptions).
-	CPUOnly map[local.ModelKind]bool
-
-	// Embedder and CropInferer replace the inference engine's CLIP and
-	// quality sessions (tests inject fakes). nil: the engine's.
-	Embedder    local.Embedder
-	CropInferer local.CropInferer
 }
 
 // Runtime holds the app's cores and the bindings over them. The exported
@@ -135,7 +112,6 @@ type Runtime struct {
 	Library  *library.Service
 	Catalog  *catalog.Service
 	Settings *settings.Service
-	Models   *models.Service
 	System   *system.Service
 	Media    *media.Handler
 
@@ -151,8 +127,6 @@ type Runtime struct {
 	db        *library.DB
 	lib       *library.Library
 	settings  *settings.Store
-	models    *models.Manager
-	engine    *inference.Engine
 	sessions  *session.Manager
 	quality   *session.QualityTracker
 	queue     *session.Queue
@@ -173,6 +147,9 @@ type Runtime struct {
 	// detached (goClose); tests replace it, before Start, to choose when the
 	// close runs.
 	closeLater func(closeFn func())
+	// scoreHook, when set by a test before Start, runs before each photo a
+	// rating pass scores.
+	scoreHook func()
 
 	// lifeMu orders Start against Shutdown: once shut is set nothing more
 	// is started.
@@ -244,34 +221,16 @@ func New(d Deps) (*Runtime, error) {
 		PreviewsDir: appdir.PreviewsPath,
 	})
 
-	r.models = models.New(models.Options{
-		Downloader:   d.Downloader,
-		Enabled:      r.modelEnabled,
-		Emit:         r.coalescer,
-		OnDownloaded: r.onModelDownloaded,
-	})
-
-	r.engine = inference.New(local.NewModelStore(appdir.Models()), d.CPUOnly)
-	embedder := d.Embedder
-	if embedder == nil {
-		embedder = r.engine.Embedder(func() bool { return r.settings.Get().VisualGrouping })
-	}
-	inferer := d.CropInferer
-	if inferer == nil {
-		inferer = r.engine.CropInferer()
-	}
 	r.sessions = session.NewManager(session.Deps{
-		Library:     r.lib,
-		Settings:    r.settings.Get,
-		Stills:      d.Stills,
-		Video:       d.Video,
-		Embedder:    embedder,
-		CropInferer: inferer,
+		Library:  r.lib,
+		Settings: r.settings.Get,
+		Stills:   d.Stills,
+		Video:    d.Video,
+		Vision:   d.Vision,
 	})
 
 	r.quality = session.NewQualityTracker(session.QualityOptions{
 		Enabled: func() bool { return r.settings.Get().QualityRating },
-		Model:   func() events.ModelStatus { return r.modelStatus(local.ModelQuality) },
 		Busy:    func() bool { return !r.queue.Idle() },
 		Emit:    r.coalescer,
 	})
@@ -279,10 +238,14 @@ func New(d Deps) (*Runtime, error) {
 	job := session.NewJob(session.JobOptions{
 		Sessions: r.sessions,
 		Settings: r.settings.Get,
-		Models:   r.models,
 		Quality:  r.quality,
 		Emit:     r.coalescer,
 		AfterJob: r.afterJob,
+		BeforeScore: func() {
+			if r.scoreHook != nil {
+				r.scoreHook()
+			}
+		},
 	})
 	r.queue = session.NewQueue(session.QueueOptions{
 		Library:     r.lib,
@@ -315,9 +278,8 @@ func New(d Deps) (*Runtime, error) {
 		PreviewURL: media.PreviewURL,
 		Gate:       r.gate,
 	})
-	r.Catalog = catalog.NewService(r.catalog, r.gate)
+	r.Catalog = catalog.NewService(r.catalog, r.quality.Status, r.gate)
 	r.Settings = settings.NewService(r.settings, settings.Hooks{Recluster: r.reclusterOpen}, r.gate)
-	r.Models = models.NewService(r.models, r.quality.Status, r.gate)
 	r.System = system.NewService(system.Deps{
 		Library:     r.lib,
 		Sessions:    r.sessions,
@@ -346,8 +308,8 @@ func checkDeps(d Deps) error {
 		missing = "Stills"
 	case d.Video == nil:
 		missing = "Video"
-	case d.Downloader == nil:
-		missing = "Downloader"
+	case d.Vision == nil:
+		missing = "Vision"
 	case d.Picker == nil:
 		missing = "Picker"
 	case d.Confirm == nil:
@@ -373,9 +335,9 @@ func homeDir(home string) string {
 	return u.HomeDir
 }
 
-// Start begins the background work: the event coalescer, a presence check
-// of every folder followed by the periodic one (every 30 s while visible),
-// the model downloads and the job queue. It returns once the queue has
+// Start begins the background work: the event coalescer, the removal of an
+// earlier build's model files, a presence check of every folder followed by
+// the periodic one (every 30 s while visible) and the job queue. It returns once the queue has
 // started; the work goes on in the background until Shutdown, or until ctx
 // is done. Start does nothing when called again or after Shutdown began.
 func (r *Runtime) Start(ctx context.Context) {
@@ -395,6 +357,8 @@ func (r *Runtime) Start(ctx context.Context) {
 	}
 	r.lifeMu.Unlock()
 
+	r.goBackground(cleanLegacyModels)
+
 	// The launch check, before the queue loads the pending jobs, so that
 	// the folders it loads are the ones present now.
 	if r.track() {
@@ -410,7 +374,6 @@ func (r *Runtime) Start(ctx context.Context) {
 		return
 	}
 	r.goBackground(func() { r.lib.RunPresence(r.ctx, r.presenceEvery, r.visible.Load) })
-	r.models.Start(r.ctx)
 	r.queueStarted.Store(true)
 	r.queue.Start(r.ctx)
 }
@@ -435,18 +398,9 @@ func (r *Runtime) AddDropped(paths []string) []library.AddResult {
 	})
 }
 
-// Idle reports whether no job is queued or running and no model download is
-// in flight.
+// Idle reports whether no job is queued or running.
 func (r *Runtime) Idle() bool {
-	if !r.queue.Idle() {
-		return false
-	}
-	for _, s := range r.models.Status() {
-		if s.State == modelDownloading || s.State == modelQueued {
-			return false
-		}
-	}
-	return true
+	return r.queue.Idle()
 }
 
 // track counts one of the runtime's own goroutines (or a synchronous piece
@@ -476,52 +430,20 @@ func (r *Runtime) goBackground(fn func()) {
 
 // --- subscriptions --------------------------------------------------------
 
-// modelEnabled reports the setting that enables kind's model.
-func (r *Runtime) modelEnabled(kind local.ModelKind) bool {
-	cfg := r.settings.Get()
-	switch kind {
-	case local.ModelCLIP:
-		return cfg.VisualGrouping
-	case local.ModelQuality:
-		return cfg.QualityRating
-	}
-	return false
-}
-
-// modelStatus returns kind's download status.
-func (r *Runtime) modelStatus(kind local.ModelKind) events.ModelStatus {
-	for _, s := range r.models.Status() {
-		if s.Kind == kind.String() {
-			return s
-		}
-	}
-	return events.ModelStatus{Kind: kind.String()}
-}
-
 // onSettingsChanged runs while saves are serialised: it must be quick and
 // must not save. Queueing the backfill is handed to a goroutine.
+// Switching quality_rating or visual_grouping from off to on queues a
+// backfill of every reachable folder: the photos rated or printed while it
+// was off are pending.
 func (r *Runtime) onSettingsChanged(old, cur config.Config) {
-	r.models.Refresh()
 	r.quality.SettingChanged()
-	if (cur.QualityRating && !old.QualityRating && r.models.Ready(local.ModelQuality)) ||
-		(cur.VisualGrouping && !old.VisualGrouping && r.models.Ready(local.ModelCLIP)) {
+	if (cur.QualityRating && !old.QualityRating) || (cur.VisualGrouping && !old.VisualGrouping) {
 		r.goBackground(func() {
 			if r.ctx.Err() == nil {
 				r.queue.EnqueueAllReachable(session.JobBackfill)
 			}
 		})
 	}
-}
-
-// onModelDownloaded runs on the download goroutine once a model finished
-// downloading in this process. A model already on disk at launch never gets
-// here ([call] C17).
-func (r *Runtime) onModelDownloaded(kind local.ModelKind) {
-	if r.ctx.Err() != nil || !r.modelEnabled(kind) {
-		return
-	}
-	slog.Info("runtime: model downloaded; queueing a backfill of every reachable folder", "model", kind)
-	r.queue.EnqueueAllReachable(session.JobBackfill)
 }
 
 // onOffline: the folder went offline, missing, lost its access or moved
@@ -675,20 +597,17 @@ func (r *Runtime) folderState(id string) (string, error) {
 //
 //  1. refuses new bindings, media requests and AddDropped (the gate);
 //  2. cancels the root context: the running jobs, the quality passes, the
-//     presence checks, model downloads, media requests and transcodes and
-//     catalog refreshes stop;
+//     presence checks, media requests and transcodes and catalog refreshes
+//     stop;
 //  3. closes the emitter: nothing calls into the frontend afterwards;
-//  4. stops the queue (an inference in flight is awaited), closes the
-//     catalog (a pick in flight is awaited, never cut), stops the model
-//     downloads (partial files stay for the next launch) and shuts the
-//     sessions down: each closes once unreferenced and without detached
-//     native calls, which get NativeQuitWait;
-//  5. closes the inference engine when no inference runs, and library.db
-//     once no binding and no background work uses it.
+//  4. stops the queue, closes the catalog (a pick in flight is awaited,
+//     never cut) and shuts the sessions down: each closes once unreferenced
+//     and without detached native calls, which get NativeQuitWait;
+//  5. closes library.db once no binding and no background work uses it.
 //
 // When the deadline passes first, Shutdown returns and logs what is still in
-// use. Nothing still referenced is closed: such stores, bookmarks and ONNX
-// sessions stay open as the process exits (SQLite's WAL is crash-safe,
+// use. Nothing still referenced is closed: such stores and bookmarks stay
+// open as the process exits (SQLite's WAL is crash-safe,
 // originals are only read, and every pick that returned is durable).
 // Shutdown is idempotent; a later call waits for the same deadline.
 func (r *Runtime) Shutdown() {
@@ -746,9 +665,6 @@ func (r *Runtime) drain() {
 	r.setStage("closing the open folder")
 	r.catalog.CloseAll()
 	r.step(stepCatalogClosed)
-	r.setStage("stopping model downloads")
-	r.models.Stop()
-	r.step(stepModelsStopped)
 
 	r.setStage("closing folder sessions")
 	until := began.Add(NativeQuitWait)
@@ -765,19 +681,6 @@ func (r *Runtime) drain() {
 	r.step(stepSessionsClosed)
 
 	// 5. Close what is free.
-	r.setStage("closing the inference engine")
-	closed, err := r.engine.TryClose()
-	switch {
-	case !closed:
-		r.noteInUse("an inference is running; the ONNX sessions stay open")
-		slog.Warn("runtime: an inference is still running; leaving the ONNX sessions open")
-	case err != nil:
-		slog.Warn("runtime: close the inference engine", "err", err)
-		r.step(stepInferenceClosed)
-	default:
-		r.step(stepInferenceClosed)
-	}
-
 	r.setStage("closing the library database")
 	if r.waitUnused() {
 		if err := r.db.Close(); err != nil {
@@ -882,16 +785,16 @@ func (g *gatedEmitter) close() {
 }
 
 // tapEmitter is the coalescer's output: it forwards to the gated emitter and
-// tells the quality tracker when a model's status or the queue changed —
-// a scan state, or the last progress of a run that stopped — since both feed
-// the quality status. QualityTracker.Changed returns at once, so it is safe
-// here, under the queue's and the models' locks.
+// tells the quality tracker when the queue changed — a scan state, or the
+// last progress of a run that stopped — since it feeds the quality status.
+// QualityTracker.Changed returns at once, so it is safe here, under the
+// queue's lock.
 type tapEmitter struct{ r *Runtime }
 
 func (t tapEmitter) Emit(name string, data any) {
 	t.r.out.Emit(name, data)
 	switch name {
-	case events.ModelsProgress, events.ScanState, events.ScanProgress:
+	case events.ScanState, events.ScanProgress:
 		if q := t.r.quality; q != nil {
 			q.Changed()
 		}

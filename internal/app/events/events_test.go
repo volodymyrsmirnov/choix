@@ -37,14 +37,10 @@ func TestPayloadJSON_MatchesDesignTypes(t *testing.T) {
 	}{
 		{"Progress", Progress{Stage: "thumb", Done: 1, Total: 2, Failed: 0, State: "running"},
 			[]string{"stage", "done", "total", "failed", "state"}},
-		{"ModelStatus without error", ModelStatus{Kind: "clip", State: "downloading", Received: 1, Size: 2},
-			[]string{"kind", "state", "received", "size"}},
-		{"ModelStatus with error", ModelStatus{Kind: "quality", State: "failed", Error: "boom"},
-			[]string{"kind", "state", "received", "size", "error"}},
-		{"Quality without error or pass", Quality{Enabled: true, State: "idle"},
-			[]string{"enabled", "state", "active", "received", "size", "done", "total", "rated"}},
+		{"Quality without pass", Quality{Enabled: true, State: "idle"},
+			[]string{"enabled", "state", "active", "done", "total", "rated"}},
 		{"Quality scoring", Quality{Enabled: true, State: "scoring", FolderID: "f1", Passes: []QualityPass{{FolderID: "f1"}}},
-			[]string{"enabled", "state", "active", "received", "size", "done", "total", "rated", "folder_id", "passes"}},
+			[]string{"enabled", "state", "active", "done", "total", "rated", "folder_id", "passes"}},
 		{"QualityPass", QualityPass{FolderID: "f1", Done: 1, Total: 2},
 			[]string{"folder_id", "done", "total"}},
 		{"ScanProgressEvent", ScanProgressEvent{FolderID: "f1", Progress: Progress{Stage: "discover"}, Phase: "running"},
@@ -71,10 +67,10 @@ func TestPayloadJSON_MatchesDesignTypes(t *testing.T) {
 	}
 }
 
-func TestNames_Seven(t *testing.T) {
+func TestNames_Six(t *testing.T) {
 	want := []string{
 		"library:changed", "scan:progress", "scan:state",
-		"models:progress", "quality:status",
+		"quality:status",
 		"folder:changed", "menu:action",
 	}
 	got := Names()

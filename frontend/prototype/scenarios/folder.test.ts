@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test'
 import { designRefProblem } from './designRef'
 import { scenarios } from './folder'
 
-test('folder holds exactly the inventory states 200–231', () => {
-  const want = Array.from({ length: 32 }, (_, i) => 200 + i)
+test('folder holds exactly the inventory states 200–231, without the retired 216 and 228', () => {
+  const want = Array.from({ length: 32 }, (_, i) => 200 + i).filter((n) => n !== 216 && n !== 228)
   expect(scenarios.map((s) => s.n).sort((a, b) => a - b)).toEqual(want)
   expect(scenarios.every((s) => s.group === 'folder')).toBe(true)
 })

@@ -8,19 +8,15 @@ import (
 
 // QualityItem is one photo waiting for a quality rating. ContentHash is
 // carried so the eventual write can be made conditional on the bytes the
-// scorer actually looked at; Width/Height are the original's dimensions
-// (when the metadata stage found them), which the scorer uses to undo an
-// upscaled preview.
+// scorer actually looked at.
 type QualityItem struct {
 	FileID      int64
 	ContentHash string
-	Width       sql.NullInt64
-	Height      sql.NullInt64
 }
 
 // qualityPendingWhere selects photos that finished the per-file pipeline and
 // have not been handled by the given scorer: never rated, or rated (or found
-// unratable) by a different model/recipe.
+// unratable) by a scorer with another id.
 const qualityPendingWhere = ` WHERE kind = 'photo' AND scan_status = 'analyzed'
 	AND (quality_model IS NULL OR quality_model <> ?)`
 
@@ -42,7 +38,7 @@ func (r *FilesRepo) CountQualityPending(scorerID string) (int, error) {
 // stepped over instead of being returned again and again.
 func (r *FilesRepo) ListQualityPending(scorerID string, afterID int64, limit int) ([]QualityItem, error) {
 	rows, err := r.db.QueryContext(context.Background(),
-		`SELECT id, content_hash, width, height FROM files`+qualityPendingWhere+` AND id > ? ORDER BY id LIMIT ?`,
+		`SELECT id, content_hash FROM files`+qualityPendingWhere+` AND id > ? ORDER BY id LIMIT ?`,
 		scorerID, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("ListQualityPending: %w", err)
@@ -52,7 +48,7 @@ func (r *FilesRepo) ListQualityPending(scorerID string, afterID int64, limit int
 	var out []QualityItem
 	for rows.Next() {
 		var it QualityItem
-		if err := rows.Scan(&it.FileID, &it.ContentHash, &it.Width, &it.Height); err != nil {
+		if err := rows.Scan(&it.FileID, &it.ContentHash); err != nil {
 			return nil, fmt.Errorf("ListQualityPending: %w", err)
 		}
 		out = append(out, it)
@@ -60,8 +56,8 @@ func (r *FilesRepo) ListQualityPending(scorerID string, afterID int64, limit int
 	return out, rows.Err()
 }
 
-// SetQuality records the outcome of rating one photo: raw is the model score,
-// or NULL when the photo cannot be rated (which still stamps scorerID so it
+// SetQuality records the outcome of rating one photo: raw is the scorer's
+// raw score, or NULL when the photo cannot be rated (which still stamps scorerID so it
 // is not retried forever). The write only applies while the file still has
 // the content hash the scorer read; it reports false when the file changed
 // or vanished in the meantime, in which case the result is simply dropped —

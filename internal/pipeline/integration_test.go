@@ -2,7 +2,6 @@ package pipeline_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/group"
 	"github.com/volodymyrsmirnov/choix/internal/meta"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
+	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
 	"github.com/volodymyrsmirnov/choix/internal/scanner"
@@ -63,20 +63,29 @@ func (a *metaProcessorAdapter) Process(ctx context.Context, fileID int64) error 
 	return a.ext.Process(ctx, fileID, absPath)
 }
 
-// stubAnalyzer is used when CoreML / ONNX models aren't available in the
-// test environment. It populates ai_signals with deterministic values so
-// the cluster stage has something to chew on.
+// stubPrintID stamps the prints stubAnalyzer stores; the tests' groupers
+// use it.
+const stubPrintID = "stub-print/v1"
+
+// stubAnalyzer stands in for the analyze stage: it stores the same unit
+// feature print for every file, so the cluster stage has something to chew
+// on without Vision.
 type stubAnalyzer struct{ s *store.Store }
 
 func (a *stubAnalyzer) Analyze(ctx context.Context, fileID int64) error {
-	if err := a.s.AISignals().Upsert(store.AISignals{
-		FileID:        fileID,
-		ClipEmbedding: make([]byte, 512*4), // zero embedding ok for cluster smoke test
-		ComputedAt:    sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
-	}); err != nil {
-		return fmt.Errorf("stub analyze: upsert ai_signals: %w", err)
+	p := make([]float32, platform.FeaturePrintLen)
+	p[0] = 1
+	if err := a.s.AISignals().UpsertPrint(fileID, p, stubPrintID); err != nil {
+		return fmt.Errorf("stub analyze: store print: %w", err)
 	}
 	return a.s.Files().UpdateStatus(fileID, "analyzed", "")
+}
+
+// stubGrouper returns a grouper over the prints stubAnalyzer stores.
+func stubGrouper(st *store.Store) *group.Grouper {
+	g := group.NewGrouper(st, 600, 0.90, false)
+	g.UsePrints(stubPrintID)
+	return g
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +174,7 @@ func buildPipeline(t *testing.T, st *store.Store, root string) *pipeline.Pipelin
 
 	var an pipeline.AnalyzeProcessor = &stubAnalyzer{s: st}
 
-	grp := group.NewGrouper(st, 600, 0.92, false)
+	grp := stubGrouper(st)
 
 	return &pipeline.Pipeline{
 		Store:         &storeIDLister{s: st},
@@ -358,7 +367,7 @@ func TestPipelineCancelMidStageLeavesFilePending(t *testing.T) {
 			ScanRoot: root, Store: st, Stills: imageio.New(), Video: avmedia.New(),
 		}},
 		Analyzer:    &stubAnalyzer{s: st},
-		Grouper:     group.NewGrouper(st, 600, 0.92, false),
+		Grouper:     stubGrouper(st),
 		Reporter:    pipeline.NewReporter(prog),
 		Concurrency: map[string]int{"metadata": 1, "thumb": 1, "analyze": 1},
 		BatchSize:   100,

@@ -34,11 +34,11 @@ function subtitleOf(f: FolderSummary): string {
 /**
  * The quality worker as it concerns one folder: a rating pass is shown with
  * that folder's own counts (from `passes`, or done/total when they describe
- * it), and not at all when only other folders are being rated. The model
- * download and a failure concern every folder and pass through.
+ * it), and not at all when only other folders are being rated. Nothing else
+ * the worker reports is shown in the bar.
  */
 function ownQuality(q: QualityStatus | null, folderId: string): QualityStatus | null {
-  if (!q || q.state !== 'scoring') return q
+  if (!q || q.state !== 'scoring') return null
   const pass = q.passes?.find((x) => x.folder_id === folderId)
   if (pass) return { ...q, folder_id: folderId, done: pass.done, total: pass.total }
   return q.folder_id === folderId ? q : null
@@ -126,17 +126,6 @@ export function FolderScreen(p: FolderProps) {
   )
 }
 
-/**
- * The time-only notice explains what the user did not choose: the model is
- * still on its way, or its download failed. Visual grouping switched off in
- * Settings is the user's choice, so the page says nothing about it (the
- * owner: not put in their face).
- */
-const TIME_ONLY: Partial<Record<FolderProps['grouping'], string>> = {
-  'time-downloading': 'The visual grouping model is still downloading. When it is ready, Choix regroups this folder so similar shots share a cluster.',
-  'time-failed': 'The visual grouping model could not be downloaded, so similar shots taken minutes apart can land in separate clusters. Retry the download in Settings.',
-}
-
 function Grid(p: FolderProps & { clusters: Cluster[] }) {
   // On the three fields (v1), not on the filter object's identity.
   const { query, device, sort } = p.filter
@@ -147,6 +136,8 @@ function Grid(p: FolderProps & { clusters: Cluster[] }) {
   const offline = p.notice === 'offline'
   const drive = p.folder.volumeName ?? p.folder.name
 
+  // No notice says how the clusters were formed: grouping by time only is
+  // the user's choice (visual grouping off in Settings), not put in their face.
   const notices = [
     offline && (
       <Banner
@@ -180,23 +171,6 @@ function Grid(p: FolderProps & { clusters: Cluster[] }) {
           <Button variant="default" disabled={offline} onClick={p.onOpenPicks}>
             Open Picks
           </Button>
-        }
-      />
-    ),
-    TIME_ONLY[p.grouping] !== undefined && (
-      <Banner
-        key="time-only"
-        testId="notice-time-only"
-        tone={p.grouping === 'time-failed' ? 'warn' : 'info'}
-        icon={p.grouping === 'time-failed' ? 'alert' : 'info'}
-        title="Grouped by capture time only"
-        body={TIME_ONLY[p.grouping]}
-        actions={
-          p.grouping === 'time-failed' ? (
-            <Button variant="default" onClick={p.onSettings}>
-              Settings
-            </Button>
-          ) : undefined
         }
       />
     ),

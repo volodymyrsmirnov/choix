@@ -1,13 +1,12 @@
 #!/bin/sh
-# Assembles Choix.app from a built binary and the ONNX Runtime library.
+# Assembles Choix.app from a built binary.
 # It does not sign: the Taskfile's sign:* tasks do that afterwards.
 #
 #   sh build/darwin/bundle.sh --binary <path> --out <Choix.app> \
-#       --version <v> --build <n> --dylib <libonnxruntime.dylib>
+#       --version <v> --build <n>
 #
 # <out> is removed first (it must end in .app), then created with:
 #   Contents/MacOS/Choix
-#   Contents/Frameworks/libonnxruntime.dylib
 #   Contents/Resources/choix.icns   (from assets/icon/choix.icns)
 #   Contents/Info.plist             (Info.plist.tmpl with VERSION and BUILD)
 #   Contents/PkgInfo                (APPL????)
@@ -25,20 +24,19 @@ die() {
 }
 
 usage() {
-	die "usage: $prog --binary <path> --out <Choix.app> --version <v> --build <n> --dylib <path>"
+	die "usage: $prog --binary <path> --out <Choix.app> --version <v> --build <n>"
 }
 
-binary='' out='' version='' build='' dylib=''
+binary='' out='' version='' build=''
 while [ $# -gt 0 ]; do
 	case "$1" in
-	--binary | --out | --version | --build | --dylib)
+	--binary | --out | --version | --build)
 		[ $# -ge 2 ] || die "$1 needs a value"
 		case "$1" in
 		--binary) binary=$2 ;;
 		--out) out=$2 ;;
 		--version) version=$2 ;;
 		--build) build=$2 ;;
-		--dylib) dylib=$2 ;;
 		esac
 		shift 2
 		;;
@@ -51,7 +49,6 @@ done
 [ -n "$out" ] || die "missing --out"
 [ -n "$version" ] || die "missing --version"
 [ -n "$build" ] || die "missing --build"
-[ -n "$dylib" ] || die "missing --dylib"
 
 # The values are substituted into XML with sed, so only plain version
 # characters are accepted.
@@ -75,16 +72,14 @@ case "${out##*/}" in
 esac
 
 [ -f "$binary" ] || die "binary not found: $binary"
-[ -f "$dylib" ] || die "dylib not found: $dylib"
 [ -f "$icon" ] || die "icon not found: $icon"
 [ -f "$template" ] || die "Info.plist template not found: $template"
 
 rm -rf -- "$out"
-mkdir -p -- "$out/Contents/MacOS" "$out/Contents/Frameworks" "$out/Contents/Resources"
+mkdir -p -- "$out/Contents/MacOS" "$out/Contents/Resources"
 
 cp -- "$binary" "$out/Contents/MacOS/Choix"
 chmod 755 "$out/Contents/MacOS/Choix"
-cp -- "$dylib" "$out/Contents/Frameworks/libonnxruntime.dylib"
 cp -- "$icon" "$out/Contents/Resources/choix.icns"
 
 plist="$out/Contents/Info.plist"

@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"io/fs"
 	"maps"
@@ -15,11 +14,9 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/config"
@@ -52,16 +49,6 @@ func (s *sessionTestSettings) set(fn func(*config.Config)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fn(&s.cfg)
-}
-
-// sessionTestEmbedder counts its calls and returns a fixed unit vector.
-type sessionTestEmbedder struct{ calls atomic.Int64 }
-
-func (e *sessionTestEmbedder) Embed(image.Image) ([]float32, error) {
-	e.calls.Add(1)
-	v := make([]float32, 512)
-	v[0] = 1
-	return v, nil
 }
 
 // sessionTestEvents records the Manager's drain stages.
@@ -122,10 +109,9 @@ type sessionTestHarness struct {
 }
 
 type sessionTestOptions struct {
-	stills   *platformtest.Stills
-	video    *platformtest.Video
-	embedder local.Embedder
-	inferer  local.CropInferer
+	stills *platformtest.Stills
+	video  *platformtest.Video
+	vision platform.Vision // nil: no feature prints
 }
 
 func newSessionTestHarness(t *testing.T, o sessionTestOptions) *sessionTestHarness {
@@ -161,12 +147,11 @@ func newSessionTestHarness(t *testing.T, o sessionTestOptions) *sessionTestHarne
 		parent:   parent,
 	}
 	h.mgr = NewManager(Deps{
-		Library:     lib,
-		Settings:    h.settings.get,
-		Stills:      stills,
-		Video:       video,
-		Embedder:    o.embedder,
-		CropInferer: o.inferer,
+		Library:  lib,
+		Settings: h.settings.get,
+		Stills:   stills,
+		Video:    video,
+		Vision:   o.vision,
 	})
 	h.mgr.hook = h.events.record
 	t.Cleanup(func() {

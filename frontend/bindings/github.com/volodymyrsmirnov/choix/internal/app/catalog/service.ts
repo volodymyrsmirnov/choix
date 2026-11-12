@@ -16,6 +16,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as events$0 from "../events/models.js";
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 /**
@@ -53,11 +57,21 @@ export function Open(folderID: string): $CancellablePromise<$models.FolderView> 
 }
 
 /**
+ * QualityStatus returns the quality rating's status: the same snapshot
+ * quality:status carries.
+ */
+export function QualityStatus(): $CancellablePromise<events$0.Quality> {
+    return $Call.ByID(2072227733).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
+/**
  * Ratings returns the open folder's quality ratings by decimal file id.
  */
 export function Ratings(folderID: string): $CancellablePromise<{ [_ in string]?: number }> {
     return $Call.ByID(994537132, folderID).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
     });
 }
 
@@ -74,7 +88,7 @@ export function Recluster(folderID: string): $CancellablePromise<void> {
  */
 export function SetPick(folderID: string, fileID: number, action: string): $CancellablePromise<$models.PickResult> {
     return $Call.ByID(2262216607, folderID, fileID, action).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType4($result);
     });
 }
 
@@ -83,12 +97,13 @@ export function SetPick(folderID: string, fileID: number, action: string): $Canc
  */
 export function Undo(folderID: string): $CancellablePromise<$models.PickResult> {
     return $Call.ByID(3536962100, folderID).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType4($result);
     });
 }
 
 // Private type creation functions
 const $$createType0 = $models.FocusResponse.createFrom;
 const $$createType1 = $models.FolderView.createFrom;
-const $$createType2 = $Create.Map($Create.Any, $Create.Any);
-const $$createType3 = $models.PickResult.createFrom;
+const $$createType2 = events$0.Quality.createFrom;
+const $$createType3 = $Create.Map($Create.Any, $Create.Any);
+const $$createType4 = $models.PickResult.createFrom;

@@ -1,5 +1,5 @@
 import type { LibraryMenu } from '../../components/LibraryFilterBar'
-import type { FolderSummary, LibraryFilter, ModelStatus, QualityStatus, ScanProgress, ToastItem } from '../../types'
+import type { FolderSummary, LibraryFilter, QualityStatus, ToastItem } from '../../types'
 
 export type { LibraryMenu }
 
@@ -17,7 +17,7 @@ export const LIBRARY_OVERLAYS = {
 
 /**
  * The Library (spec §4.1), the app's home screen. With no folders it shows
- * the welcome panel until every enabled model is ready, then the drop zone.
+ * the drop zone as soon as the list has loaded.
  */
 export interface LibraryProps {
   /** Every folder in the Library, as Library.List answers (the screen searches, filters and orders them with `filter`); null while loading. */
@@ -36,31 +36,20 @@ export interface LibraryProps {
   onFilter?(f: LibraryFilter): void
   /** A toolbar menu opens (or closes: null). */
   onOpenMenu?(m: LibraryMenu | null): void
-  models: ModelStatus[]
   /** Folders are being dragged over the window. */
   dropActive: boolean
   toasts: ToastItem[]
   selectedId: string | null
   /** Prototype only: one row's forced `hover` or `focus` look. */
   forceRow?: { id: string; force: string }
-  /**
-   * @deprecated Not drawn: each scan shows in its folder's row (the title
-   * bar shows no status another element shows). Kept, optional, so the app,
-   * which still feeds it, compiles; remove it with libraryView's indicator.
-   */
-  scan?: { folder: string; progress: ScanProgress } | { count: number } | null
   /** Row whose context-menu replica is open. */
   menuFor: string | null
   /** Row whose Remove alert replica is open. */
   removePrompt: string | null
-  /** False while the Mac is offline: the welcome panel says why downloads fail. */
-  online: boolean
   /**
    * The quality worker: each rating pass in flight shows in its folder's row
-   * (from `passes`, or done/total for the folder_id when Go lists none); the
-   * title bar shows only "Quality rating stopped" (`error`), which nothing
-   * else on the Library shows. A model download shows in the welcome panel
-   * or the compact banner, from `models`.
+   * (from `passes`, or done/total for the folder_id when Go lists none). The
+   * title bar shows no quality status: the rows already do.
    */
   quality: QualityStatus | null
   onAdd(): void
@@ -72,8 +61,6 @@ export interface LibraryProps {
   onConfirmRemove(id: string, confirmed: boolean): void
   onSettings(): void
   onHelp(): void
-  onRetryModel(kind: ModelStatus['kind']): void
-  onToggleModel(kind: ModelStatus['kind'], on: boolean): void
   onUndoToast(id: string): void
   onDismissToast(id: string): void
 }

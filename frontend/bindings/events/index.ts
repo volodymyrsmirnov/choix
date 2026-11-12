@@ -24,11 +24,6 @@ export const LibraryChanged = "library:changed";
 export const MenuAction = "menu:action";
 
 /**
- * Name of the custom event "models:progress".
- */
-export const ModelsProgress = "models:progress";
-
-/**
  * Name of the custom event "quality:status".
  */
 export const QualityStatus = "quality:status";

@@ -7,13 +7,16 @@ package config
 // Config is the fully-resolved settings struct used by the rest of the binary.
 type Config struct {
 	// Grouping
-	BucketSizeSec          int     // time bucket width in seconds
-	VisualClusterThreshold float64 // CLIP cosine threshold for visual clusters
-	CrossDeviceMerging     bool    // merge clusters across devices using clock-skew detection
+	BucketSizeSec int // time bucket width in seconds
+	// VisualSimilarity is how alike two shots of one time bucket must be to
+	// share a cluster: complete-link on the dot product of their feature
+	// prints, strictly greater than this value.
+	VisualSimilarity   float64
+	CrossDeviceMerging bool // merge clusters across devices using clock-skew detection
 
-	// VisualGrouping enables CLIP-based visual sub-clustering: the CLIP
-	// model is downloaded and embeddings are computed. Off means time-only
-	// clusters, no download and no embeddings.
+	// VisualGrouping enables visual sub-clustering: Vision feature prints
+	// are computed and time buckets are split by them. Off means time-only
+	// clusters and no prints.
 	VisualGrouping bool
 
 	// Pick export
@@ -23,9 +26,8 @@ type Config struct {
 	AdvanceOnAction    bool // cycle to next photo after Pick/Reject in Focus
 	HideRejectedPhotos bool // hide rejected photos from the Library
 
-	// QualityRating enables the advisory technical-quality rating: the
-	// model is downloaded automatically and photos are scored in the
-	// background. Off means no download, no scoring and no badges.
+	// QualityRating enables the advisory technical-quality rating: photos
+	// are scored in the background. Off means no scoring and no badges.
 	QualityRating bool
 }
 
@@ -33,10 +35,10 @@ type Config struct {
 // config.toml on top of this.
 func Defaults() Config {
 	return Config{
-		BucketSizeSec:          600,
-		VisualClusterThreshold: 0.92,
-		VisualGrouping:         true,
-		PicksDir:               "picks",
-		QualityRating:          true,
+		BucketSizeSec:    600,
+		VisualSimilarity: 0.90,
+		VisualGrouping:   true,
+		PicksDir:         "picks",
+		QualityRating:    true,
 	}
 }

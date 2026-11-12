@@ -56,7 +56,7 @@ test('only the pick toast offers Undo', () => {
   expect(toastsWithUndo(render(601))).toEqual([{ id: 'picked', undo: true }])
   expect(toastsWithUndo(render(603))).toEqual([
     { id: 'unreadable', undo: false },
-    { id: 'clip-ready', undo: false },
+    { id: 'left-library', undo: false },
     { id: 'picked', undo: true },
   ])
   for (const n of [602, 604, 605]) expect(render(n)).not.toContain('>Undo<')

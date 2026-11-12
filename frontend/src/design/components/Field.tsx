@@ -5,13 +5,13 @@ import { noOrphan } from '../format'
  * A settings row, in one column (the owner's order): the name; a switch on
  * the name's line (`aside`), at its right end as in macOS System Settings,
  * so every switch of a page lines up down one edge; any other control
- * (`children`: a number field, a slider, a text field, a model card) on its
+ * (`children`: a number field, a slider, a text field) on its
  * own line under the name, at most 480 px wide; a live status line
  * (`status`); then the description, at a readable measure. An error belongs
  * to the control: it sits right under it. Every part is the column's 8 px
  * gap from the next and adds no margin of its own, so the spacing is the
- * same in every row type (a part that is empty takes no room: a model card
- * is left out, an empty status line is out of the flow).
+ * same in every row type (a part that is empty takes no room: an empty
+ * status line is out of the flow).
  * The label is `${controlId}-label`, the hint `${controlId}-hint`, the error
  * `${controlId}-error`, so controls can point aria-labelledby /
  * aria-describedby at them.

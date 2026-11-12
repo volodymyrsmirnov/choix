@@ -1,11 +1,10 @@
 // No duplicate status (the owner's rule): a status lives on the element it
 // describes, and the Library title bar shows one only when nothing else on
-// the screen does. Scans and rating passes show in their folder's row; model
-// downloads in the welcome panel or the compact banner; the bar keeps only
-// "Quality rating stopped", which nothing else shows.
+// the screen does. Scans and rating passes show in their folder's row, so
+// the bar shows no status at all.
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { FolderSummary, ModelStatus, QualityStatus, ScanProgress } from '../../types'
+import type { FolderSummary, QualityStatus, ScanProgress } from '../../types'
 import { LibraryScreen } from './LibraryScreen'
 import type { LibraryProps } from './props'
 
@@ -30,14 +29,11 @@ const folder = (id: string, name: string, scanning = false): FolderSummary => ({
 
 const props = (over: Partial<LibraryProps> = {}): LibraryProps => ({
   folders: [folder('a', 'Alpha'), folder('b', 'Bravo')],
-  models: [],
   dropActive: false,
   toasts: [],
   selectedId: null,
-  scan: null,
   menuFor: null,
   removePrompt: null,
-  online: true,
   quality: null,
   onAdd: noop,
   onOpen: noop,
@@ -48,8 +44,6 @@ const props = (over: Partial<LibraryProps> = {}): LibraryProps => ({
   onConfirmRemove: noop,
   onSettings: noop,
   onHelp: noop,
-  onRetryModel: noop,
-  onToggleModel: noop,
   onUndoToast: noop,
   onDismissToast: noop,
   ...over,
@@ -69,8 +63,6 @@ const status = (q: Partial<QualityStatus>): QualityStatus => ({
   enabled: true,
   state: 'scoring',
   active: true,
-  received: 0,
-  size: 0,
   done: 0,
   total: 0,
   rated: 0,
@@ -92,13 +84,11 @@ test('nothing to say: the bar has no indicator slot and no divider', () => {
 
 test('scans show only in their rows, one or several', () => {
   const folders = [folder('a', 'Alpha', true), folder('b', 'Bravo', true)]
-  for (const scan of [{ folder: 'Alpha', progress }, { count: 2 }, null] as LibraryProps['scan'][]) {
-    const html = render({ folders, scan })
-    expect(bar(html)).not.toContain('data-testid="scan-progress"')
-    expect(bar(html)).not.toContain('Alpha')
-    expect(row(html, 'a')).toContain('Generating thumbnails')
-    expect(row(html, 'b')).toContain('Generating thumbnails')
-  }
+  const html = render({ folders })
+  expect(bar(html)).not.toContain('data-testid="scan-progress"')
+  expect(bar(html)).not.toContain('Alpha')
+  expect(row(html, 'a')).toContain('Generating thumbnails')
+  expect(row(html, 'b')).toContain('Generating thumbnails')
 })
 
 test('a rating pass shows in its folder’s row, with its own counts; never in the bar', () => {
@@ -142,17 +132,25 @@ test('a scan’s failed files show in its row, as the title bar used to show the
   expect(row(html, 'b')).not.toContain('failed')
 })
 
-test('a model download shows in the banner, not the bar', () => {
-  const models: ModelStatus[] = [{ kind: 'quality', state: 'downloading', received: 63_000_000, size: 177_000_000 }]
-  const html = render({ models, quality: status({ state: 'downloading', received: 63_000_000, size: 177_000_000 }) })
-  expect(html).toContain('data-testid="model-banner"')
-  expect(bar(html)).not.toContain('data-testid="quality-progress"')
+test('the bar shows no quality indicator, whatever the worker is doing', () => {
+  for (const state of ['disabled', 'waiting', 'scoring', 'idle'] as const) {
+    const quality = status({ state, done: 50, total: 200, folder_id: 'a', passes: [{ folder_id: 'a', done: 50, total: 200 }] })
+    expect(bar(render({ quality })), state).not.toContain('data-testid="quality-progress"')
+  }
 })
 
-test('“Quality rating stopped” stays in the bar: nothing else on the Library shows it', () => {
-  const html = render({ quality: status({ state: 'error', error: 'inference failed' }) })
-  expect(bar(html)).toContain('data-testid="quality-progress"')
-  expect(bar(html)).toContain('Quality rating stopped')
+test('with no folders, once the list has loaded: the drop zone, never a welcome panel', () => {
+  const html = render({ folders: [] })
+  expect(html).toContain('data-drop-zone')
+  expect(html).not.toContain('Welcome to Choix')
+  expect(html).not.toContain('data-model')
+  expect(html).not.toContain('Loading the Library')
+})
+
+test('no download banner above the folders', () => {
+  const html = render()
+  expect(html).not.toContain('data-testid="model-banner"')
+  expect(html).not.toContain('download')
 })
 
 // ── The toolbar: search, filter and order (the owner's round 2) ─────────────
@@ -186,10 +184,9 @@ test('the toolbar sits at the end of the summary line whenever the Library lists
   expect(t).toContain('Newest first')
 })
 
-test('no toolbar while loading, on the welcome panel or on the empty drop zone', () => {
+test('no toolbar while loading or on the empty drop zone', () => {
   expect(toolbar(render({ folders: null }))).toBe('')
   expect(toolbar(render({ folders: [] }))).toBe('')
-  expect(toolbar(render({ folders: [], models: [{ kind: 'clip', state: 'downloading', received: 1, size: 2 }] }))).toBe('')
 })
 
 test('without a filter from the app: today’s timeline (newest first, every folder)', () => {

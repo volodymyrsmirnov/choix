@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Field } from './Field'
-import { SettingsModelCard } from './SettingsModelCard'
 import { SettingsStatus } from './SettingsStatus'
 
 const order = (html: string, ...parts: string[]) => parts.map((p) => html.indexOf(p))
@@ -39,15 +38,11 @@ test('one spacing for every row: the parts are 8 px apart by the column’s gap,
   expect([name < control, control < status, status < error, error < hint]).toEqual([true, true, true, true])
 })
 
-test('a model card and a status line add no margin of their own; an empty status line takes no room', () => {
-  const card = renderToStaticMarkup(
-    <SettingsModelCard model={{ kind: 'quality', state: 'ready', received: 0, size: 177_000_000 }} onRetry={() => {}} />,
-  )
-  expect(card).toMatch(/^<div class="rounded-lg border border-line-1 bg-bg-2">/)
+test('a status line adds no margin of its own; an empty status line takes no room', () => {
   const empty = renderToStaticMarkup(<SettingsStatus text="" />)
   expect(empty).toMatch(/^<div class="sr-only"><p role="status"/)
   const shown = renderToStaticMarkup(<SettingsStatus text="Ratings are up to date." />)
-  // As wide as the control above it (a model card), not the whole column.
+  // A readable measure, not the whole column.
   expect(shown).toMatch(/^<div class="flex flex-col gap-1.5 max-w-\[480px\]"><p role="status"/)
 })
 

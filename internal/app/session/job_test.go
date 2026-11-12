@@ -1,10 +1,11 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"image"
+	"image/jpeg"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,60 +16,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
+	"github.com/volodymyrsmirnov/choix/internal/scanner"
 	"github.com/volodymyrsmirnov/choix/internal/store"
+	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
-
-// jobTestModels is a ModelState whose answers the test sets. It does not
-// look at the settings, so the job's own checks of them are exercised.
-type jobTestModels struct {
-	mu    sync.Mutex
-	ready map[local.ModelKind]bool
-}
-
-func (m *jobTestModels) Ready(kind local.ModelKind) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.ready[kind]
-}
-
-func (m *jobTestModels) set(kind local.ModelKind, ready bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.ready == nil {
-		m.ready = map[local.ModelKind]bool{}
-	}
-	m.ready[kind] = ready
-}
-
-// jobTestEmbedder behaves like the app's shared CLIP session: it answers
-// local.ErrModelMissing until the CLIP model is ready, then a unit vector.
-type jobTestEmbedder struct {
-	models *jobTestModels
-	calls  atomic.Int64
-}
-
-func (e *jobTestEmbedder) Embed(image.Image) ([]float32, error) {
-	e.calls.Add(1)
-	if !e.models.Ready(local.ModelCLIP) {
-		return nil, local.ErrModelMissing
-	}
-	return sessionTestUnit(0), nil
-}
-
-// jobTestInferer is a quality model that scores every crop 0.5.
-type jobTestInferer struct{ calls atomic.Int64 }
-
-func (i *jobTestInferer) QualityCrop([]float32) (float64, error) {
-	i.calls.Add(1)
-	return 0.5, nil
-}
 
 // jobTestTracker is a QualityRun that records how the job used it. With
 // cancelAfter > 0 it cancels the pass context after that many progress
@@ -113,7 +72,6 @@ func (tr *jobTestTracker) Begin(ctx context.Context, folderID string) (context.C
 // jobTestHarness is a sessionTestHarness plus what a Job needs.
 type jobTestHarness struct {
 	*sessionTestHarness
-	models   *jobTestModels
 	rec      *events.Recorder
 	emit     *events.Coalescer
 	afterJob atomic.Int64
@@ -122,15 +80,11 @@ type jobTestHarness struct {
 	reports []events.Progress
 }
 
-func newJobTestHarness(t *testing.T, o sessionTestOptions, models *jobTestModels) *jobTestHarness {
+func newJobTestHarness(t *testing.T, o sessionTestOptions) *jobTestHarness {
 	t.Helper()
-	if models == nil {
-		models = &jobTestModels{}
-	}
 	rec := &events.Recorder{}
 	return &jobTestHarness{
 		sessionTestHarness: newSessionTestHarness(t, o),
-		models:             models,
 		rec:                rec,
 		emit:               events.NewCoalescer(rec, time.Hour),
 	}
@@ -141,7 +95,6 @@ func (h *jobTestHarness) job(tracker QualityRun) *Job {
 	return NewJob(JobOptions{
 		Sessions: h.mgr,
 		Settings: h.settings.get,
-		Models:   h.models,
 		Quality:  tracker,
 		Emit:     h.emit,
 		AfterJob: func(context.Context, *Session) { h.afterJob.Add(1) },
@@ -318,7 +271,7 @@ func jobTestClusterSnapshot(t *testing.T, st *store.Store) []string {
 
 func TestJob_FullRunClusters(t *testing.T) {
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "trip")
 	jobTestWriteShots(t, stills, root, 64, 48, 100*time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -350,7 +303,7 @@ func TestJob_FullRunClusters(t *testing.T) {
 func TestJob_BrokenFilesDoNotStopIt(t *testing.T) {
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
 	video := &platformtest.Video{Fail: map[string]error{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, video: video}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, video: video})
 	id, root := h.folder(t, "broken")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "good1.jpg", "good2.jpg", "good3.jpg")
 
@@ -392,7 +345,7 @@ func TestJob_BrokenFilesDoNotStopIt(t *testing.T) {
 
 func TestJob_HostileContentCompletes(t *testing.T) {
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "a #1?b%41")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "good.jpg")
 
@@ -436,7 +389,7 @@ func TestJob_HostileContentCompletes(t *testing.T) {
 
 func TestJob_SymlinkedCacheDirIsRefused(t *testing.T) {
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "cache")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg")
 	_, release := h.acquire(t, id) // creates .choix
@@ -465,7 +418,7 @@ func TestJob_SymlinkedCacheDirIsRefused(t *testing.T) {
 func TestJob_CancelDuringNativeCallReturnsWithinOneSecond(t *testing.T) {
 	gate := make(chan struct{})
 	stills := &platformtest.Stills{ReadPaths: true, Gate: gate, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "cancel")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -523,7 +476,7 @@ func TestJob_CancelDuringNativeCallReturnsWithinOneSecond(t *testing.T) {
 func TestJob_FolderVanishesMidScan(t *testing.T) {
 	gate := make(chan struct{})
 	stills := &platformtest.Stills{ReadPaths: true, Gate: gate, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "unplugged")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -565,10 +518,8 @@ func TestJob_FolderVanishesMidScan(t *testing.T) {
 func TestJob_FolderVanishesDuringQualityPass(t *testing.T) {
 	// The rating is advisory, so the pass's own errors never end the job;
 	// the check between steps still finds the folder gone.
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "unplugged")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	var once sync.Once
@@ -608,7 +559,7 @@ func TestJob_OfflineAtStartIsSuspended(t *testing.T) {
 		"gone":        func(_ *jobTestHarness, root string) { _ = os.RemoveAll(root) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := newJobTestHarness(t, sessionTestOptions{}, nil)
+			h := newJobTestHarness(t, sessionTestOptions{})
 			id, root := h.folder(t, "away")
 			sessionTestWriteJPEG(t, root, "a.jpg")
 			cut(h, root)
@@ -657,7 +608,7 @@ func jobTestStaleSession(t *testing.T, h *jobTestHarness, stills *platformtest.S
 // suspension that keeps it pending — not Failed.
 func TestJob_PreviousSessionStillClosingIsBusy(t *testing.T) {
 	stills := &platformtest.Stills{Gate: make(chan struct{})}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "moving")
 	sessionTestWriteJPEG(t, root, "a.jpg")
 	jobTestStaleSession(t, h, stills, id, root)
@@ -686,7 +637,7 @@ func (r jobTestOutcomes) Run(ctx context.Context, id string, kind JobKind, repor
 // finishes it.
 func TestQueue_BusyJobRecoversAfterTheOldSessionCloses(t *testing.T) {
 	stills := &platformtest.Stills{Gate: make(chan struct{})}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "moving")
 	sessionTestWriteJPEG(t, root, "a.jpg")
 	old, release := jobTestStaleSession(t, h, stills, id, root)
@@ -758,7 +709,7 @@ func TestQueue_BusyJobRecoversAfterTheOldSessionCloses(t *testing.T) {
 }
 
 func TestJob_ReadOnlyFolderIsFailed(t *testing.T) {
-	h := newJobTestHarness(t, sessionTestOptions{}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{})
 	id, root := h.folder(t, "locked")
 	sessionTestWriteJPEG(t, root, "a.jpg")
 	if err := os.Chmod(root, 0o500); err != nil {
@@ -774,7 +725,7 @@ func TestJob_ReadOnlyFolderIsFailed(t *testing.T) {
 }
 
 func TestJob_SymlinkedDatabaseIsFailed(t *testing.T) {
-	h := newJobTestHarness(t, sessionTestOptions{}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{})
 	id, root := h.folder(t, "linked")
 	if err := os.Mkdir(filepath.Join(root, ".choix"), 0o750); err != nil {
 		t.Fatal(err)
@@ -800,7 +751,7 @@ func TestJob_SymlinkedDatabaseIsFailed(t *testing.T) {
 func TestJob_SettingChangedMidRunWins(t *testing.T) {
 	gate := make(chan struct{})
 	stills := &platformtest.Stills{ReadPaths: true, Gate: gate, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "timing")
 	jobTestWriteShots(t, stills, root, 64, 48, 100*time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -834,51 +785,180 @@ func TestJob_SettingChangedMidRunWins(t *testing.T) {
 	}
 }
 
-func TestJob_ClipBackfillAfterModelArrives(t *testing.T) {
-	models := &jobTestModels{}
-	emb := &jobTestEmbedder{models: models}
+// jobTestPrints returns the folder's prints stamped analyze.PrintID.
+func jobTestPrints(t *testing.T, st *store.Store) map[int64][]float32 {
+	t.Helper()
+	prints, err := st.AISignals().AllPrints(analyze.PrintID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prints
+}
+
+// jobTestPending returns how many analyzed files are pending for a print.
+func jobTestPending(t *testing.T, st *store.Store) int {
+	t.Helper()
+	n, err := st.Files().CountAnalyzedMissingPrint(analyze.PrintID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestJob_BackfillsPendingPrints: a folder analyzed with no prints gets them
+// from the next job, which re-clusters; a second job re-analyzes nothing.
+func TestJob_BackfillsPendingPrints(t *testing.T) {
+	vis := &platformtest.Vision{}
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, embedder: emb}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
 	id, root := h.folder(t, "backfill")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
 	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
 		t.Fatalf("first Run = %v %q; want Done", o, msg)
 	}
 	func() {
 		s, release := h.acquire(t, id)
 		defer release()
-		if embeds, err := s.Store.AISignals().AllEmbeddings(); err != nil || len(embeds) != 0 {
-			t.Fatalf("embeddings without the model = %d, %v; want none", len(embeds), err)
+		if n := len(jobTestPrints(t, s.Store)); n != 0 {
+			t.Fatalf("prints with visual grouping off = %d; want none", n)
+		}
+		if _, err := s.Store.DB().ExecContext(context.Background(), `UPDATE clusters SET label = 'probe'`); err != nil {
+			t.Fatal(err)
 		}
 	}()
 
 	sessionTestWriteJPEG(t, root, "d.jpg") // added between the jobs: a backfill does not walk
-	models.set(local.ModelCLIP, true)
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
 	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
 		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
 	}
 
+	var before []string
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		if n := len(jobTestPrints(t, s.Store)); n != 3 {
+			t.Fatalf("prints after the backfill = %d; want 3", n)
+		}
+		if n := jobTestPending(t, s.Store); n != 0 {
+			t.Fatalf("pending for a print = %d; want 0", n)
+		}
+		if f, err := s.Store.Files().GetByPath("d.jpg"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("d.jpg = %+v, %v; want not discovered (a backfill does not walk)", f, err)
+		}
+		before = jobTestClusterSnapshot(t, s.Store)
+		for _, c := range before {
+			if strings.HasSuffix(c, "|probe") {
+				t.Fatalf("clusters %v: the backfill did not re-cluster", before)
+			}
+		}
+		if got, want := sessionTestStoredParams(t, s.Store), ClusterParams(h.settings.get()); got != want {
+			t.Fatalf("stored params = %q; want %q", got, want)
+		}
+	}()
+
+	calls := len(vis.Calls())
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("second backfill Run = %v %q; want Done", o, msg)
+	}
+	if n := len(vis.Calls()); n != calls {
+		t.Fatalf("Vision calls %d → %d; want none in the second backfill", calls, n)
+	}
 	s, release := h.acquire(t, id)
 	defer release()
-	embeds, err := s.Store.AISignals().AllEmbeddings()
-	if err != nil || len(embeds) != 3 {
-		t.Fatalf("embeddings after the backfill = %d, %v; want 3", len(embeds), err)
+	if after := jobTestClusterSnapshot(t, s.Store); !slices.Equal(before, after) {
+		t.Fatalf("clusters %v → %v; want them untouched", before, after)
 	}
-	if n, err := s.Store.Files().CountAnalyzedMissingEmbedding(); err != nil || n != 0 {
-		t.Fatalf("analyzed without an embedding = %d, %v; want 0", n, err)
+}
+
+// TestJob_VisionFailureClasses: a file Vision cannot read is stamped with no
+// print and not asked again; a file whose print failed for another reason
+// (the framework's) is left pending and printed by the next job.
+func TestJob_VisionFailureClasses(t *testing.T) {
+	vis := &platformtest.Vision{}
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
+	id, root := h.folder(t, "classes")
+	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
+
+	// A first job without prints makes the previews; their paths are what
+	// the fake's failures are keyed by.
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("first Run = %v %q; want Done", o, msg)
 	}
-	if f, err := s.Store.Files().GetByPath("d.jpg"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("d.jpg = %+v, %v; want not discovered (a backfill does not walk)", f, err)
+	ids, previews := map[string]int64{}, map[string]string{}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		for _, rel := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+			f, err := s.Store.Files().GetByPath(rel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := sessionThumbPath(s.Store, s.Root, f.ID, thumb.TierPreview)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids[rel], previews[rel] = f.ID, p
+		}
+	}()
+	vis.SetFail(previews["a.jpg"], errors.New("vision: feature print: the request failed"))
+	vis.SetFail(previews["b.jpg"], fmt.Errorf("vision: cannot read: %w", platform.ErrUnreadableImage))
+
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
+	}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		prints := jobTestPrints(t, s.Store)
+		if prints[ids["a.jpg"]] != nil || prints[ids["b.jpg"]] != nil || prints[ids["c.jpg"]] == nil {
+			t.Fatalf("prints = %d (a %v, b %v, c %v); want c's only", len(prints),
+				prints[ids["a.jpg"]] != nil, prints[ids["b.jpg"]] != nil, prints[ids["c.jpg"]] != nil)
+		}
+		for rel, fid := range ids {
+			f, err := s.Store.Files().GetByID(fid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.ScanStatus != "analyzed" {
+				t.Fatalf("%s is %q (%s); want analyzed", rel, f.ScanStatus, f.ErrMsg.String)
+			}
+		}
+		if n := jobTestPending(t, s.Store); n != 1 {
+			t.Fatalf("pending for a print = %d; want 1 (a.jpg)", n)
+		}
+	}()
+
+	// Vision answers now, for both: only the transient one is asked again.
+	vis.SetFail(previews["a.jpg"], nil)
+	vis.SetFail(previews["b.jpg"], nil)
+	calls := len(vis.Calls())
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("second backfill Run = %v %q; want Done", o, msg)
+	}
+	if got := vis.Calls()[calls:]; !slices.Equal(got, []string{previews["a.jpg"]}) {
+		t.Fatalf("Vision calls in the second backfill = %v; want only a.jpg's preview", got)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	prints := jobTestPrints(t, s.Store)
+	if prints[ids["a.jpg"]] == nil || prints[ids["b.jpg"]] != nil {
+		t.Fatalf("after the retry: a printed %v, b printed %v; want a only", prints[ids["a.jpg"]] != nil, prints[ids["b.jpg"]] != nil)
+	}
+	if n := jobTestPending(t, s.Store); n != 0 {
+		t.Fatalf("pending for a print = %d; want 0", n)
 	}
 }
 
 func TestJob_BackfillWithNothingPendingDoesNotRecluster(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelCLIP, true)
-	emb := &jobTestEmbedder{models: models}
+	vis := &platformtest.Vision{}
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, embedder: emb}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
 	id, root := h.folder(t, "steady")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Hour, "a.jpg", "b.jpg", "c.jpg")
 
@@ -899,7 +979,7 @@ func TestJob_BackfillWithNothingPendingDoesNotRecluster(t *testing.T) {
 	if len(before) != 3 {
 		t.Fatalf("clusters = %v; want 3", before)
 	}
-	calls := emb.calls.Load()
+	calls := len(vis.Calls())
 
 	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
 		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
@@ -909,54 +989,210 @@ func TestJob_BackfillWithNothingPendingDoesNotRecluster(t *testing.T) {
 	if after := jobTestClusterSnapshot(t, s.Store); !slices.Equal(before, after) {
 		t.Fatalf("clusters %v → %v; want them untouched", before, after)
 	}
-	if n := emb.calls.Load(); n != calls {
-		t.Fatalf("embedder calls %d → %d; want none during the backfill", calls, n)
+	if n := len(vis.Calls()); n != calls {
+		t.Fatalf("Vision calls %d → %d; want none during the backfill", calls, n)
 	}
 }
 
-func TestJob_VisualGroupingOffSkipsBackfill(t *testing.T) {
-	models := &jobTestModels{}
-	emb := &jobTestEmbedder{models: models}
+// TestJob_VisualGroupingOff: with visual grouping off no print is made, the
+// backfill does nothing, and the clusters are the time buckets even when
+// prints that would split them are stored.
+func TestJob_VisualGroupingOff(t *testing.T) {
+	vis := &platformtest.Vision{}
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, embedder: emb}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
 	id, root := h.folder(t, "novisual")
-	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg")
+	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
 	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
 		t.Fatalf("Run = %v %q; want Done", o, msg)
 	}
-	calls := emb.calls.Load()
-	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
-	models.set(local.ModelCLIP, true) // ready, but the setting is off
-	h.mu.Lock()
-	h.reports = nil
-	h.mu.Unlock()
+	// Store three unrelated prints, as three different scenes would have:
+	// with grouping on they make three clusters.
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		for i, rel := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+			f, err := s.Store.Files().GetByPath(rel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Store.AISignals().UpsertPrint(f.ID, sessionTestUnit(i), analyze.PrintID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Recluster(context.Background(), h.settings.get); err != nil {
+			t.Fatal(err)
+		}
+		if n := sessionTestClusterCount(t, s.Store); n != 3 {
+			t.Fatalf("clusters with grouping on = %d; want 3", n)
+		}
+	}()
 
-	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
-		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
+	calls := len(vis.Calls())
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
+	sessionTestWriteJPEG(t, root, "d.jpg")
+	stills.Props[filepath.Join(root, "d.jpg")] = sessionTestStillProps(sessionTestDay.Add(3 * time.Second))
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("Run with grouping off = %v %q; want Done", o, msg)
 	}
-	if n := emb.calls.Load(); n != calls {
-		t.Fatalf("embedder calls %d → %d; want none with visual grouping off", calls, n)
-	}
-	if got := h.reported(); len(got) != 0 {
-		t.Fatalf("the backfill ran the pipeline (progress %+v); want nothing pending and no rewind", got)
+	if n := len(vis.Calls()); n != calls {
+		t.Fatalf("Vision calls %d → %d; want none with visual grouping off", calls, n)
 	}
 	s, release := h.acquire(t, id)
 	defer release()
-	if n, err := s.Store.Files().CountAnalyzedMissingEmbedding(); err != nil || n != 2 {
-		t.Fatalf("analyzed without an embedding = %d, %v; want 2 (not rewound)", n, err)
+	if n := sessionTestClusterCount(t, s.Store); n != 1 {
+		t.Fatalf("clusters with grouping off = %d; want 1 (the time bucket)", n)
+	}
+	if n := jobTestPending(t, s.Store); n != 1 {
+		t.Fatalf("pending for a print = %d; want 1 (d.jpg, not rewound)", n)
 	}
 	if got, want := sessionTestStoredParams(t, s.Store), ClusterParams(h.settings.get()); got != want {
-		t.Fatalf("stored params = %q; want %q (the setting change reclusters)", got, want)
+		t.Fatalf("stored params = %q; want %q", got, want)
 	}
 }
 
-func TestJob_QualityStepUsesTracker(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
-	inf := &jobTestInferer{}
+// TestJob_OffDuringAnalysisThenOn: grouping switched off while a job
+// analyzes leaves the remaining files analyzed without a print; switching it
+// on and running a backfill gives every file one.
+func TestJob_OffDuringAnalysisThenOn(t *testing.T) {
+	gate := make(chan struct{})
+	vis := &platformtest.Vision{Gate: gate}
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
+	id, root := h.folder(t, "switch")
+	names := []string{"a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "f.jpg", "g.jpg", "h.jpg", "i.jpg", "j.jpg"}
+	jobTestWriteShots(t, stills, root, 64, 48, time.Second, names...)
+
+	done := make(chan Outcome, 1)
+	go func() {
+		o, _ := h.run(context.Background(), h.job(nil), id, JobFull)
+		done <- o
+	}()
+	sessionTestSend(t, gate) // one print is made
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
+	close(gate) // the prints already asked for are made
+	select {
+	case o := <-done:
+		if o != Done {
+			t.Fatalf("Run = %v; want Done", o)
+		}
+	case <-time.After(sessionTestTimeout):
+		t.Fatal("the job did not finish")
+	}
+
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		n, err := s.Store.Files().CountByStatus("analyzed")
+		if err != nil || n != len(names) {
+			t.Fatalf("analyzed = %d, %v; want %d", n, err, len(names))
+		}
+		printed := len(jobTestPrints(t, s.Store))
+		// At most one print per analyze worker was in flight when the
+		// setting changed, besides the one let through.
+		if printed < 1 || printed > 1+sessionAnalyzeWorkers {
+			t.Fatalf("prints = %d; want 1 to %d", printed, 1+sessionAnalyzeWorkers)
+		}
+		if n := jobTestPending(t, s.Store); n != len(names)-printed {
+			t.Fatalf("pending = %d; want %d", n, len(names)-printed)
+		}
+	}()
+
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	if n := len(jobTestPrints(t, s.Store)); n != len(names) {
+		t.Fatalf("prints after the backfill = %d; want %d", n, len(names))
+	}
+	if n := jobTestPending(t, s.Store); n != 0 {
+		t.Fatalf("pending after the backfill = %d; want 0", n)
+	}
+}
+
+// TestJob_ChangedFileWhileOffIsReprinted: a file whose content changes while
+// visual grouping is off loses its print at the rescan; once grouping is on
+// again, the backfill prints the new content.
+func TestJob_ChangedFileWhileOffIsReprinted(t *testing.T) {
+	vis := &platformtest.Vision{}
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
+	id, root := h.folder(t, "edited")
+	abs := jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg")[0]
+
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	var fileID int64
+	var old []float32
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		f, err := s.Store.Files().GetByPath("a.jpg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fileID = f.ID
+		old = jobTestPrints(t, s.Store)[fileID]
+		if old == nil {
+			t.Fatal("no print after the first job")
+		}
+	}()
+
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
+	if err := os.WriteFile(abs, platformtest.MakeJPEG(t, 48, 96), 0o644); err != nil { //nolint:gosec // test file
+		t.Fatal(err)
+	}
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("rescan Run = %v %q; want Done", o, msg)
+	}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		if p := jobTestPrints(t, s.Store)[fileID]; p != nil {
+			t.Fatal("the old print survived the change of content")
+		}
+	}()
+
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	got := jobTestPrints(t, s.Store)[fileID]
+	preview, err := sessionThumbPath(s.Store, s.Root, fileID, thumb.TierPreview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(preview) //nolint:gosec // the test folder's own preview
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 48 || b.Dy() != 96 {
+		t.Fatalf("preview is %dx%d; want the new content's 48x96", b.Dx(), b.Dy())
+	}
+	want := platformtest.FeaturePrintOf(img)
+	if !slices.Equal(got, want) {
+		t.Fatal("the stored print is not the print of the new content")
+	}
+	if slices.Equal(got, old) {
+		t.Fatal("the stored print is still the old one")
+	}
+}
+
+// The rating pass needs no model: with quality_rating on, the job rates
+// every photo with the built-in formula and reports the pass to the tracker.
+func TestJob_QualityStepUsesTracker(t *testing.T) {
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "rated")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tracker := &jobTestTracker{}
@@ -975,9 +1211,6 @@ func TestJob_QualityStepUsesTracker(t *testing.T) {
 	if tracker.rated != 3 || tracker.err != nil {
 		t.Fatalf("end(%d, %v); want end(3, nil)", tracker.rated, tracker.err)
 	}
-	if inf.calls.Load() == 0 {
-		t.Fatal("the quality model was never run")
-	}
 	if n := h.folderChanged(id, "ratings"); n == 0 {
 		t.Fatal("no folder:changed ratings event")
 	}
@@ -985,6 +1218,14 @@ func TestJob_QualityStepUsesTracker(t *testing.T) {
 	defer release()
 	if n, err := s.Scorer().CountPending(); err != nil || n != 0 {
 		t.Fatalf("photos pending a rating = %d, %v; want 0", n, err)
+	}
+	var rated int
+	if err := s.Store.DB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM files WHERE quality_raw IS NOT NULL AND quality_model = ?`, quality.ScorerID).Scan(&rated); err != nil {
+		t.Fatal(err)
+	}
+	if rated != 3 {
+		t.Fatalf("photos rated by %s = %d; want 3", quality.ScorerID, rated)
 	}
 }
 
@@ -1000,10 +1241,8 @@ func TestJob_RatingsEventsAreThrottled(t *testing.T) {
 		{"a second apart", time.Second, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			models := &jobTestModels{}
-			models.set(local.ModelQuality, true)
 			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+			h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 			id, root := h.folder(t, "throttle")
 			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -1030,10 +1269,8 @@ func TestJob_RatingsEventsAreThrottled(t *testing.T) {
 }
 
 func TestJob_QualityCancelledByTrackerStillFinishes(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "switched-off")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tracker := &jobTestTracker{cancelAfter: 1}
@@ -1060,10 +1297,8 @@ func TestJob_QualityCancelledByTrackerStillFinishes(t *testing.T) {
 }
 
 func TestJob_QualitySettingOffStopsThePass(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "off")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	// No tracker cancels the pass: the job itself stops rating once the
@@ -1114,7 +1349,7 @@ func (t trackerHook) Begin(ctx context.Context, folderID string) (context.Contex
 func TestJob_DisconnectReconnectResumes(t *testing.T) {
 	gate := make(chan struct{})
 	stills := &platformtest.Stills{ReadPaths: true, Gate: gate, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "external")
 	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	if err := os.WriteFile(filepath.Join(root, "notes.jpg"), []byte("not a JPEG"), 0o644); err != nil { //nolint:gosec // test file
@@ -1176,16 +1411,14 @@ func TestJob_DisconnectReconnectResumes(t *testing.T) {
 // photo stays pending and the job is suspended — only the scorer's guard saw
 // the outage.
 func TestJob_FolderVanishesBetweenCheckAndPreviewRead(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "external")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	reconnect := func() {}
 	j := h.job(trackerHook{inner: &jobTestTracker{}, onEnd: func() { reconnect() }})
 	calls := 0
-	j.scoreHook = func() {
+	j.o.BeforeScore = func() {
 		calls++
 		if calls == 3 { // the last photo
 			reconnect = sessionTestDisconnect(t, root)
@@ -1205,10 +1438,8 @@ func TestJob_FolderVanishesBetweenCheckAndPreviewRead(t *testing.T) {
 // Once a run has seen the folder gone it is suspended, even when the folder
 // is back before the job returns.
 func TestJob_FolderBackBeforeEndIsStillSuspended(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "flaky")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	var (
@@ -1234,39 +1465,34 @@ func TestJob_FolderBackBeforeEndIsStillSuspended(t *testing.T) {
 	}
 }
 
-func TestJob_QualityOffOrModelMissingSkipsPass(t *testing.T) {
-	for name, setup := range map[string]func(h *jobTestHarness){
-		"setting off":   func(h *jobTestHarness) { h.settings.set(func(c *config.Config) { c.QualityRating = false }) },
-		"model missing": func(h *jobTestHarness) { h.models.set(local.ModelQuality, false) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			models := &jobTestModels{}
-			models.set(local.ModelQuality, true)
-			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-			inf := &jobTestInferer{}
-			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
-			id, root := h.folder(t, "skip")
-			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg")
-			setup(h)
-			tracker := &jobTestTracker{}
+func TestJob_QualityOffSkipsPass(t *testing.T) {
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
+	id, root := h.folder(t, "skip")
+	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg")
+	h.settings.set(func(c *config.Config) { c.QualityRating = false })
+	tracker := &jobTestTracker{}
 
-			if o, msg := h.run(context.Background(), h.job(tracker), id, JobFull); o != Done {
-				t.Fatalf("Run = %v %q; want Done", o, msg)
-			}
-			tracker.mu.Lock()
-			defer tracker.mu.Unlock()
-			if tracker.begun != 0 || inf.calls.Load() != 0 {
-				t.Fatalf("Begin called %d times, model run %d times; want no pass", tracker.begun, inf.calls.Load())
-			}
-			// Without a pass the job publishes its clusters once, at its end:
-			// one refresh, one grid reload, no ratings.
-			if n := h.afterJob.Load(); n != 1 {
-				t.Fatalf("AfterJob called %d times; want 1", n)
-			}
-			if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
-				t.Fatalf("folder:changed reasons = %v; want [clusters]", got)
-			}
-		})
+	if o, msg := h.run(context.Background(), h.job(tracker), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	if tracker.begun != 0 {
+		t.Fatalf("Begin called %d times; want no pass", tracker.begun)
+	}
+	// Without a pass the job publishes its clusters once, at its end:
+	// one refresh, one grid reload, no ratings.
+	if n := h.afterJob.Load(); n != 1 {
+		t.Fatalf("AfterJob called %d times; want 1", n)
+	}
+	if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
+		t.Fatalf("folder:changed reasons = %v; want [clusters]", got)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	if n, err := s.Scorer().CountPending(); err != nil || n != 1 {
+		t.Fatalf("photos pending a rating = %d, %v; want 1 (none rated)", n, err)
 	}
 }
 
@@ -1276,10 +1502,8 @@ func TestJob_QualityOffOrModelMissingSkipsPass(t *testing.T) {
 // grid while the ratings are computed. The pass ends with a "ratings" event,
 // not a second grid reload or refresh.
 func TestJob_ClustersPublishedBeforeTheRatingPass(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "early")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 
@@ -1297,7 +1521,7 @@ func TestJob_ClustersPublishedBeforeTheRatingPass(t *testing.T) {
 	release := sync.OnceFunc(func() { close(gate) })
 	defer release()
 	var first sync.Once
-	j.scoreHook = func() {
+	j.o.BeforeScore = func() {
 		first.Do(func() {
 			close(entered)
 			<-gate
@@ -1361,11 +1585,8 @@ func TestJob_CancelledWhilePublishingClusters(t *testing.T) {
 		{"no rating pass", false, Done},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			models := &jobTestModels{}
-			models.set(local.ModelQuality, true)
 			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-			inf := &jobTestInferer{}
-			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
+			h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 			h.settings.set(func(c *config.Config) { c.QualityRating = tc.quality })
 			id, root := h.folder(t, "preempted")
 			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg")
@@ -1390,15 +1611,15 @@ func TestJob_CancelledWhilePublishingClusters(t *testing.T) {
 			}
 			tracker.mu.Lock()
 			defer tracker.mu.Unlock()
-			if tracker.begun != 0 || inf.calls.Load() != 0 {
-				t.Fatalf("Begin called %d times, model run %d times; want no pass after the cancellation", tracker.begun, inf.calls.Load())
+			if tracker.begun != 0 {
+				t.Fatalf("Begin called %d times; want no pass after the cancellation", tracker.begun)
 			}
 		})
 	}
 }
 
 func TestJob_V1FolderFullRunStampsParams(t *testing.T) {
-	h := newJobTestHarness(t, sessionTestOptions{}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{})
 	id, root := h.folder(t, "v1")
 	sessionTestCopyV1(t, root)
 	func() {
@@ -1422,8 +1643,174 @@ func TestJob_V1FolderFullRunStampsParams(t *testing.T) {
 	}
 }
 
+// TestJob_V1FolderBackfillUsesThumbWithoutPreview: v1 made only a thumb tier
+// for a video, so the print backfill of a v1 folder reads the thumb tier of a
+// file without a preview tier (no row, or a row whose cache file is gone),
+// as the media handler does, instead of failing it.
+func TestJob_V1FolderBackfillUsesThumbWithoutPreview(t *testing.T) {
+	vis := &platformtest.Vision{}
+	h := newJobTestHarness(t, sessionTestOptions{vision: vis})
+	id, root := h.folder(t, "v1video")
+	sessionTestCopyV1(t, root)
+
+	// What v1 left for a video: the original, its row, a thumb row and the
+	// thumb cache file, an ai_signals row with no embedding; no preview.
+	const videoID = 7
+	videoRel := "DCIM/100TEST/TEST0007.MOV"
+	videoAbs := filepath.Join(root, filepath.FromSlash(videoRel))
+	if err := os.WriteFile(videoAbs, []byte("a v1 video, never decoded by this test\n"), 0o644); err != nil { //nolint:gosec // test file
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(videoAbs, sessionTestV1Mtime, sessionTestV1Mtime); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := scanner.ContentHash(videoAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoThumb := ".choix/thumbs/07/7-thumb.jpg"
+	if err := os.MkdirAll(filepath.Join(root, ".choix", "thumbs", "07"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(videoThumb)), platformtest.MakeJPEG(t, 64, 48), 0o644); err != nil { //nolint:gosec // test file
+		t.Fatal(err)
+	}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		db := s.Store.DB()
+		ctx := context.Background()
+		captured := time.Date(2026, 1, 2, 10, 0, 15, 0, time.UTC).Unix()
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO files (id, path, size, mtime, content_hash, kind, format, device_key, captured_at, width, height, scan_status)
+			  SELECT ?, ?, ?, ?, ?, 'video', 'mov', device_key, ?, 64, 48, 'analyzed' FROM files WHERE id = 1`,
+				[]any{videoID, videoRel, len("a v1 video, never decoded by this test\n"), sessionTestV1Mtime.Unix(), hash, captured}},
+			{`INSERT INTO thumbs (file_id, tier, rel_path, width, height) VALUES (?, 'thumb', ?, 64, 48)`, []any{videoID, videoThumb}},
+			{`INSERT INTO ai_signals (file_id, clip_embedding, computed_at) VALUES (?, NULL, ?)`, []any{videoID, sessionTestV1Mtime.Unix()}},
+			// A photo with only a thumb row, and one whose preview cache
+			// file is gone.
+			{`DELETE FROM thumbs WHERE file_id = 1 AND tier = 'preview'`, nil},
+		} {
+			if _, err := db.ExecContext(ctx, q.sql, q.args...); err != nil {
+				t.Fatalf("%s: %v", q.sql, err)
+			}
+		}
+	}()
+	for _, p := range []string{"01/1-preview.jpg", "04/4-preview.jpg"} {
+		if err := os.Remove(filepath.Join(root, ".choix", "thumbs", filepath.FromSlash(p))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	prints := jobTestPrints(t, s.Store)
+	inCluster := map[int64]bool{}
+	rows, err := s.Store.DB().QueryContext(context.Background(), `SELECT file_id FROM cluster_members`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var fid int64
+		if err := rows.Scan(&fid); err != nil {
+			t.Fatal(err)
+		}
+		inCluster[fid] = true
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		t.Fatal(err)
+	}
+	for _, fid := range []int64{1, 4, videoID} {
+		f, err := s.Store.Files().GetByID(fid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.ScanStatus != "analyzed" {
+			t.Errorf("file %d (%s) is %q (%s); want analyzed", fid, f.Path, f.ScanStatus, f.ErrMsg.String)
+		}
+		if prints[fid] == nil {
+			t.Errorf("file %d (%s) has no print stamped %s", fid, f.Path, analyze.PrintID)
+		}
+		if !inCluster[fid] {
+			t.Errorf("file %d (%s) is in no cluster", fid, f.Path)
+		}
+	}
+	if n := jobTestPending(t, s.Store); n != 0 {
+		t.Fatalf("pending for a print = %d; want 0", n)
+	}
+}
+
+// TestJob_StaleTierRowsUseTheStandardCachePath: a thumbs row whose file is
+// gone does not hide the tier's cache file at its standard place
+// (thumb.CachePath). A stale preview row with the preview there is analyzed
+// from that preview, not from the 256 px thumb; stale rows for both tiers
+// with the files there are analyzed, not failed; and with the preview gone
+// too, the thumb at its standard place is used.
+func TestJob_StaleTierRowsUseTheStandardCachePath(t *testing.T) {
+	vis := &platformtest.Vision{}
+	h := newJobTestHarness(t, sessionTestOptions{vision: vis})
+	id, root := h.folder(t, "v1stale")
+	sessionTestCopyV1(t, root)
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		for _, q := range []string{
+			`UPDATE thumbs SET rel_path = '.choix/thumbs/01/1-preview-old.jpg' WHERE file_id = 1 AND tier = 'preview'`,
+			`UPDATE thumbs SET rel_path = '.choix/thumbs/02/2-' || tier || '-old.jpg' WHERE file_id = 2`,
+			`UPDATE thumbs SET rel_path = '.choix/thumbs/04/4-' || tier || '-old.jpg' WHERE file_id = 4`,
+		} {
+			if _, err := s.Store.DB().ExecContext(context.Background(), q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	}()
+	if err := os.Remove(filepath.Join(root, ".choix", "thumbs", "04", "4-preview.jpg")); err != nil {
+		t.Fatal(err)
+	}
+
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	prints := jobTestPrints(t, s.Store)
+	for _, fid := range []int64{1, 2, 4} {
+		f, err := s.Store.Files().GetByID(fid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.ScanStatus != "analyzed" || prints[fid] == nil {
+			t.Errorf("file %d is %q (%s), print %v; want analyzed with a print", fid, f.ScanStatus, f.ErrMsg.String, prints[fid] != nil)
+		}
+	}
+	calls := vis.Calls()
+	for _, want := range []string{
+		thumb.CachePath(s.Root, 1, thumb.TierPreview),
+		thumb.CachePath(s.Root, 2, thumb.TierPreview),
+		thumb.CachePath(s.Root, 4, thumb.TierThumb),
+	} {
+		if !slices.Contains(calls, want) {
+			t.Errorf("Vision was not called with %s; calls %v", want, calls)
+		}
+	}
+	for _, unwanted := range []string{
+		thumb.CachePath(s.Root, 1, thumb.TierThumb),
+		thumb.CachePath(s.Root, 2, thumb.TierThumb),
+	} {
+		if slices.Contains(calls, unwanted) {
+			t.Errorf("Vision was called with %s although the preview is there", unwanted)
+		}
+	}
+}
+
 func TestJob_OutcomeClassification(t *testing.T) {
-	h := newJobTestHarness(t, sessionTestOptions{}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{})
 	j := h.job(nil)
 	present := t.TempDir()
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -1458,7 +1845,7 @@ func TestJob_OutcomeClassification(t *testing.T) {
 }
 
 func TestJob_CancelledBeforeStartIsStopped(t *testing.T) {
-	h := newJobTestHarness(t, sessionTestOptions{}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{})
 	id, root := h.folder(t, "early")
 	sessionTestWriteJPEG(t, root, "a.jpg")
 	ctx, cancel := context.WithCancel(context.Background())

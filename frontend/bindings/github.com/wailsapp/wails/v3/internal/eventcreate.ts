@@ -15,10 +15,9 @@ function configure() {
         "folder:changed": $$createType0,
         "library:changed": $$createType1,
         "menu:action": $$createType2,
-        "models:progress": $$createType3,
-        "quality:status": $$createType4,
-        "scan:progress": $$createType5,
-        "scan:state": $$createType6,
+        "quality:status": $$createType3,
+        "scan:progress": $$createType4,
+        "scan:state": $$createType5,
     }));
 }
 
@@ -26,9 +25,8 @@ function configure() {
 const $$createType0 = events$0.FolderChangedEvent.createFrom;
 const $$createType1 = events$0.LibraryChangedEvent.createFrom;
 const $$createType2 = events$0.MenuActionEvent.createFrom;
-const $$createType3 = events$0.ModelStatus.createFrom;
-const $$createType4 = events$0.Quality.createFrom;
-const $$createType5 = events$0.ScanProgressEvent.createFrom;
-const $$createType6 = events$0.ScanStateEvent.createFrom;
+const $$createType3 = events$0.Quality.createFrom;
+const $$createType4 = events$0.ScanProgressEvent.createFrom;
+const $$createType5 = events$0.ScanStateEvent.createFrom;
 
 configure();

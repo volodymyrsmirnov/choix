@@ -1,8 +1,8 @@
 // Library: adding a folder by path runs its job to `ready` with the
 // expected summary and preview strip; adding it again, or a folder inside
 // it, adds nothing. Every row carries when it was added (added_at, the
-// Library's "Recently added" order). No model is downloaded while both model settings are off.
-import { mkdirSync, readdirSync } from 'node:fs'
+// Library's "Recently added" order).
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { BASE, dirs, expect, folderPath, test, type AddResult } from './fixtures'
 
@@ -63,30 +63,6 @@ test('a folder added later has an added_at at least as large', async ({ harness 
   const second = list.find((f) => f.id === res.id)!
   expect(Number.isInteger(second.added_at)).toBe(true)
   expect(second.added_at).toBeGreaterThanOrEqual(first.added_at)
-})
-
-test('no model download is attempted with both model settings off', async ({ harness }) => {
-  const settings = await harness.call<{ visual_grouping: boolean; quality_rating: boolean }>('Settings', 'Get')
-  expect(settings).toMatchObject({ visual_grouping: false, quality_rating: false })
-  const status = await harness.call<{ kind: string; state: string; received: number }[]>('Models', 'Status')
-  expect(status.map((s) => [s.kind, s.state, s.received])).toEqual([
-    ['clip', 'disabled', 0],
-    ['quality', 'disabled', 0],
-  ])
-  // The rating is off: no pass runs, so the status names no folder and lists
-  // no pass (both are left out of the payload, never null).
-  const quality = await harness.call<Record<string, unknown>>('Models', 'Quality')
-  expect(quality).toMatchObject({ enabled: false, state: 'disabled', active: false })
-  expect(quality.passes ?? [], `Models.Quality ${JSON.stringify(quality)}`).toEqual([])
-  expect(quality.folder_id, `Models.Quality ${JSON.stringify(quality)}`).toBeUndefined()
-  // Nothing was written into the data directory's models directory.
-  let models: string[] = []
-  try {
-    models = readdirSync(join(dirs.data, 'models'))
-  } catch {
-    // no models directory at all
-  }
-  expect(models).toEqual([])
 })
 
 test.afterAll(async ({ harness }) => {

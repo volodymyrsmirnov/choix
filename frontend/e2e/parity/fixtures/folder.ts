@@ -1,4 +1,4 @@
-// Fixtures of the Folder states 200–229 (prototype/scenarios/folder.tsx).
+// Fixtures of the Folder states 200–231 (prototype/scenarios/folder.tsx).
 //
 // Each fixture is read off the approved scenario itself: the scenario's
 // render gives a FolderScreen element, and its props are what the prototype
@@ -8,9 +8,9 @@
 //     'pending' while the state is still loading (200);
 //   - Library.List: the folder's row (the title bar's name and counts), as
 //     `scanning` with the run's progress when the state shows a scan;
-//   - Settings.Get and Models.Status: what makes the page group by time only
-//     (GROUPING_SOURCE), hide rejected photos or leave out the badges;
-//   - Models.Quality when the title bar shows the quality worker (229);
+//   - Settings.Get: visual grouping off where the state is about it
+//     (TIME_ONLY), rejected photos hidden or the badges left out;
+//   - Catalog.QualityStatus when the title bar shows the quality worker (229);
 //   - the toasts of 222 and 223, seeded (the app's own re-cluster toasts
 //     leave after 4 s, which a comparison could outlast;
 //     ../folderCases.test.ts holds them to the same copy);
@@ -24,13 +24,11 @@
 // FOLDER_MEDIA maps each member's content hash to the prototype photo its
 // thumbnail shows, so serve-app.mjs answers the app's /media/... URLs with
 // the same bytes (media.ts).
-import { ERR_CLIP } from '../../../prototype/mock/settings'
-import { model } from '../../../prototype/mock/data'
 import { scenarios } from '../../../prototype/scenarios/folder'
 import type { Scenario, ScenarioCtx } from '../../../prototype/registry'
 import { DEFAULTS } from '../../../src/design/screens/settings/draft'
-import type { FolderGrouping, FolderProps } from '../../../src/design/screens/folder/props'
-import type { FolderSummary, ModelStatus, SettingsBody } from '../../../src/design/types'
+import type { FolderProps } from '../../../src/design/screens/folder/props'
+import type { FolderSummary, SettingsBody } from '../../../src/design/types'
 import type { FolderView } from '../../../bindings/github.com/volodymyrsmirnov/choix/internal/app/catalog/models'
 import { mediaPhoto } from '../fixtures'
 import type { AppErrorCause, ParityFixture } from '../mock-bindings/control'
@@ -50,16 +48,10 @@ export function folderScenarioProps(n: number, list: Scenario[] = scenarios): Fo
 }
 
 /**
- * What Go reports for each way the page groups: the visual-grouping setting
- * (Settings.Get) and the CLIP model (Models.Status). The app derives the
- * grouping from these two (folderProps.ts groupingOf).
+ * The states whose Settings.Get answers visual grouping off (227). The page
+ * draws nothing from the setting, so such a state draws as its visual twin.
  */
-export const GROUPING_SOURCE: Record<FolderGrouping, { visual_grouping: boolean; clip: ModelStatus }> = {
-  visual: { visual_grouping: true, clip: model('clip', 'ready') },
-  'time-downloading': { visual_grouping: true, clip: model('clip', 'downloading', 96_000_000) },
-  'time-failed': { visual_grouping: true, clip: model('clip', 'failed', 0, ERR_CLIP) },
-  'time-off': { visual_grouping: false, clip: model('clip', 'disabled') },
-}
+export const TIME_ONLY: ReadonlySet<number> = new Set([227])
 
 /** How Catalog.Recluster answers in the states that come from pressing Re-cluster. */
 export const RECLUSTER_CALLS: Record<number, 'pending' | AppErrorCause> = {
@@ -94,19 +86,17 @@ export function rowOf(p: FolderProps): FolderSummary {
 
 /** The Folder route of `p`'s folder with `p`'s data, as Go answers it. */
 export function folderFixture(p: FolderProps, n?: number): ParityFixture {
-  const source = GROUPING_SOURCE[p.grouping]
   const settings: SettingsBody = {
     ...DEFAULTS,
     picks_dir: p.picksDir,
     hide_rejected_photos: p.settings.hide_rejected_photos,
     quality_rating: p.settings.quality_rating,
-    visual_grouping: source.visual_grouping,
+    visual_grouping: n === undefined || !TIME_ONLY.has(n),
   }
   const recluster = n === undefined ? undefined : RECLUSTER_CALLS[n]
   return plain({
     route: `#/folder/${encodeURIComponent(p.folder.id)}`,
     folders: [rowOf(p)],
-    models: [source.clip, model('quality', 'ready')],
     settings,
     view: viewOf(p),
     ...(p.quality ? { quality: p.quality } : {}),
@@ -115,7 +105,7 @@ export function folderFixture(p: FolderProps, n?: number): ParityFixture {
   })
 }
 
-/** The Folder states' numbers (200–229). */
+/** The Folder states' numbers (200–231). */
 export const FOLDER_STATES: number[] = scenarios.map((s) => s.n)
 
 export const FOLDER: Record<number, ParityFixture> = Object.fromEntries(FOLDER_STATES.map((n) => [n, folderFixture(folderScenarioProps(n), n)]))

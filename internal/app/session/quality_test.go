@@ -9,20 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 )
 
-// qualityTestEnv holds what a QualityTracker reads — the setting, the quality
-// model's status and whether a job is queued or running — and records the
-// quality:status events it sends. The Coalescer never ticks: an event in the
+// qualityTestEnv holds what a QualityTracker reads — the setting and whether
+// a job is queued or running — and records the quality:status events it
+// sends. The Coalescer never ticks: an event in the
 // recorder before a Flush was sent with EmitNow.
 type qualityTestEnv struct {
 	mu      sync.Mutex
 	enabled bool
-	model   events.ModelStatus
 	busy    bool
 	// busyLock, when set, is taken by Busy, as the Queue's mutex is by
 	// Queue.Idle.
@@ -43,7 +41,6 @@ func newQualityTestEnv(t *testing.T) *qualityTestEnv {
 	t.Helper()
 	e := &qualityTestEnv{
 		enabled: true,
-		model:   events.ModelStatus{Kind: "quality", State: "ready", Received: 100, Size: 100},
 		rec:     &events.Recorder{},
 	}
 	e.emit = events.NewCoalescer(emitterFunc(func(name string, data any) {
@@ -60,11 +57,6 @@ func newQualityTestEnv(t *testing.T) *qualityTestEnv {
 			e.mu.Lock()
 			defer e.mu.Unlock()
 			return e.enabled
-		},
-		Model: func() events.ModelStatus {
-			e.mu.Lock()
-			defer e.mu.Unlock()
-			return e.model
 		},
 		Busy: func() bool {
 			e.mu.Lock()
@@ -112,10 +104,6 @@ func (e *qualityTestEnv) changed() {
 	e.tr.settle()
 }
 
-// errQualityTestUnavailable is a pass error meaning scoring cannot work at
-// all.
-var errQualityTestUnavailable = fmt.Errorf("quality: rate file 7: %w", local.ErrQualityUnavailable)
-
 func assertQuality(t *testing.T, got, want events.Quality) {
 	t.Helper()
 	if !qualityEqual(got, want) {
@@ -130,27 +118,9 @@ func TestStatus_Disabled(t *testing.T) {
 	e.set(func(e *qualityTestEnv) {
 		e.enabled = false
 		e.busy = true
-		e.model = events.ModelStatus{Kind: "quality", State: "disabled", Size: 100}
 	})
-	// Off wins over the pass in flight, the job and the model.
+	// Off wins over the pass in flight and the job.
 	assertQuality(t, e.tr.Status(), events.Quality{Enabled: false, State: "disabled", Rated: 1})
-}
-
-func TestStatus_Downloading(t *testing.T) {
-	e := newQualityTestEnv(t)
-	e.set(func(e *qualityTestEnv) {
-		e.busy = true
-		e.model = events.ModelStatus{Kind: "quality", State: "downloading", Received: 10, Size: 100}
-	})
-	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "downloading", Active: true, Received: 10, Size: 100})
-}
-
-func TestStatus_DownloadFailed(t *testing.T) {
-	e := newQualityTestEnv(t)
-	e.set(func(e *qualityTestEnv) {
-		e.model = events.ModelStatus{Kind: "quality", State: "failed", Received: 10, Size: 100, Error: "network is down"}
-	})
-	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "download_failed", Error: "network is down"})
 }
 
 func TestStatus_Scoring(t *testing.T) {
@@ -164,32 +134,34 @@ func TestStatus_Scoring(t *testing.T) {
 		FolderID: "F", Passes: []events.QualityPass{{FolderID: "F", Done: 1, Total: 4}}})
 }
 
-func TestStatus_Error(t *testing.T) {
+// The quality status has no download and no error state (the payload has
+// no field for either): with the setting
+// on it is idle, scoring while a pass runs, idle again after a pass whatever
+// error ended it, and disabled with the setting off.
+func TestTracker_NoDownloadOrErrorStates(t *testing.T) {
 	e := newQualityTestEnv(t)
-	_, _, end := e.tr.Begin(context.Background(), "F")
-	end(0, errQualityTestUnavailable)
-	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "error", Error: errQualityTestUnavailable.Error()})
-
-	// A job queued afterwards does not hide the error; a pass that ends
-	// without it clears it.
-	e.set(func(e *qualityTestEnv) { e.busy = true })
-	if s := e.tr.Status(); s.State != "error" {
-		t.Fatalf("state with a job queued = %q; want error", s.State)
-	}
-	_, _, end = e.tr.Begin(context.Background(), "F")
-	end(0, nil)
-	e.set(func(e *qualityTestEnv) { e.busy = false })
 	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle"})
+
+	_, progress, end := e.tr.Begin(context.Background(), "F")
+	progress(1, 3)
+	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "scoring", Active: true, Done: 1, Total: 3, Rated: 1,
+		FolderID: "F", Passes: []events.QualityPass{{FolderID: "F", Done: 1, Total: 3}}})
+
+	end(1, fmt.Errorf("quality: rate file 3: %w", errors.New("SetQuality: database is locked")))
+	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle", Rated: 1})
+
+	e.set(func(e *qualityTestEnv) { e.enabled = false })
+	assertQuality(t, e.tr.Status(), events.Quality{Enabled: false, State: "disabled", Rated: 1})
 }
 
-func TestStatus_ErrorOnlyWhenScoringCannotWork(t *testing.T) {
+func TestStatus_PassErrorsAreNotAState(t *testing.T) {
 	// The job's outcomes: a pass stopped by the setting, by the folder going
-	// away (the job is suspended) or by repeated failures of single photos is
-	// not the "error" state.
+	// away (the job is suspended) or by repeated failures of single photos
+	// leaves the status idle.
 	for name, err := range map[string]error{
 		"setting off":     fmt.Errorf("stopped: %w", context.Canceled),
 		"folder gone":     context.Canceled,
-		"repeated errors": errors.New("quality: rate file 3: inference failed"),
+		"repeated errors": errors.New("quality: rate file 3: decode failed"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newQualityTestEnv(t)
@@ -209,11 +181,6 @@ func TestStatus_Waiting(t *testing.T) {
 
 func TestStatus_Idle(t *testing.T) {
 	e := newQualityTestEnv(t)
-	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle"})
-
-	// A model queued for download, or never reported, is not a state of its
-	// own.
-	e.set(func(e *qualityTestEnv) { e.model = events.ModelStatus{Kind: "quality", State: "queued", Size: 100} })
 	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle"})
 }
 
@@ -350,7 +317,7 @@ func TestRated_Monotonic(t *testing.T) {
 	_, progress, end := e.tr.Begin(context.Background(), "F")
 	progress(1, 2)
 	progress(2, 2)
-	end(0, errors.New("quality: rate file 2: inference failed"))
+	end(0, errors.New("quality: rate file 2: decode failed"))
 	check("a failed pass")
 	if r := e.tr.Status().Rated; r != 7 {
 		t.Fatalf("Rated = %d; want 7", r)
@@ -391,42 +358,9 @@ func TestScoringProgress_Coalesced(t *testing.T) {
 	assertQuality(t, got[2], events.Quality{Enabled: true, State: "idle", Rated: 4})
 }
 
-func TestChanged_DownloadProgressCoalescedStatesImmediate(t *testing.T) {
-	e := newQualityTestEnv(t)
-	e.set(func(e *qualityTestEnv) {
-		e.model = events.ModelStatus{Kind: "quality", State: "downloading", Received: 10, Size: 100}
-	})
-	e.changed()
-	e.changed() // nothing differs: nothing sent
-	if got := e.sent(t); len(got) != 1 || got[0].State != "downloading" {
-		t.Fatalf("events = %+v; want one downloading", got)
-	}
-	for _, r := range []int64{40, 70} {
-		e.set(func(e *qualityTestEnv) { e.model.Received = r })
-		e.changed()
-	}
-	if n := len(e.sent(t)); n != 1 {
-		t.Fatalf("events = %+v; want the download progress coalesced", e.sent(t))
-	}
-	e.emit.Flush()
-	if got := e.sent(t); len(got) != 2 || got[1].Received != 70 {
-		t.Fatalf("events after Flush = %+v; want the latest progress (70)", got)
-	}
-	e.set(func(e *qualityTestEnv) {
-		e.model = events.ModelStatus{Kind: "quality", State: "ready", Received: 100, Size: 100}
-	})
-	e.changed()
-	got := e.sent(t)
-	if len(got) != 3 {
-		t.Fatalf("events = %+v; want the end of the download at once", got)
-	}
-	assertQuality(t, got[2], events.Quality{Enabled: true, State: "idle"})
-}
-
-// Changed is called from the Queue's and the models Manager's event paths,
-// which hold their own locks (and the Coalescer's) while they emit: it must
-// return without reading Busy or Model, and without emitting, on the
-// caller's goroutine.
+// Changed is called from the Queue's event path, which holds its own lock
+// (and the Coalescer's) while it emits: it must return without reading Busy,
+// and without emitting, on the caller's goroutine.
 func TestChanged_SafeFromInsideAnEmitterHoldingLocks(t *testing.T) {
 	e := newQualityTestEnv(t)
 	var queueMu sync.Mutex
@@ -461,7 +395,7 @@ func TestChanged_SafeFromInsideAnEmitterHoldingLocks(t *testing.T) {
 	}
 }
 
-// Whatever the interleaving of passes, model and queue changes, the last
+// Whatever the interleaving of passes and queue changes, the last
 // status delivered is the current one: no older coalesced value overtakes
 // it.
 func TestQualityTracker_LastEventIsCurrent(t *testing.T) {
@@ -479,10 +413,9 @@ func TestQualityTracker_LastEventIsCurrent(t *testing.T) {
 					progress(2, 2)
 					end(2, nil)
 				case 1:
-					e.set(func(e *qualityTestEnv) {
-						e.model = events.ModelStatus{Kind: "quality", State: "downloading", Received: int64(i), Size: 100}
-					})
-					e.tr.Changed()
+					_, progress, end := e.tr.Begin(context.Background(), "G")
+					progress(1, 1)
+					end(1, nil)
 				case 2:
 					e.set(func(e *qualityTestEnv) { e.busy = i%2 == 0 })
 					e.tr.Changed()
@@ -493,10 +426,7 @@ func TestQualityTracker_LastEventIsCurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	e.set(func(e *qualityTestEnv) {
-		e.model = events.ModelStatus{Kind: "quality", State: "ready", Received: 100, Size: 100}
-		e.busy = false
-	})
+	e.set(func(e *qualityTestEnv) { e.busy = false })
 	e.changed()
 	e.emit.Flush()
 
@@ -505,7 +435,7 @@ func TestQualityTracker_LastEventIsCurrent(t *testing.T) {
 		t.Fatal("no quality:status sent")
 	}
 	assertQuality(t, got[len(got)-1], e.tr.Status())
-	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle", Rated: 100})
+	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle", Rated: 150})
 }
 
 // Back-to-back notifications, none waited for: each is read on its own, in
@@ -574,10 +504,8 @@ func (f emitterFunc) Emit(name string, data any) { f(name, data) }
 // The tracker as the job's QualityRun: the pass is reported and its ratings
 // counted.
 func TestQualityTracker_TracksTheJobsPass(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "tracked")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tr := NewQualityTracker(QualityOptions{
@@ -602,10 +530,8 @@ func TestQualityTracker_TracksTheJobsPass(t *testing.T) {
 // Switching the setting off mid-pass stops the job's pass before the next
 // photo; the job still finishes.
 func TestQualityTracker_SettingOffStopsTheJobsPass(t *testing.T) {
-	models := &jobTestModels{}
-	models.set(local.ModelQuality, true)
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "opt-out")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tr := NewQualityTracker(QualityOptions{

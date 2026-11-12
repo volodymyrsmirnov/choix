@@ -48,14 +48,14 @@ func Save(cfg *Config) error {
 	}
 
 	schema := fileSchema{
-		BucketSizeSec:          &cfg.BucketSizeSec,
-		VisualClusterThreshold: &cfg.VisualClusterThreshold,
-		PicksDir:               &cfg.PicksDir,
-		AdvanceOnAction:        &cfg.AdvanceOnAction,
-		HideRejectedPhotos:     &cfg.HideRejectedPhotos,
-		CrossDeviceMerging:     &cfg.CrossDeviceMerging,
-		VisualGrouping:         &cfg.VisualGrouping,
-		QualityRating:          &cfg.QualityRating,
+		BucketSizeSec:      &cfg.BucketSizeSec,
+		VisualSimilarity:   &cfg.VisualSimilarity,
+		PicksDir:           &cfg.PicksDir,
+		AdvanceOnAction:    &cfg.AdvanceOnAction,
+		HideRejectedPhotos: &cfg.HideRejectedPhotos,
+		CrossDeviceMerging: &cfg.CrossDeviceMerging,
+		VisualGrouping:     &cfg.VisualGrouping,
+		QualityRating:      &cfg.QualityRating,
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(schema); err != nil {

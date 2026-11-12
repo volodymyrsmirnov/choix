@@ -6,7 +6,6 @@ import {
   Field,
   IconButton,
   Prompt,
-  SettingsModelCard,
   SettingsNav,
   SettingsSaveBar,
   SettingsSection,
@@ -30,7 +29,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'output', label: 'Output' },
 ]
 const sectionDomID = (id: string) => `settings-${id}`
-/** The quality rating field (switch, model card, status line), for `reveal`. */
+/** The quality rating field (switch, status line), for `reveal`. */
 const QUALITY_FIELD = 'settings-quality-field'
 
 
@@ -139,13 +138,7 @@ function Form(p: SettingsProps & { saved: NonNullable<SettingsProps['saved']>; p
   const bucketSec = minutesTextToSeconds(draft.bucket_size)
   const simIsDefault = draft.similarity === DEFAULTS.similarity
   const visual = draft.visual_grouping
-  const clip = p.models.find((m) => m.kind === 'clip')
-  const qualityModel = p.models.find((m) => m.kind === 'quality')
   const q = p.quality
-  // While its model row reports a download (queued, downloading, failed), the
-  // row is the status; the line under the switch would contradict it.
-  const qualityText =
-    qualityModel && ['queued', 'downloading', 'failed'].includes(qualityModel.state) ? '' : qualityStatusText(q)
   const describedBy = (id: string, err?: string) => `${id}-hint${err ? ` ${id}-error` : ''}`
 
   // v1 recomputed the section in view on resize as well as on scroll.
@@ -208,13 +201,9 @@ function Form(p: SettingsProps & { saved: NonNullable<SettingsProps['saved']>; p
                 <Field
                   controlId="visual-toggle"
                   title="Visual grouping"
-                  hint="Group shots that look alike, using the CLIP model (352 MB, downloaded once; it runs on this Mac). Off: the model is never downloaded and folders are grouped by time only."
+                  hint="Group shots that look alike, using Apple’s on-device image analysis. Nothing is downloaded and nothing leaves this Mac. Off: folders are grouped by time only."
                   aside={<SettingsSwitch id="visual-toggle" checked={visual} onChange={(v) => p.onChange({ visual_grouping: v })} testId="visual-toggle" />}
-                >
-                  {clip && clip.state !== 'disabled' && (
-                    <SettingsModelCard model={clip} onRetry={() => p.onRetryModel('clip')} />
-                  )}
-                </Field>
+                />
 
                 <Field
                   controlId="settings-bucket"
@@ -250,7 +239,7 @@ function Form(p: SettingsProps & { saved: NonNullable<SettingsProps['saved']>; p
                 <Field
                   controlId="settings-sim"
                   title="Visual similarity"
-                  hint="How alike two shots in the same time group must look (CLIP similarity) to share a cluster. Only takes effect with visual grouping on; without it, each time group is one cluster."
+                  hint="How alike two shots in the same time group must look to share a cluster. Only takes effect with visual grouping on; without it, each time group is one cluster."
                   error={errors.similarity}
                 >
                   <Slider
@@ -349,7 +338,7 @@ function Form(p: SettingsProps & { saved: NonNullable<SettingsProps['saved']>; p
                   <Field
                     controlId="quality-toggle"
                     title="Quality rating"
-                    hint="Show a 0–10 technical-quality rating (sharpness, motion blur, noise) on every photo, to tell near-identical frames apart. Advisory only: it never picks, rejects or reorders. Downloads a 177 MB model once. The model is licensed for non-commercial use (CC BY-NC-SA 4.0); turn this off for paid work."
+                    hint="Show a 0–10 technical-quality rating (sharpness, noise, exposure) on every photo, to tell near-identical frames apart. Advisory only: it never picks, rejects or reorders. It compares frames of the same scene; it does not rank different scenes."
                     aside={
                       <SettingsSwitch
                         id="quality-toggle"
@@ -361,8 +350,7 @@ function Form(p: SettingsProps & { saved: NonNullable<SettingsProps['saved']>; p
                     status={
                       <SettingsStatus
                         testId="quality-status"
-                        text={qualityText}
-                        tone={q?.enabled && q.state === 'error' ? 'reject' : 'neutral'}
+                        text={qualityStatusText(q)}
                         progress={
                           q?.enabled && q.state === 'scoring' && q.total > 0
                             ? {
@@ -374,11 +362,7 @@ function Form(p: SettingsProps & { saved: NonNullable<SettingsProps['saved']>; p
                         }
                       />
                     }
-                  >
-                    {qualityModel && qualityModel.state !== 'disabled' && (
-                      <SettingsModelCard model={qualityModel} retrying={p.retrying} retryTestId="quality-retry" onRetry={p.onRetryQuality} />
-                    )}
-                  </Field>
+                  />
                 </div>
               </SettingsSection>
 

@@ -48,7 +48,6 @@ export function FolderContainer({ folderId }: { folderId: string }) {
   const snap = useSyncExternalStore(store.subscribe, store.get)
   const row = useStore(summaryStore)
   const scanMap = useStore(shell.scan).value
-  const models = useStore(shell.models).value
   const quality = useStore(shell.quality).value
   const settings = useStore(shell.settings).value
   const toasts = useToastProps()
@@ -139,7 +138,6 @@ export function FolderContainer({ folderId }: { folderId: string }) {
         row: row.value,
         scan: scanMap?.[folderId],
         settings,
-        models,
         quality,
         filter,
         chosen,

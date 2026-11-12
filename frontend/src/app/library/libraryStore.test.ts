@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { FolderSummary, ModelStatus, ScanProgress } from '../../design/types'
+import type { FolderSummary, ScanProgress } from '../../design/types'
 import type { AppEvents, On } from '../shell/events'
 import { createScanStore } from '../shell/scanStore'
 import type { StoreSnapshot } from '../shell/store'
@@ -49,8 +49,6 @@ const row = (id: string, name: string, over: Partial<FolderRowData> = {}): Folde
   added_at: 1_700_000_000,
   ...over,
 })
-
-const model = (kind: ModelStatus['kind'], state: ModelStatus['state']): ModelStatus => ({ kind, state, received: 0, size: 0 })
 
 const ready = <T,>(value: T): StoreSnapshot<T> => ({ status: 'ready', value, error: null })
 const loading = <T,>(): StoreSnapshot<T> => ({ status: 'loading', value: undefined, error: null })
@@ -127,12 +125,9 @@ describe('libraryStore', () => {
         AddFolders: () => Promise.resolve([{ id: 'b', name: 'Orchard', existing: true, relation: 'same' }]),
       },
       system: { ShowFolderMenu: () => Promise.resolve(), OpenPicksFolder: () => Promise.resolve() },
-      models: { Retry: () => Promise.resolve() },
-      settings: { Save: () => Promise.resolve({ saved: true, reclustered: false }) },
       toasts,
       select: (id) => selected.push(id),
       folderName: () => undefined,
-      onSaved: () => {},
       onError: (e) => {
         throw e
       },
@@ -147,12 +142,9 @@ describe('libraryStore', () => {
     const h2 = createLibraryHandlers({
       library: { AddFolders: () => Promise.resolve([]) },
       system: { ShowFolderMenu: () => Promise.resolve(), OpenPicksFolder: () => Promise.resolve() },
-      models: { Retry: () => Promise.resolve() },
-      settings: { Save: () => Promise.resolve({ saved: true, reclustered: false }) },
       toasts,
       select: (id) => selected.push(id),
       folderName: () => undefined,
-      onSaved: () => {},
       onError: () => {},
     })
     await h2.add()
@@ -160,29 +152,20 @@ describe('libraryStore', () => {
     expect(toasts.items()).toHaveLength(1)
   })
 
-  test('welcome vs library decision', () => {
+  test('loading, drop zone or timeline: the list alone decides', () => {
     const folders = [row('a', 'Harbour walk')]
-    const clipDownloading = [model('clip', 'downloading'), model('quality', 'queued')]
-    const allReady = [model('clip', 'ready'), model('quality', 'ready')]
-    const oneOff = [model('clip', 'disabled'), model('quality', 'ready')]
-    const failed = [model('clip', 'failed'), model('quality', 'ready')]
-    const cases: [string, StoreSnapshot<FolderRowData[]>, StoreSnapshot<ModelStatus[]>, LibraryScreenKind][] = [
-      ['list loading', loading(), ready(allReady), 'loading'],
-      // Models not known yet: no drop zone that turns into the welcome panel a moment later.
-      ['models loading', ready([]), loading(), 'loading'],
-      ['no folders, CLIP downloading', ready([]), ready(clipDownloading), 'welcome'],
-      ['no folders, a download failed', ready([]), ready(failed), 'welcome'],
-      ['no folders, every enabled model ready', ready([]), ready(allReady), 'empty'],
-      ['no folders, one model off, the other ready', ready([]), ready(oneOff), 'empty'],
-      ['folders, CLIP downloading (compact banner)', ready(folders), ready(clipDownloading), 'timeline'],
-      ['folders, all ready', ready(folders), ready(allReady), 'timeline'],
-      // Models.Status failed: nothing to wait for, so the Library is not held on the spinner.
-      ['no folders, models unknown after an error', ready([]), { status: 'error', value: undefined, error: new Error('x') }, 'empty'],
+    const cases: [string, StoreSnapshot<FolderRowData[]>, LibraryScreenKind][] = [
+      ['list loading', loading(), 'loading'],
+      // Nothing is downloaded: no folders is the drop zone as soon as the list has loaded.
+      ['no folders', ready([]), 'empty'],
+      ['folders', ready(folders), 'timeline'],
     ]
-    for (const [name, list, models, screen] of cases) {
-      const v = libraryView({ list, models, scan: {} })
+    for (const [name, list, screen] of cases) {
+      const v = libraryView({ list, scan: {} })
       expect({ name, screen: v.screen }).toEqual({ name, screen })
       expect({ name, loading: v.folders === null }).toEqual({ name, loading: screen === 'loading' })
+      // The view carries the folders and the screen, nothing about models.
+      expect(Object.keys(v).sort()).toEqual(['folders', 'screen'])
     }
   })
 
@@ -196,7 +179,7 @@ describe('libraryStore', () => {
     store.start()
     await flush()
     const view = () =>
-      libraryView({ list: store.get(), models: ready([model('clip', 'ready'), model('quality', 'ready')]), scan: scan.get().value })
+      libraryView({ list: store.get(), scan: scan.get().value })
 
     expect(view().folders?.map((f) => f.state)).toEqual(['ready', 'ready'])
 
@@ -230,12 +213,9 @@ describe('libraryStore', () => {
         },
         OpenPicksFolder: () => Promise.resolve(),
       },
-      models: { Retry: () => Promise.resolve() },
-      settings: { Save: () => Promise.resolve({ saved: true, reclustered: false }) },
       toasts: createToasts(),
       select: () => {},
       folderName: () => undefined,
-      onSaved: () => {},
       onError: (e) => {
         throw e
       },
@@ -260,12 +240,9 @@ function handlerDeps(over: Partial<LibraryHandlerDeps> = {}): LibraryHandlerDeps
   return {
     library: { AddFolders: () => Promise.resolve([]) },
     system: { ShowFolderMenu: () => Promise.resolve(), OpenPicksFolder: () => Promise.resolve() },
-    models: { Retry: () => Promise.resolve() },
-    settings: { Save: () => Promise.resolve({ saved: true, reclustered: false }) },
     toasts: createToasts(),
     select: () => {},
     folderName: () => undefined,
-    onSaved: () => {},
     onError: (e) => {
       throw e
     },
@@ -340,56 +317,8 @@ describe('library handlers', () => {
     expect(toasts.items()).toHaveLength(1)
   })
 
-  test('a model switch saves its setting', async () => {
-    const saved: unknown[] = []
-    const patches: unknown[] = []
-    const h = createLibraryHandlers(
-      handlerDeps({
-        settings: {
-          Save: (p) => {
-            saved.push(p)
-            return Promise.resolve({ saved: true, reclustered: false })
-          },
-        },
-        onSaved: (p) => patches.push(p),
-      }),
-    )
-    await h.toggleModel('clip', false)
-    await h.toggleModel('quality', true)
-    expect(saved).toEqual([{ visual_grouping: false }, { quality_rating: true }])
-    expect(patches).toEqual([{ visual_grouping: false }, { quality_rating: true }])
-  })
-
-  test('a failed model switch reports the error and asks for the settings again', async () => {
-    const errors: [unknown, string | undefined][] = []
-    const patches: unknown[] = []
-    const h = createLibraryHandlers(
-      handlerDeps({
-        settings: { Save: () => rejected('internal', 'the settings file could not be written') },
-        onSaved: (p) => patches.push(p),
-        onError: (e, title) => errors.push([e, title]),
-      }),
-    )
-    await h.toggleModel('quality', false)
-    expect(errors.map(([, title]) => title)).toEqual(['Save failed'])
-    // The save may have happened before the failure (a re-cluster after it): reload.
-    expect(patches).toEqual([null])
-  })
-
-  test('retry asks Go for the model kind', async () => {
-    const kinds: string[] = []
-    const h = createLibraryHandlers(
-      handlerDeps({
-        models: {
-          Retry: (kind) => {
-            kinds.push(kind)
-            return Promise.resolve()
-          },
-        },
-      }),
-    )
-    await h.retryModel('quality')
-    expect(kinds).toEqual(['quality'])
+  test('the handlers are add, openPicks and menu: no model Retry, no model switch', () => {
+    expect(Object.keys(createLibraryHandlers(handlerDeps())).sort()).toEqual(['add', 'menu', 'openPicks'])
   })
 })
 
@@ -440,30 +369,27 @@ describe('library view', () => {
     // The design draws no scan in the Library's title bar (no status shown twice).
     const rows = [row('a', 'Harbour walk', { state: 'error', error: 'Scan stopped. Rescan to finish it.' }), row('b', 'Orchard'), row('c', 'Card A')]
     const stopped = { ...progress('analyze', 9, 30), state: 'stopped' as const }
-    const models = ready([model('clip', 'ready'), model('quality', 'ready')])
     const v = libraryView({
       list: ready(rows),
-      models,
       scan: { a: { state: 'error', progress: stopped }, b: { state: 'scanning', progress: progress('thumb', 1, 4) }, c: { state: 'scanning', progress: null } },
     })
     expect('scan' in v).toBe(false)
     expect(v.folders?.[0]).toMatchObject({ state: 'error', error: 'Scan stopped. Rescan to finish it.' })
     expect(v.folders?.[1]).toMatchObject({ state: 'scanning', scan: progress('thumb', 1, 4) })
     expect(v.folders?.[2]).toMatchObject({ state: 'scanning', scan: progress('discover', 0, 0) })
-    const loading = libraryView({ list: { status: 'loading', value: undefined, error: null }, models, scan: undefined })
+    const loading = libraryView({ list: { status: 'loading', value: undefined, error: null }, scan: undefined })
     expect('scan' in loading).toBe(false)
   })
 
   test('rows without a scan map entry keep the state and progress Library.List gave', () => {
     const rows = [row('a', 'Harbour walk', { state: 'scanning', scan: progress('metadata', 3, 9) }), row('b', 'Orchard', { state: 'queued' })]
-    const v = libraryView({ list: ready(rows), models: ready([]), scan: undefined })
+    const v = libraryView({ list: ready(rows), scan: undefined })
     expect(v.folders?.[0]).toMatchObject({ state: 'scanning', scan: progress('metadata', 3, 9) })
     expect(v.folders?.[1]?.state).toBe('queued')
     expect(v.folders?.[1]?.scan).toBeUndefined()
     // An error text is only shown on a row in error.
     const stale = libraryView({
       list: ready([row('a', 'Harbour walk', { state: 'error', error: 'old' })]),
-      models: ready([]),
       scan: { a: { state: 'ready', progress: null } },
     })
     expect(stale.folders?.[0]?.error).toBeUndefined()
@@ -471,7 +397,7 @@ describe('library view', () => {
 
   test('each row’s added_at (library.db, unix seconds) reaches the screen as Library.List sent it', () => {
     const rows = [row('a', 'Harbour walk', { added_at: 1_700_000_111 }), row('b', 'Orchard', { state: 'scanning', added_at: 1_700_000_222 })]
-    const v = libraryView({ list: ready(rows), models: ready([]), scan: { b: { state: 'error', progress: null } } })
+    const v = libraryView({ list: ready(rows), scan: { b: { state: 'error', progress: null } } })
     expect(v.folders?.map((f) => f.added_at)).toEqual([1_700_000_111, 1_700_000_222])
   })
 })

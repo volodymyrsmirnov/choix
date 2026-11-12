@@ -1,27 +1,30 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
-	"image/draw"
+	"image/png"
 	"io"
-	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/appdir"
 	"github.com/volodymyrsmirnov/choix/internal/buildinfo"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/bookmark"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/vision"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/volumes"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 )
 
 // selfCheckEnv runs the headless self-check instead of the application when
@@ -29,13 +32,25 @@ import (
 // included: the signed, sandboxed bundle is verified with it.
 const selfCheckEnv = "CHOIX_SELFCHECK"
 
-// skippedModelMissing is a provider's value when its model is not installed.
-// It is not a failure.
-const skippedModelMissing = "skipped: model missing"
+// checkOK is the value of a passing check that is not a plain true.
+const checkOK = "ok"
+
+// visionTimeout bounds the self-check's one feature print.
+const visionTimeout = 30 * time.Second
+
+// Reference image of the self-check: the spec's image A (§6.3), 640×480,
+// whose quality score is selfCheckRaw within selfCheckRawTolerance.
+const (
+	selfCheckWidth        = 640
+	selfCheckHeight       = 480
+	selfCheckRaw          = -40.7055461
+	selfCheckRawTolerance = 1e-6
+)
 
 // selfCheckReport is the self-check's output: one compact JSON object, so a
-// passing check reads exactly `"key":true` (the bundle smoke greps for it).
-// Every value that failed is a string starting with "error: ".
+// passing check reads exactly `"key":true` or `"key":"ok"` (the bundle smoke
+// greps for them). Every value that failed is a string starting with
+// "error: ".
 type selfCheckReport struct {
 	Version string `json:"version"`
 	// DataDir is the data root, or "error: …".
@@ -43,30 +58,34 @@ type selfCheckReport struct {
 	// DataDirWritable is true, or "error: …".
 	DataDirWritable any  `json:"dataDirWritable"`
 	Sandboxed       bool `json:"sandboxed"`
-	// OnnxRuntime is the loaded library's version, or "error: …".
-	OnnxRuntime string `json:"onnxRuntime"`
-	// Providers holds, per model, the execution provider its one inference
-	// ran on ("coreml" or "cpu"), skippedModelMissing, or "error: …".
-	Providers selfCheckProviders `json:"providers"`
+	// Vision is the feature print of a generated image.
+	Vision selfCheckVision `json:"vision"`
+	// Quality is "ok" when the quality formula scores the generated image
+	// as the reference says, or "error: …".
+	Quality string `json:"quality"`
 	// BookmarkRoundTrip is true, or "error: …".
 	BookmarkRoundTrip any `json:"bookmarkRoundTrip"`
 	// TrashCheck is true, or "error: …".
 	TrashCheck any `json:"trashCheck"`
 }
 
-// selfCheckProviders is the report's "providers" object.
-type selfCheckProviders struct {
-	CLIP    string `json:"clip"`
-	Quality string `json:"quality"`
+// selfCheckVision is the report's "vision" object.
+type selfCheckVision struct {
+	// FeaturePrint is "ok", or "error: …".
+	FeaturePrint string `json:"featurePrint"`
+	// Length is the number of values of the print Vision made (0: none).
+	Length int `json:"length"`
+	// Revision is the feature-print revision the app requests.
+	Revision int `json:"revision"`
 }
 
 // selfCheck runs every check, prints the report to w as one JSON object on
-// one line and reports whether nothing is an error. It reads and writes only
-// inside the data directory (creating it, and its models directory, as any
-// start does), makes no network request, downloads nothing and changes no
-// state.
-func selfCheck(w io.Writer) (ok bool) {
-	r, failed := runSelfCheck()
+// one line and reports whether nothing is an error. v makes the feature
+// print (vision.New() in the app). It reads and writes only inside the data
+// directory (creating it, as any start does), makes no network request and
+// changes no state.
+func selfCheck(w io.Writer, v platform.Vision) (ok bool) {
+	r, failed := runSelfCheck(v)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(r); err != nil {
@@ -80,8 +99,8 @@ func selfCheck(w io.Writer) (ok bool) {
 }
 
 // runSelfCheck runs every check and returns the report and the names of the
-// checks that failed (report keys; providers as "providers.<model>").
-func runSelfCheck() (selfCheckReport, []string) {
+// checks that failed (report keys).
+func runSelfCheck(v platform.Vision) (selfCheckReport, []string) {
 	var failed []string
 	homes := homeDirs()
 	fail := func(name string, err error) string {
@@ -92,6 +111,13 @@ func runSelfCheck() (selfCheckReport, []string) {
 	result := func(name string, err error) any {
 		if err == nil {
 			return true
+		}
+		return fail(name, err)
+	}
+	// okOr is "ok" when err is nil, otherwise the failure's "error: …".
+	okOr := func(name string, err error) string {
+		if err == nil {
+			return checkOK
 		}
 		return fail(name, err)
 	}
@@ -112,23 +138,73 @@ func runSelfCheck() (selfCheckReport, []string) {
 		r.TrashCheck = result("trashCheck", checkNotInTrash(volumes.New(), root))
 	}
 
-	if v, err := local.RuntimeVersion(); err != nil {
-		r.OnnxRuntime = fail("onnxRuntime", err)
-	} else {
-		r.OnnxRuntime = v
-	}
-
-	clip, quality := checkProviders()
-	provider := func(kind local.ModelKind, p string, err error) string {
-		if err != nil {
-			return fail("providers."+kind.String(), err)
-		}
-		return p
-	}
-	r.Providers.CLIP = provider(local.ModelCLIP, clip.provider, clip.err)
-	r.Providers.Quality = provider(local.ModelQuality, quality.provider, quality.err)
+	n, err := checkVision(v)
+	r.Vision = selfCheckVision{FeaturePrint: okOr("vision", err), Length: n, Revision: vision.Revision}
+	r.Quality = okOr("quality", checkQuality())
 
 	return r, failed
+}
+
+// selfCheckImage is the spec's reference image A (§6.3): a smooth grey
+// pattern of 640×480 with fine detail, defined by formula.
+func selfCheckImage() *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, selfCheckWidth, selfCheckHeight))
+	for y := range selfCheckHeight {
+		for x := range selfCheckWidth {
+			fx, fy := float64(x), float64(y)
+			a := 0.5 + 0.25*math.Sin(2*math.Pi*fx/16)*math.Cos(2*math.Pi*fy/24) +
+				0.1*math.Sin(2*math.Pi*(fx+2*fy)/7)
+			v := uint8(math.Floor(255*math.Min(math.Max(a, 0), 1) + 0.5))
+			i := img.PixOffset(x, y)
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = v, v, v, 255
+		}
+	}
+	return img
+}
+
+// checkVision makes the feature print of the generated image through v and
+// checks it is what revision 2 makes: FeaturePrintLen finite values, not all
+// zero. It returns the number of values Vision returned.
+func checkVision(v platform.Vision) (int, error) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, selfCheckImage()); err != nil {
+		return 0, fmt.Errorf("encode the test image: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), visionTimeout)
+	defer cancel()
+	vec, err := v.FeaturePrint(ctx, platform.ImageInput{Data: buf.Bytes()})
+	if err != nil {
+		return 0, fmt.Errorf("feature print: %w", err)
+	}
+	if len(vec) != platform.FeaturePrintLen {
+		return len(vec), fmt.Errorf("feature print has %d values, want %d", len(vec), platform.FeaturePrintLen)
+	}
+	var norm float64
+	for _, x := range vec {
+		f := float64(x)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return len(vec), errors.New("feature print has a value that is not finite")
+		}
+		norm += f * f
+	}
+	if norm == 0 {
+		return len(vec), errors.New("feature print is zero")
+	}
+	return len(vec), nil
+}
+
+// checkQuality scores the generated image with the quality formula and
+// compares the score with the reference value.
+func checkQuality() error {
+	f, ok := quality.Measure(selfCheckImage())
+	if !ok {
+		return errors.New("the test image is not measurable")
+	}
+	raw := quality.Raw(f)
+	if math.Abs(raw-selfCheckRaw) > selfCheckRawTolerance || math.IsNaN(raw) {
+		return fmt.Errorf("score of the test image is %.7f, want %.7f", raw, selfCheckRaw)
+	}
+	return nil
 }
 
 // checkWritable creates, writes, syncs and removes a temporary file directly
@@ -217,122 +293,6 @@ func checkNotInTrash(v platform.Volumes, dir string) error {
 		return errors.New("the data directory is reported to be in the Trash")
 	}
 	return nil
-}
-
-// providerResult is one model's provider check.
-type providerResult struct {
-	provider string
-	err      error
-}
-
-// checkProviders runs one inference on each installed model through the
-// app's own session set (same models directory, same execution-provider
-// defaults) and reports the provider each ran on. Only a model file that
-// does not exist is skipped; one that exists but is empty or unreadable is a
-// failure. Nothing is ever downloaded.
-func checkProviders() (clip, quality providerResult) {
-	dir := appdir.Models()
-	if dir == "" {
-		err := errors.New("models directory unavailable")
-		return providerResult{err: err}, providerResult{err: err}
-	}
-	models := local.NewModelStore(dir)
-	s := local.NewSessions(models, local.SessionOptions{})
-	defer func() {
-		if err := s.Close(); err != nil {
-			slog.Warn("choix: self-check: close onnx sessions", "err", err)
-		}
-	}()
-
-	clip = checkProvider(s, models.Path(local.ModelCLIP), local.ModelCLIP, func() error {
-		_, err := s.Embed(selfCheckImage())
-		return err
-	})
-	quality = checkProvider(s, models.Path(local.ModelQuality), local.ModelQuality, func() error {
-		in := make([]float32, tensorLen(local.KnownModels[local.ModelQuality].InputShape))
-		for i := range in {
-			in[i] = 0.5
-		}
-		_, err := s.QualityCrop(in)
-		return err
-	})
-	return clip, quality
-}
-
-// checkProvider checks kind's model file at path and, when it is present,
-// runs infer and reports the execution provider kind's session ran on.
-func checkProvider(s *local.Sessions, path string, kind local.ModelKind, infer func() error) providerResult {
-	present, err := modelFilePresent(path)
-	switch {
-	case err != nil:
-		return providerResult{err: fmt.Errorf("%s: %w", kind, err)}
-	case !present:
-		return providerResult{provider: skippedModelMissing}
-	}
-	// Any inference error fails, ErrModelMissing included: the file was
-	// there a moment ago.
-	if err := infer(); err != nil {
-		return providerResult{err: err}
-	}
-	p := s.Provider(kind)
-	if p == "" {
-		return providerResult{err: fmt.Errorf("%s: no execution provider reported", kind)}
-	}
-	return providerResult{provider: p}
-}
-
-// modelFilePresent reports whether a model file exists at path. Only a path
-// with nothing at it is absent (false, nil). Anything else that is not a
-// readable, non-empty regular file — an empty file, a directory, a dangling
-// symlink, a stat or read error — is an error. ModelStore.Has deliberately
-// counts those as "not installed" for the app; the self-check must not.
-func modelFilePresent(path string) (bool, error) {
-	name := filepath.Base(path)
-	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("model file %s: %w", name, err)
-	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		return false, fmt.Errorf("model file %s: %w", name, err)
-	}
-	if !fi.Mode().IsRegular() {
-		return false, fmt.Errorf("model file %s is not a regular file", name)
-	}
-	if fi.Size() == 0 {
-		return false, fmt.Errorf("model file %s is empty", name)
-	}
-	f, err := os.Open(path) //nolint:gosec // G304: a model path in the app's own models directory
-	if err != nil {
-		return false, fmt.Errorf("model file %s: %w", name, err)
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.Read(make([]byte, 1)); err != nil {
-		return false, fmt.Errorf("model file %s: read: %w", name, err)
-	}
-	return true, nil
-}
-
-// selfCheckImage is the image the CLIP inference embeds: a plain grey square
-// at the model's input size.
-func selfCheckImage() image.Image {
-	side := 224
-	if s := local.KnownModels[local.ModelCLIP].InputShape; len(s) == 4 && s[2] > 0 {
-		side = s[2]
-	}
-	img := image.NewRGBA(image.Rect(0, 0, side, side))
-	draw.Draw(img, img.Bounds(), image.NewUniform(color.Gray{Y: 128}), image.Point{}, draw.Src)
-	return img
-}
-
-// tensorLen is the number of elements of a tensor of the given shape.
-func tensorLen(shape []int) int {
-	n := 1
-	for _, d := range shape {
-		n *= d
-	}
-	return n
 }
 
 // homeDirs returns the home directories to hide in error texts: $HOME (the

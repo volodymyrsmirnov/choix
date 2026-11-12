@@ -17,7 +17,7 @@ import { repoRoot, runDirs } from './global-setup'
 //
 // The run's directories are made here, while the config loads: Playwright
 // starts the webServer before globalSetup, and the server must find its
-// config.toml (both model settings off) when it starts. globalSetup builds
+// config.toml (visual grouping off) when it starts. globalSetup builds
 // genfolder and the server binary the quit and ui specs start (with the
 // app embedded), and generates the api specs' folders.
 const dirs = runDirs()

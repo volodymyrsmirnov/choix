@@ -1,31 +1,22 @@
-// Welcome and shell states: 11–17 are the first-launch panel (an empty
-// Library while a model is still to come; downloads run one at a time,
-// CLIP first, so there is no "both downloading" state), 30–37 a folder job or
-// rating passes as the Library shows them: in the folder's row, not the title
-// bar (a status lives on the element it describes), 40 the full-window error
-// screen (a screen failed to render and the return to the Library failed too).
+// Welcome and shell states: 30–37 a folder job or rating passes as the
+// Library shows them: in the folder's row, not the title bar (a status lives
+// on the element it describes), 40 the full-window error screen (a screen
+// failed to render and the return to the Library failed too). 11–17, the
+// first-launch panel of the model downloads, are retired: nothing is
+// downloaded any more, and an empty Library is the drop zone (100).
 import { ErrorScreen } from '../../src/design/screens/error/ErrorScreen'
 import { LibraryScreen } from '../../src/design/screens/library/LibraryScreen'
-import { DOLOMITES, LISBON, model, quality, replace, scanAt, scanning, SIX } from '../mock/data'
+import { DOLOMITES, LISBON, quality, replace, scanAt, scanning, SIX } from '../mock/data'
+import type { ScanProgress } from '../../src/design/types'
 import type { Scenario } from '../registry'
 import { libraryProps, type LibraryState } from './libraryWiring'
 
-const FIRST_LAUNCH = 'mockup-2026-11-11#s-c'
 const TITLE_BAR = 'mockup-2026-11-11#s-a'
-
-const welcome = (n: number, label: string, s: Omit<LibraryState, 'folders'>): Scenario => ({
-  n,
-  group: 'welcome',
-  label,
-  design: FIRST_LAUNCH,
-  subject: '[data-model]',
-  render: (ctx) => <LibraryScreen {...libraryProps(ctx, { folders: [], ...s })} />,
-})
-
-const NO_NETWORK = 'No internet connection'
 
 /** What #40 shows as the error: a render error's message as WebKit words it. */
 export const RENDER_ERROR = "TypeError: undefined is not an object (evaluating 'cluster.members.length')"
+/** The run that stopped (32): Lisbon's job, at its last numbers. */
+export const STOPPED_RUN = scanAt('analyze', 141, 420, { state: 'stopped' })
 /** One rating pass (31): Dolomites (95 photos). */
 const ONE_PASS = quality({
   state: 'scoring',
@@ -48,8 +39,8 @@ const TWO_PASSES = quality({
 /** Where Reload leads in the prototype: the filled Library. */
 const RELOADED = 102
 
-const shell = (n: number, label: string, progress: Parameters<typeof scanAt>, extra: Partial<LibraryState> = {}): Scenario => {
-  const scan = scanAt(...progress)
+const shell = (n: number, label: string, progress: Parameters<typeof scanAt> | ScanProgress, extra: Partial<LibraryState> = {}): Scenario => {
+  const scan = Array.isArray(progress) ? scanAt(...progress) : progress
   return {
     n,
     group: 'welcome',
@@ -60,9 +51,8 @@ const shell = (n: number, label: string, progress: Parameters<typeof scanAt>, ex
     render: (ctx) => (
       <LibraryScreen
         {...libraryProps(ctx, {
+          // The screen draws the run in its row, from folders.
           folders: replace(SIX, scan.state === 'running' ? scanning(LISBON, scan) : { ...LISBON, state: 'error', error: 'Scan stopped. Rescan to finish it.' }),
-          // What Go reports of the run (the screen draws it in the row, from folders).
-          scan: { folder: LISBON.name, progress: scan },
           ...extra,
         })}
       />
@@ -71,28 +61,6 @@ const shell = (n: number, label: string, progress: Parameters<typeof scanAt>, ex
 }
 
 export const scenarios: Scenario[] = [
-  welcome(11, 'CLIP downloading, quality queued', {
-    models: [model('clip', 'downloading', 137_000_000), model('quality', 'queued')],
-  }),
-  welcome(12, 'CLIP failed (Retry)', {
-    models: [model('clip', 'failed', 96_000_000, 'The download stopped at 96 MB: the connection was reset'), model('quality', 'downloading', 63_000_000)],
-  }),
-  welcome(13, 'Quality failed', {
-    models: [model('clip', 'ready'), model('quality', 'failed', 0, 'The server answered 503 Service Unavailable')],
-  }),
-  welcome(14, 'Offline, both failed', {
-    online: false,
-    models: [model('clip', 'failed', 0, NO_NETWORK), model('quality', 'failed', 0, NO_NETWORK)],
-  }),
-  welcome(15, 'Visual grouping off', {
-    models: [model('clip', 'disabled'), model('quality', 'downloading', 120_000_000)],
-  }),
-  welcome(16, 'Quality rating off', {
-    models: [model('clip', 'downloading', 137_000_000), model('quality', 'disabled')],
-  }),
-  welcome(17, 'CLIP ready, quality downloading', {
-    models: [model('clip', 'ready'), model('quality', 'downloading', 88_000_000)],
-  }),
   shell(30, 'Scan discovering (indeterminate), in its row', ['discover', 0, 0]),
   {
     n: 31,
@@ -102,7 +70,7 @@ export const scenarios: Scenario[] = [
     subject: '[data-folder="dolomites"]',
     render: (ctx) => <LibraryScreen {...libraryProps(ctx, { folders: SIX, quality: ONE_PASS })} />,
   },
-  shell(32, 'Scan stopped, in its row', ['analyze', 141, 420, { state: 'stopped' }]),
+  shell(32, 'Scan stopped, in its row', STOPPED_RUN),
   shell(33, 'Scan: reading metadata', ['metadata', 204, 420]),
   shell(34, 'Scan: thumbnails', ['thumb', 325, 420, { failed: 7 }]),
   shell(35, 'Scan: analyzing', ['analyze', 271, 420]),

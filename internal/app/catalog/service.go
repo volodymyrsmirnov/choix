@@ -2,8 +2,13 @@ package catalog
 
 import (
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
+	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/opgate"
 )
+
+// qualityDisabled is the state QualityStatus reports when the service has
+// no quality source.
+const qualityDisabled = "disabled"
 
 // Service is the catalog binding. Every exported method is a frontend
 // binding; nothing else may be exported on it. Each enters the admission
@@ -11,13 +16,30 @@ import (
 // *apperr.Error. Operations that need a context run under the runtime's
 // (Deps.Context).
 type Service struct {
-	c    *Catalog
-	gate *opgate.Gate
+	c       *Catalog
+	quality func() events.Quality
+	gate    *opgate.Gate
 }
 
-// NewService returns the catalog binding over c. Every call enters g.
-func NewService(c *Catalog, g *opgate.Gate) *Service {
-	return &Service{c: c, gate: g}
+// NewService returns the catalog binding over c. quality returns the
+// quality rating's status (session.QualityTracker.Status at runtime); nil
+// reports it disabled. Every call enters g.
+func NewService(c *Catalog, quality func() events.Quality, g *opgate.Gate) *Service {
+	return &Service{c: c, quality: quality, gate: g}
+}
+
+// QualityStatus returns the quality rating's status: the same snapshot
+// quality:status carries.
+func (s *Service) QualityStatus() (events.Quality, error) {
+	leave, err := s.gate.Enter()
+	if err != nil {
+		return events.Quality{}, err
+	}
+	defer leave()
+	if s.quality == nil {
+		return events.Quality{State: qualityDisabled}, nil
+	}
+	return s.quality(), nil
 }
 
 // Open opens the folder and returns its cluster grid (Catalog.Open).

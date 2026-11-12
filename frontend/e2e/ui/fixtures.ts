@@ -5,8 +5,8 @@
 // CHOIX_ASSETS_DIR.
 //
 // Every test gets its own server: the binary global-setup.ts built, started
-// on port 8091 with a fresh data directory (both model settings off, so no
-// download is ever attempted) and a fresh E2E root holding the folders the
+// on port 8091 with a fresh data directory (visual grouping off, so the
+// clusters the specs walk are the time buckets) and a fresh E2E root holding the folders the
 // test generates with genfolder (invented EXIF values). The `ui` project
 // shares port 8091 with the api project's quit spec; the run has a single
 // worker, so the two never run at the same time, and every server started
@@ -22,11 +22,10 @@
 // Automatic checks after every test: the page logged no console error (none
 // is exempt) and no console warning (except Wails' own browser-environment
 // warning), it threw no uncaught error, every HTTP request and WebSocket it
-// opened went to 127.0.0.1 on the server's port, and
-// the data directory's models directory is empty.
+// opened went to 127.0.0.1 on the server's port.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test as base, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { runDirs } from '../global-setup'
@@ -38,8 +37,8 @@ export const UI_BASE = `http://127.0.0.1:${UI_PORT}`
 /** The directories of this run (see global-setup.ts). */
 export const dirs = runDirs()
 
-/** Both model settings off: nothing is downloaded. */
-export const CONFIG_TOML = 'visual_grouping = false\nquality_rating = false\n'
+/** Visual grouping off: the clusters the specs walk are the time buckets. */
+export const CONFIG_TOML = 'visual_grouping = false\n'
 
 /** How long a spec waits for a folder's scan, by default. */
 export const SCAN_MS = 60_000
@@ -99,7 +98,7 @@ export class Server {
   }
 
   /**
-   * start makes a fresh data directory (config.toml with both models off)
+   * start makes a fresh data directory (config.toml with visual grouping off)
    * and E2E root under the run's temporary directory, starts the server on
    * UI_PORT and waits until it serves the embedded app.
    */
@@ -172,12 +171,6 @@ export class Server {
     const out = join(this.root, name)
     execFileSync(dirs.genfolder, ['-out', out, '-n', String(n), '-cameras', '2', '-bursts', '3'], { stdio: 'pipe' })
     return out
-  }
-
-  /** The files of the data directory's models directory (none: nothing was downloaded). */
-  models(): string[] {
-    const dir = join(this.data, 'models')
-    return existsSync(dir) ? readdirSync(dir) : []
   }
 }
 
@@ -334,7 +327,6 @@ export const test = base.extend<{ app: AppPage }>({
         "the app's event WebSocket is among the connections checked",
       ).toBe(true)
       expect(awayFrom(requests, UI_PORT), `requests and WebSockets not to 127.0.0.1:${UI_PORT}`).toEqual([])
-      expect(server.models(), 'files in the models directory (nothing may be downloaded)').toEqual([])
       checked = true
     } finally {
       // Closing the browser context closes its sockets too. Chromium keeps a

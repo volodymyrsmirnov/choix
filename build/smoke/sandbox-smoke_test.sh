@@ -371,31 +371,35 @@ check "selectors: strings prints nothing" fail eval \
 expect_contains "selectors: strings prints nothing" "$msg" "strings printed nothing"
 
 # The self-check report.
+# report <sandboxed> <featurePrint> <length> <quality> <bookmark> <trash>
 report() {
-	printf '{"version":"v","dataDir":"%s/Library/Containers/x/Data","dataDirWritable":true,"sandboxed":%s,"onnxRuntime":"%s","providers":{"clip":"%s","quality":"%s"},"bookmarkRoundTrip":%s,"trashCheck":%s}\n' \
+	printf '{"version":"v","dataDir":"%s/Library/Containers/x/Data","dataDirWritable":true,"sandboxed":%s,"vision":{"featurePrint":"%s","length":%s,"revision":2},"quality":"%s","bookmarkRoundTrip":%s,"trashCheck":%s}\n' \
 		"$HOME" "$1" "$2" "$3" "$4" "$5" "$6"
 }
-miss='skipped: model missing'
-report true 1.25.0 "$miss" "$miss" true true >"$tmp/sc.json"
-check "self-check: pass" pass check_selfcheck "$tmp/sc.json" 1.25.0
-report true 1.25.0 coreml cpu true true >"$tmp/sc.json"
-check "self-check: providers ran" pass check_selfcheck "$tmp/sc.json" 1.25.0
-report false 1.25.0 "$miss" "$miss" true true >"$tmp/sc.json"
-check "self-check: not sandboxed" fail check_selfcheck "$tmp/sc.json" 1.25.0
-report true 1.24.0 "$miss" "$miss" true true >"$tmp/sc.json"
-check "self-check: other runtime" fail check_selfcheck "$tmp/sc.json" 1.25.0
-report true 1.25.0 "error: boom" "$miss" true true >"$tmp/sc.json"
-check "self-check: provider error" fail check_selfcheck "$tmp/sc.json" 1.25.0
-report true 1.25.0 "$miss" "" true true >"$tmp/sc.json"
-check "self-check: empty provider" fail check_selfcheck "$tmp/sc.json" 1.25.0
-report true 1.25.0 "$miss" "$miss" "\"error: resolve: $HOME/x\"" true >"$tmp/sc.json"
-check "self-check: bookmark error" fail check_selfcheck "$tmp/sc.json" 1.25.0
+report true ok 768 ok true true >"$tmp/sc.json"
+check "self-check: pass" pass check_selfcheck "$tmp/sc.json"
+report false ok 768 ok true true >"$tmp/sc.json"
+check "self-check: not sandboxed" fail check_selfcheck "$tmp/sc.json"
+report true "error: feature print: boom" 0 ok true true >"$tmp/sc.json"
+check "self-check: feature print error" fail check_selfcheck "$tmp/sc.json"
+expect_contains "self-check: failure names the feature print" "$msg" vision.featurePrint
+report true ok 512 ok true true >"$tmp/sc.json"
+check "self-check: wrong print length" fail check_selfcheck "$tmp/sc.json"
+report true ok 768 "error: score of the test image is 1.0, want 2.0" true true >"$tmp/sc.json"
+check "self-check: quality error" fail check_selfcheck "$tmp/sc.json"
+expect_contains "self-check: failure names quality" "$msg" quality
+report true ok 768 ok "\"error: resolve: $HOME/x\"" true >"$tmp/sc.json"
+check "self-check: bookmark error" fail check_selfcheck "$tmp/sc.json"
 expect_contains "self-check: failure names the key" "$msg" bookmarkRoundTrip
 expect_lacks "self-check: failure redacts HOME" "$msg" "$HOME"
-report true 1.25.0 "$miss" "$miss" true '"error: x"' >"$tmp/sc.json"
-check "self-check: trash error" fail check_selfcheck "$tmp/sc.json" 1.25.0
+report true ok 768 ok true '"error: x"' >"$tmp/sc.json"
+check "self-check: trash error" fail check_selfcheck "$tmp/sc.json"
+# A report without the vision and quality checks (an earlier build's).
+printf '{"version":"v","dataDirWritable":true,"sandboxed":true,"bookmarkRoundTrip":true,"trashCheck":true}\n' >"$tmp/sc.json"
+check "self-check: no vision or quality" fail check_selfcheck "$tmp/sc.json"
+expect_contains "self-check: missing vision is named" "$msg" vision.featurePrint
 : >"$tmp/sc.json"
-check "self-check: no report" fail check_selfcheck "$tmp/sc.json" 1.25.0
+check "self-check: no report" fail check_selfcheck "$tmp/sc.json"
 
 # The manifest: equal for an untouched folder, different after a change;
 # never "unchanged" when it cannot be read completely.

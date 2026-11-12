@@ -107,34 +107,3 @@ func TestPreviewCandidates_SkipsRejectedAndThumbless(t *testing.T) {
 		t.Fatalf("PreviewCandidates = %+v, want %+v", got, want)
 	}
 }
-
-func TestCountAnalyzedMissingEmbedding(t *testing.T) {
-	s := newTestStore(t)
-	withEmb := insertStatsFile(t, s, "a.jpg", "photo", "analyzed", capturedAtSec(1))
-	if err := s.AISignals().Upsert(AISignals{FileID: withEmb, Embedding: []float32{1, 0}}); err != nil {
-		t.Fatalf("upsert embedding: %v", err)
-	}
-	insertStatsFile(t, s, "b.jpg", "photo", "analyzed", capturedAtSec(2))
-	nullEmb := insertStatsFile(t, s, "c.jpg", "photo", "analyzed", capturedAtSec(3))
-	if err := s.AISignals().Upsert(AISignals{FileID: nullEmb}); err != nil {
-		t.Fatalf("upsert empty signals: %v", err)
-	}
-	// Not analyzed yet: not counted even without an embedding.
-	insertStatsFile(t, s, "d.jpg", "photo", "thumbed", capturedAtSec(4))
-
-	n, err := s.Files().CountAnalyzedMissingEmbedding()
-	if err != nil {
-		t.Fatalf("CountAnalyzedMissingEmbedding: %v", err)
-	}
-	if n != 2 {
-		t.Fatalf("CountAnalyzedMissingEmbedding = %d, want 2", n)
-	}
-	// It counts exactly what BumpAnalyzedMissingEmbedding would rewind.
-	bumped, err := s.Files().BumpAnalyzedMissingEmbedding()
-	if err != nil {
-		t.Fatalf("BumpAnalyzedMissingEmbedding: %v", err)
-	}
-	if bumped != int64(n) {
-		t.Fatalf("Bump rewound %d files, Count said %d", bumped, n)
-	}
-}

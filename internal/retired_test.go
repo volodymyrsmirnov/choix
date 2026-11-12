@@ -15,9 +15,14 @@ import (
 	"testing"
 )
 
-// retiredPaths are v1's shell (Task 62): the cobra CLI, the HTTP server, the
-// embedded SPA, the background quality worker, the Makefile, the install
-// script and the HTTP test fixtures. Paths are relative to the module root.
+// retiredPaths are paths that must stay deleted, relative to the module
+// root: v1's shell (Task 62: the cobra CLI, the HTTP server, the embedded
+// SPA, the background quality worker, the Makefile, the install script and
+// the HTTP test fixtures), and the downloaded models with everything that
+// existed only for them (the built-in grouping and quality spec, §7: the
+// ONNX Runtime package, the inference engine, the session's inference turn,
+// the models binding with its download manager, and the build-time fetch
+// and export scripts).
 var retiredPaths = []string{
 	"internal/cli",
 	"internal/server",
@@ -27,16 +32,28 @@ var retiredPaths = []string{
 	"Makefile",
 	"install.sh",
 	"testdata/http",
+	"internal/ai/local",
+	"internal/app/inference",
+	"internal/app/session/inference.go",
+	"internal/app/models",
+	"build/onnxruntime",
+	"build/quality-model",
 }
 
 // netHTTPAllowed are the directories (relative to the module root) whose
 // non-test Go files may import net/http: the media handler the webview loads
-// thumbnails from, the pinned model downloader, and the app's shells.
+// thumbnails from, and the app's shells. The app makes no network request
+// (hard rule 6).
 var netHTTPAllowed = []string{
 	"internal/app/media",
-	"internal/ai/local",
 	"cmd/choix",
 }
+
+// onnxModule is the ONNX Runtime binding the app used to load its models.
+const onnxModule = "github.com/yalue/onnxruntime_go"
+
+// onnxTerm is what no non-test Go file under cmd/ or internal/ may contain.
+const onnxTerm = "onnxruntime"
 
 // retiredModules are v1's HTTP router, SSE hub and CLI framework.
 var retiredModules = []string{
@@ -157,6 +174,74 @@ func TestV1ShellIsGone(t *testing.T) {
 	}
 	if !declaresType(f, "Scorer") {
 		t.Error("internal/quality/pass.go no longer declares Scorer")
+	}
+}
+
+// TestNoONNX pins the removal of ONNX Runtime (built-in grouping and quality
+// spec, §12): no non-test Go file under cmd/ or internal/ imports onnxModule
+// or contains onnxTerm, and go.mod does not name onnxModule. Every .go file
+// is read, whatever its build constraints.
+func TestNoONNX(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gomod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("module root not found at %s: %v", root, err)
+	}
+	if bytes.Contains(gomod, []byte(onnxModule)) {
+		t.Errorf("go.mod names %s", onnxModule)
+	}
+
+	fset := token.NewFileSet()
+	var checked int
+	for _, top := range []string{"cmd", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if name := d.Name(); strings.HasPrefix(name, ".") || name == "node_modules" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			checked++
+
+			src, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if bytes.Contains(src, []byte(onnxTerm)) {
+				t.Errorf("%s contains %q", rel, onnxTerm)
+			}
+			f, err := parser.ParseFile(fset, path, src, parser.ImportsOnly)
+			if err != nil {
+				return err
+			}
+			for _, imp := range f.Imports {
+				p, err := strconv.Unquote(imp.Path.Value)
+				if err == nil && (p == onnxModule || strings.HasPrefix(p, onnxModule+"/")) {
+					t.Errorf("%s imports %s", rel, p)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no Go files checked")
 	}
 }
 

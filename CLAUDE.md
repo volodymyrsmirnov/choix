@@ -10,9 +10,9 @@ Choix is a photo-and-video culling app for macOS on Apple Silicon: a sandboxed W
 
 **One-sentence north star:** walk in with a 2 000-photo trip dump, walk out an hour later with a `picks/` folder ready to edit, with the visual clusterer doing the heavy lifting on "which of these eight near-identical sunsets do I want to look at."
 
-Choix 1.x was a CLI that served a web UI on localhost. That shell (the CLI, the HTTP server, the embedded SPA, the Makefile) was removed; the engine (scan → metadata → thumbnails → CLIP → clusters, picks copied to `picks/`) was kept and now runs inside the app.
+Choix 1.x was a CLI that served a web UI on localhost. That shell (the CLI, the HTTP server, the embedded SPA, the Makefile) was removed; the engine (scan → metadata → thumbnails → analysis → clusters, picks copied to `picks/`) was kept and now runs inside the app.
 
-The design is `docs/superpowers/specs/2026-11-11-choix-2-desktop-design.md`; the spike results it relies on are in `docs/superpowers/specs/2026-11-11-choix-2-spike-results.md`. Anything material in this CLAUDE.md that contradicts the spec is a bug; the spec is authoritative, and the code is the final word on what exists.
+The design is `docs/superpowers/specs/2026-11-11-choix-2-desktop-design.md`, amended by `docs/superpowers/specs/2026-11-12-builtin-grouping-and-quality-design.md` (visual grouping by Apple's Vision feature print, the built-in quality rating, no network access); the spike results the 2.0 design relies on are in `docs/superpowers/specs/2026-11-11-choix-2-spike-results.md`. Anything material in this CLAUDE.md that contradicts the spec is a bug; the spec is authoritative, and the code is the final word on what exists.
 
 ---
 
@@ -23,11 +23,11 @@ These are non-negotiable. Breaking any of them is a regression.
 1. **Originals are sacred.** Originals are opened `O_RDONLY` only. Inside a folder Choix writes only under `<folder>/.choix/` and the folder's picks directory, and every such write goes through `internal/safefs`: the directory is opened component by component from the folder root (a symbolic link anywhere is refused), a file is created exclusively (`O_CREAT|O_EXCL`) under a random temporary name and renamed within the same directory, and an exported pick is published exclusively (an existing file is never overwritten). Nothing else creates, truncates or renames a file inside a folder. The threat model is stale symlinks and Choix's own bugs, not a concurrent local attacker with write access to the folder.
 2. **Never lose a pick.** A pick, reject or undo is committed with `store.Durable` (`PRAGMA synchronous=FULL` and `PRAGMA fullfsync=1`) after the exported copy and its directory have been fsynced, and the binding returns only after that commit. A volume that answers "not supported" to a sync is tolerated and logged once; a real I/O error fails the pick. The mutations of one folder (pick, undo, recluster) are serialised by that folder's lock. `state.db` is the source of truth; everything else is cache.
 3. **Per-file failures are isolated.** A corrupt RAF, a `.jpg` that is not a JPEG or a video with no video track marks that one file `scan_status='failed'` with the error text. The job keeps going.
-4. **Cancellation is honoured within ~1 s.** Every worker returns within ~1 s of `ctx.Done()`. Exceptions: one ONNX session creation or one inference is awaited. A native ImageIO call cannot be interrupted, so it runs **detached** (`platform.Detach`): the Go caller returns on `ctx.Done()` and the result is discarded; because native calls return bytes and never write files, an abandoned call leaves nothing behind. Detached calls hold one of a fixed number of process-wide slots (`platform.NativeSlots`) until the native call really returns, so abandoned calls cannot pile up, and a folder session's store and bookmark are released only after its detached calls have returned. Video frames use AVFoundation's asynchronous, cancellable generator. Quit has one deadline: 2 s for abandoned native calls, 5 s overall (`runtime.NativeQuitWait`, `runtime.QuitDeadline`); what is still in use then is not closed, and the process exits with it open (SQLite's WAL is crash-safe, originals are read-only).
-5. **macOS on Apple Silicon only. No universal binary.** Every build is `GOOS=darwin GOARCH=arm64 CGO_ENABLED=1` with deployment target macOS 14.0 (the bundled ONNX Runtime library's minimum, spike S6); `task build` fails when `bin/Choix` is not arm64 only. Intel Macs, Linux and Windows are non-goals.
-6. **Downloads are pinned, visible, opt-out, and only for models.** The two models in `local.KnownModels` (CLIP and the quality model) download automatically on first launch, one after the other, CLIP first. Each download uses its pinned URL, is resumable, and is SHA-256 verified before the file is put in place; it is visible (`models:progress` events, shown in the Library's welcome panel, plus `slog` lines); it is non-fatal (three attempts, then `failed` until the user retries); and it is not attempted while its setting (`visual_grouping` for CLIP, `quality_rating` for the quality model) is off. Switching the setting off also stops a download or rating pass already running. No executable is ever fetched at run time: the ONNX Runtime library is fetched at *build* time (`task deps:onnxruntime`, pinned in `build/onnxruntime/pin.env`) and shipped inside the signed bundle. The quality model is never bundled or redistributed. Don't add any other network access.
+4. **Cancellation is honoured within ~1 s.** Every worker returns within ~1 s of `ctx.Done()`. A native call — an ImageIO call or a Vision feature-print request — cannot be interrupted, so it runs **detached** (`platform.Detach`): the Go caller returns on `ctx.Done()` and the result is discarded; because native calls return bytes (or a feature print) and never write files, an abandoned call leaves nothing behind. Detached calls hold one of a fixed number of process-wide slots (`platform.NativeSlots`) until the native call really returns, so abandoned calls cannot pile up, and a folder session's store and bookmark are released only after its detached calls have returned. Video frames use AVFoundation's asynchronous, cancellable generator. Quit has one deadline: 2 s for abandoned native calls, 5 s overall (`runtime.NativeQuitWait`, `runtime.QuitDeadline`); what is still in use then is not closed, and the process exits with it open (SQLite's WAL is crash-safe, originals are read-only).
+5. **macOS on Apple Silicon only. No universal binary.** Every build is `GOOS=darwin GOARCH=arm64 CGO_ENABLED=1` with deployment target macOS 14.0 (the Vision image feature print revision the app pins, revision 2, needs macOS 14); `task build` fails when `bin/Choix` is not arm64 only. Intel Macs, Linux and Windows are non-goals.
+6. **The app makes no network request.** Nothing is downloaded at run time, and nothing is fetched at build time for the app's own function: visual grouping uses Apple's Vision framework and the quality rating is a formula written in Go, both inside the app. No model, library or executable is fetched or bundled. `net/http` appears only where it serves the webview (`internal/app/media`, `cmd/choix`), as `internal/retired_test.go` pins. Don't add any network access.
 7. **No duplicate files at the schema level.** A file is identified by its relative path (case-insensitive). Migration 003 enforces `UNIQUE(LOWER(path))`, and `Files().Insert` is an atomic UPSERT that falls back to the case-insensitive row when only the casing differs, so no duplicate row can appear, even on APFS where casing varies between scans.
-8. **The app never reaches outside the sandbox.** The App Sandbox is on in every packaged build. The ad hoc (`sign:dev`) and Developer ID (`sign:developer-id`) builds carry exactly four entitlements (`build/darwin/entitlements.plist`): `com.apple.security.app-sandbox`, `com.apple.security.files.user-selected.read-write`, `com.apple.security.files.bookmarks.app-scope` and `com.apple.security.network.client`. The Mac App Store build (`package:mas`) carries those four plus the two identifiers its provisioning profile requires, `com.apple.application-identifier` and `com.apple.developer.team-identifier` (`build/darwin/entitlements.mas.plist.tmpl`, rendered with `CHOIX_TEAM_ID`); they identify the app and add no access. No private APIs (the Wails `private_mac_apis` build tag is never used), no temporary-exception entitlements, no helper executables, and no `os/exec` in non-test code (`internal/notools_test.go`). That is why Finder and URLs go through `platform.Workspace` (an `NSWorkspace` adapter in `internal/platform/darwin/workspace`), never Wails' `Env.OpenFileManager` or `Browser.OpenURL`, which run `/usr/bin/open` (`internal/app/nativeui_test.go` forbids them). A folder is reachable only through the security-scoped bookmark made when the user picked or dropped it.
+8. **The app never reaches outside the sandbox.** The App Sandbox is on in every packaged build. The ad hoc (`sign:dev`) and Developer ID (`sign:developer-id`) builds carry exactly four entitlements (`build/darwin/entitlements.plist`): `com.apple.security.app-sandbox`, `com.apple.security.files.user-selected.read-write`, `com.apple.security.files.bookmarks.app-scope` and `com.apple.security.network.client`. `network.client` is unused (rule 6); it is removed only after the owner has checked the packaged app without it (`docs/release/sandbox-smoke.md`, "Removing the network entitlement"). The Mac App Store build (`package:mas`) carries those four plus the two identifiers its provisioning profile requires, `com.apple.application-identifier` and `com.apple.developer.team-identifier` (`build/darwin/entitlements.mas.plist.tmpl`, rendered with `CHOIX_TEAM_ID`); they identify the app and add no access. No private APIs (the Wails `private_mac_apis` build tag is never used), no temporary-exception entitlements, no helper executables, and no `os/exec` in non-test code (`internal/notools_test.go`). That is why Finder and URLs go through `platform.Workspace` (an `NSWorkspace` adapter in `internal/platform/darwin/workspace`), never Wails' `Env.OpenFileManager` or `Browser.OpenURL`, which run `/usr/bin/open` (`internal/app/nativeui_test.go` forbids them). A folder is reachable only through the security-scoped bookmark made when the user picked or dropped it.
 
 ---
 
@@ -66,41 +66,40 @@ internal/app/runtime      composition root: builds every core, connects them, ow
   │
   ├─ internal/app/…       one package per service: a core type + a binding-only Service facade
   │    library            library.db: folders, bookmarks, presence, cached stats, preview strips   [binding]
-  │    catalog            cluster grid, Focus payloads, picks, undo, recluster, ratings          [binding]
+  │    catalog            cluster grid, Focus payloads, picks, undo, recluster, ratings,
+  │                       quality-rating status                                                    [binding]
   │    settings           the machine-wide settings (config.toml)                                [binding]
-  │    models             model downloads and status, quality-rating status                       [binding]
   │    system             Finder, help link, app info, menu context, folder context menu         [binding]
   │    media              http.Handler on the asset server at /media (thumb, full, preview); not a binding
-  │    session            one folder's store + pipeline; the folder-job queue
-  │    inference          app-level ONNX sessions (CLIP, quality), shared and serialised
+  │    session            one folder's store + pipeline; the folder-job queue; the quality status
   │    events · opgate · apperr     event names and payloads · admission gate · binding errors
   │    testsupport        (server build only) path injection and fake dialogs for E2E
   │    menu · dialogs · window      native UI, design-gated: with cmd/choix, the only importers of Wails
   │
-  ├─ internal/platform    cgo-free interfaces (Bookmarks, Volumes, Workspace, Stills, Video), platform.Detach,
-  │    │                  fakes in platformtest
-  │    └─ darwin/{bookmark,volumes,workspace,imageio,avmedia}   cgo + Objective-C, no Wails
+  ├─ internal/platform    cgo-free interfaces (Bookmarks, Volumes, Workspace, Stills, Video, Vision),
+  │    │                  platform.Detach, fakes in platformtest
+  │    └─ darwin/{bookmark,volumes,workspace,imageio,avmedia,vision}   cgo + Objective-C, no Wails
   │
-  └─ engine               store, scanner, pipeline, group, picks, quality, ai/local, config, thumb, meta,
+  └─ engine               store, scanner, pipeline, analyze, group, picks, quality, config, thumb, meta,
                           rawpreview, safefs, appdir
 ```
 
-**Core and facade.** Each `internal/app/*` service package has a **core** type with the Go API other packages use, and a stateless **`Service` facade** whose exported methods are exactly the frontend bindings. Wails binds every exported method of a registered service, so nothing else may be exported on a `Service`. `cmd/choix` registers five: `Library`, `Catalog`, `Settings`, `Models`, `System`; the `media` handler is mounted with route `/media`. Services take their dependencies through constructors (platform interfaces, clock, emitter), so their tests construct them directly with the `platformtest` fakes: no window, no cgo.
+**Core and facade.** Each `internal/app/*` service package has a **core** type with the Go API other packages use, and a stateless **`Service` facade** whose exported methods are exactly the frontend bindings. Wails binds every exported method of a registered service, so nothing else may be exported on a `Service`. `cmd/choix` registers four: `Library`, `Catalog`, `Settings`, `System`; the `media` handler is mounted with route `/media`. Services take their dependencies through constructors (platform interfaces, clock, emitter), so their tests construct them directly with the `platformtest` fakes: no window, no cgo.
 
 **Wails stays at the edge.** Only `cmd/choix` and the three design-gated packages `internal/app/{menu,dialogs,window}` import Wails, and only those three build native UI (`internal/app/nativeui_test.go`). The engine, the platform layer and every other service package do not.
 
-**A folder job is everything one folder needs**, run by `session.Queue` up to two folders at a time (`session.DefaultSlots`), never one folder twice at once: the pipeline pass, then the CLIP backfill for files without an embedding (and a re-cluster if any were added), then the refresh of the folder's cached stats and preview strip in `library.db` and the `folder:changed` "clusters" announcement, so the folder can be reviewed while it is rated, then the quality-rating pass, which changes neither and is announced by `folder:changed` "ratings". The pipeline stages run in order, advancing each file's `scan_status`:
+**A folder job is everything one folder needs**, run by `session.Queue` up to two folders at a time (`session.DefaultSlots`), never one folder twice at once: the pipeline pass, then, while visual grouping is on, the print backfill for files analyzed without a feature print stamped `analyze.PrintID` (they are analyzed again, which re-clusters), then the refresh of the folder's cached stats and preview strip in `library.db` and the `folder:changed` "clusters" announcement, so the folder can be reviewed while it is rated, then the quality-rating pass, which changes neither and is announced by `folder:changed` "ratings". The pipeline stages run in order, advancing each file's `scan_status`:
 
 ```
 discover → metadata → thumb → analyze → cluster
 ```
 
 - `discover` walks the folder (skipping `.choix/` and the picks directories), content-hashes new and changed files, and marks deleted ones missing.
-- `metadata`, `thumb` and `analyze` are per-file (worker pool: NumCPU for metadata and thumbnails, 1 for inference).
-- `cluster` is global: `group.RebuildAll` sorts every analyzed file by (device, captured_at, id), cuts gap-based time buckets, then sub-clusters each bucket by CLIP similarity. It wipes and rebuilds `clusters` and `cluster_members`; picks live in their own table and survive.
-- A job resumes from each file's status, so running it twice is idempotent. There is no rerank stage; CLIP embeddings are the only grouping signal. The quality rating is display-only and ranks nothing.
+- `metadata`, `thumb` and `analyze` are per-file (worker pool: NumCPU for metadata and thumbnails, 4 for analyze). `analyze` (`internal/analyze`) makes the Vision feature print of each file's preview tier.
+- `cluster` is global: `group.RebuildAll` sorts every analyzed file by (device, captured_at, id), cuts gap-based time buckets, then sub-clusters each bucket by feature-print similarity (complete-link). It wipes and rebuilds `clusters` and `cluster_members` only after all of its clustering returned; picks live in their own table and survive.
+- A job resumes from each file's status, so running it twice is idempotent. There is no rerank stage; feature prints are the only visual grouping signal. The quality rating is display-only and ranks nothing.
 
-**Sessions and teardown.** A folder session (`session.Manager`) is reference-counted: the open folder holds one reference, the job queue another while it works on that folder. After the last release it waits for the folder's detached native calls, then closes the store and releases the folder's access; a store is never closed while a reference or a detached call exists. At quit `runtime.Shutdown` closes the admission gate (new binding calls answer "Choix is quitting."), cancels the root context, silences the emitter, stops the queue, closes the catalog, stops the model downloads, tears down the sessions, then closes the ONNX sessions and `library.db`, all within the quit deadline of hard rule 4. Closing the window quits the app.
+**Sessions and teardown.** A folder session (`session.Manager`) is reference-counted: the open folder holds one reference, the job queue another while it works on that folder. After the last release it waits for the folder's detached native calls, then closes the store and releases the folder's access; a store is never closed while a reference or a detached call exists. At quit `runtime.Shutdown` closes the admission gate (new binding calls answer "Choix is quitting."), cancels the root context, silences the emitter, stops the queue, closes the catalog, tears down the sessions, then closes `library.db`, all within the quit deadline of hard rule 4. Closing the window quits the app.
 
 ---
 
@@ -115,23 +114,23 @@ choix/
 │   │   ├── runtime/          composition root, logging, start and teardown order
 │   │   ├── library/          library.db (own migrations/), folders, presence, stats, previews
 │   │   ├── session/          per-folder session, job queue, folder job, quality status
-│   │   ├── catalog/  media/  system/  settings/  models/  inference/
+│   │   ├── catalog/  media/  system/  settings/
 │   │   ├── events/  opgate/  apperr/
 │   │   ├── testsupport/      server build only: E2E remote control
 │   │   ├── menu/  dialogs/  window/      GATED (design gate)
 │   │   └── nativeui_test.go  native UI only in the gated packages; Wails only in cmd/choix and them
 │   ├── platform/             interfaces, value types, detached calls (no cgo); platformtest/ fakes and fixture builders
-│   │   └── darwin/           bookmark/ volumes/ workspace/ imageio/ avmedia/ (cgo + Objective-C)
-│   ├── appdir/               Application Support, Logs and bundle paths (NSSearchPathForDirectoriesInDomains)
+│   │   └── darwin/           bookmark/ volumes/ workspace/ imageio/ avmedia/ vision/ (cgo + Objective-C)
+│   ├── appdir/               Application Support and Logs paths (NSSearchPathForDirectoriesInDomains)
 │   ├── safefs/               the only way to write inside a folder: confined, symlink-resistant, exclusive
 │   ├── rawpreview/           RAF and DNG embedded-JPEG readers (pure Go, read-only)
 │   ├── meta/                 native reader → v1-compatible record → the one parser (parse.go); backfills
 │   ├── thumb/                thumbnail tiers and cache on platform.Stills / platform.Video
 │   ├── store/                per-folder state.db: migrations/, repos, Durable
 │   ├── scanner/  pipeline/  group/       walk, stages and worker pool, device → bucket → cluster
+│   ├── analyze/              the analyze stage: a file's Vision feature print, stored normalised
 │   ├── picks/                durable pick state machine, export, picks-directory rules, reconcile
-│   ├── quality/              one scoring pass (pass.go)
-│   ├── ai/local/             ONNX Runtime lookup, shared sessions, CLIP, quality scorer, model registry, installer
+│   ├── quality/              the quality formula (measure.go), the store-backed scorer (scorer.go), one rating pass (pass.go)
 │   ├── config/               machine-wide settings: defaults + config.toml
 │   ├── buildinfo/            version and commit stamped by task build
 │   ├── e2e/                  smoke (synthetic) and UAT (real corpus) tests; genfolder/
@@ -146,9 +145,7 @@ choix/
 │   └── e2e/                  harness/, api/ and ui/ (*.e2e.ts, playwright.config.ts), parity/
 ├── build/
 │   ├── darwin/               Info.plist.tmpl, entitlements.plist, entitlements.mas.plist.tmpl, bundle.sh
-│   ├── onnxruntime/          pin.env, fetch.sh (build-time ONNX Runtime fetch)
 │   ├── smoke/                sandbox-smoke.sh
-│   ├── quality-model/        scripts that export and verify the quality ONNX model (build-time only)
 │   ├── frontend-stub/        placeholder index.html for the Go embed
 │   └── config.yml            wails3 dev configuration
 ├── tools/design/             gate.py and gate_owner.py (design gate)
@@ -175,10 +172,9 @@ Everything goes through [Task](https://taskfile.dev) (`task --list`). Every Go c
 | Command | What it does |
 |---|---|
 | `task tools` | `go install` wails3 v3.1.0; checks that golangci-lint and bun are installed. |
-| `task deps:onnxruntime` | Fetches the pinned ONNX Runtime library into `build/.tools/onnxruntime` (SHA-256 verified; skipped when up to date). Build time only. |
 | `task build` | Builds the frontend and `bin/Choix` (`-tags production`, version-stamped), and fails unless it is arm64 only. |
-| `task package` | `build`, then `build/darwin/bundle.sh` assembles `bin/Choix.app` (with `Contents/Frameworks/libonnxruntime.dylib`), then `sign:dev`. |
-| `task sign:dev` | Ad hoc signature with the sandbox entitlements and **without** the hardened runtime: signed ad hoc, library validation refuses the bundled library (spike S6). |
+| `task package` | `build`, then `build/darwin/bundle.sh` assembles `bin/Choix.app` (the executable and its resources; no bundled library, no `Contents/Frameworks`), then `sign:dev`. |
+| `task sign:dev` | Ad hoc signature with the sandbox entitlements and **without** the hardened runtime. Turning the hardened runtime on for ad hoc builds is a pending follow-up. |
 | `task sign:developer-id` · `task notarize` · `task dmg` · `task package:mas` | Release signing; read identities from environment variables (`docs/release/signing-checklist.md`) and stop when one is missing. Developer ID signing uses the hardened runtime. |
 | `task dev` | `wails3 dev` with hot reload (unsigned, so not sandboxed). `task dev:frontend` + `task dev:run` are its two halves. |
 | `task run:server` | The server build (no window, test-support bindings) with its data in `.tmp/data`. |
@@ -190,15 +186,15 @@ Tests, and what each proves:
 
 | Command | Proves | Needs |
 |---|---|---|
-| `task test` | Every Go package, race detector on, plus the server-tagged `testsupport` and `menu` packages. | Nothing extra. Uses the fetched ONNX Runtime when present; ONNX tests skip without the runtime or a model, cgo tests are `//go:build darwin`. |
+| `task test` | Every Go package, race detector on, plus the server-tagged `testsupport` and `menu` packages. | Nothing extra. cgo tests (Vision, ImageIO, AVFoundation, bookmarks, volumes) are `//go:build darwin`. |
 | `task lint` | `go vet` and golangci-lint, 0 issues. | golangci-lint. |
-| `task test:smoke` | The synthetic end-to-end pipeline (`-tags smoke ./internal/e2e/`). | Nothing: no network, no models. |
-| `task test:e2e` | Playwright against the server build of the real app on 127.0.0.1:8090/8091: the `api` project drives the bindings, the `ui` project the app's UI. Both model settings are off, so nothing downloads. | Playwright Chromium (`cd frontend && bunx playwright install chromium`). |
+| `task test:smoke` | The synthetic end-to-end pipeline (`-tags smoke ./internal/e2e/`), feature prints from the `platformtest` fake. | Nothing: no network. |
+| `task test:e2e` | Playwright against the server build of the real app on 127.0.0.1:8090/8091: the `api` project drives the bindings, the `ui` project the app's UI. Visual grouping is off in its `config.toml`, so the clusters the specs count are the time buckets. | Playwright Chromium (`cd frontend && bunx playwright install chromium`). |
 | `task parity` | The app renders exactly what the owner approved: the app's parity build (mock bindings) against the prototype, for every group in `frontend/e2e/parity/enabled.json`. | Playwright Chromium; ports 8801 and 8811 free. |
 | `task test:frontend` | Frontend unit tests (`bun test`), type check, design lint. | bun. |
 | `task design:*` | The design gate's checks, builds and status (see the section below and `docs/design/README.md`). | bun, Playwright Chromium and WebKit. |
 | `task smoke:sandbox` | The packaged, sandboxed `bin/Choix.app`: static checks and the sandboxed self-check (`-- --head-only` stops there), then a scan of a clone of a real folder and the manual checks of `docs/release/sandbox-smoke.md`. | A terminal. `CHOIX_UAT_ROOT` (no default) unless `--head-only`. |
-| `task uat` | The whole headless runtime with the real platform and inference over clones of a real photo archive (`docs/release/uat.md`). | `CHOIX_UAT_ROOT` (no default; skips without it). Hours on a full archive (`-- -limit N`). |
+| `task uat` | The whole headless runtime with the real platform (Vision included) and the quality formula over clones of a real photo archive (`docs/release/uat.md`). | `CHOIX_UAT_ROOT` (no default; skips without it). Hours on a full archive (`-- -limit N`). |
 
 `task test` and `task lint` must be clean before every commit. When adding a Go dependency, run `go get <pkg>` and commit `go.mod` and `go.sum` together; for a frontend dependency, `bun add` in `frontend/` and commit `package.json` and `bun.lock` (both are design digest inputs: see the gate). Don't bypass signing or hooks: the owner's commits are SSH-signed.
 
@@ -217,7 +213,7 @@ Tests, and what each proves:
 - After changing a binding's signature or payload, run `task bindings` and commit `frontend/bindings`.
 
 ### Events
-- Event names and payloads live in `internal/app/events` (`library:changed`, `scan:progress`, `scan:state`, `models:progress`, `quality:status`, `folder:changed`, `menu:action`). Services emit through the `events.Emitter` interface; `cmd/choix` adapts it to Wails. Noisy events go through the `Coalescer` (about ten deliveries a second).
+- Event names and payloads live in `internal/app/events` (`library:changed`, `scan:progress`, `scan:state`, `quality:status`, `folder:changed`, `menu:action`). Services emit through the `events.Emitter` interface; `cmd/choix` adapts it to Wails. Noisy events go through the `Coalescer` (about ten deliveries a second).
 - **Fetch, then apply.** The frontend reads current state through a binding when a store starts, then applies events: an event that changes a list or a state makes the store reload or reconcile from a binding; `scan:progress` is transient and only patches the row. A missed event therefore cannot leave the UI stale. Keep JSON tags in sync with `frontend/src/design/types.ts`.
 
 ### Media URLs
@@ -225,8 +221,8 @@ Tests, and what each proves:
 - The path is looked up through the folder's store (`Files().GetByPath`) and joined under the root with `safeJoinUnderRoot`, so there is no traversal surface. `v` busts the webview's cache when the bytes change. Video is served with HTTP Range (`http.ServeContent`).
 
 ### Native calls
-- Platform interfaces return bytes (an encoded JPEG, a property dictionary) and never write files; cache files are written by `internal/thumb` through `safefs`.
-- Every ImageIO call goes through `platform.Detach`; AVFoundation frame generation holds a slot through `platform.Acquire` until its last callback has run. See hard rule 4.
+- Platform interfaces return bytes (an encoded JPEG, a property dictionary, a feature print) and never write files; cache files are written by `internal/thumb` through `safefs`.
+- Every ImageIO call and every Vision feature-print request goes through `platform.Detach`; AVFoundation frame generation holds a slot through `platform.Acquire` until its last callback has run. See hard rule 4.
 
 ### Shortcuts and menus
 - The native menu is built from `frontend/src/design/menus.json` (embedded by `embed.go`); a Go test asserts the installed menu equals the manifest. Menu clicks reach the frontend as `menu:action` and run the same action the key runs.
@@ -242,15 +238,15 @@ Tests, and what each proves:
 - Workers in `internal/pipeline/pool.go` use `errgroup` with `SetLimit(workers + 1)` (the `+1` is the producer goroutine; without it single-worker pools deadlock).
 - Both databases use `MaxOpenConns = 1` and `busy_timeout = 10000`. Don't change either casually.
 - Don't share `*sql.Tx` across goroutines. Inside `store.Durable`, use only the `tx` it hands you: it holds the store's only connection.
-- Up to `session.DefaultSlots` (2) folder jobs at once, never two on the same folder (one writer per `state.db`); one inference at a time (`internal/app/inference`). Jobs take the cancellable, process-wide inference turn (`session.acquireInference`) before they call the engine, the analyze stage for each file it embeds and the rating pass for each photo, so a cancelled job never waits in the engine behind another job's inference.
+- Up to `session.DefaultSlots` (2) folder jobs at once, never two on the same folder (one writer per `state.db`). Nothing else is serialised across jobs: each feature print is a native call bounded by `platform.NativeSlots`, and the quality formula is pure Go that checks its context between photos.
 
 ### Logging
 - `log/slog` only. Logs go to `~/Library/Logs/Choix/choix.log` (inside the container when sandboxed) and stderr.
-- Log failures, job and stage start and end, model downloads. Don't log per-file success.
+- Log failures, job and stage start and end. Don't log per-file success.
 
 ### Tests
 - TDD: every new Go file ships with a `_test.go` next to it. Race detector on.
-- Tests never use the network. cgo tests are `//go:build darwin`. ONNX tests skip when the runtime library or the model is absent. Tests that need a real corpus skip unless `CHOIX_UAT_ROOT` names an existing folder; there is no default.
+- Tests never use the network. cgo tests are `//go:build darwin`. Tests that need a real corpus skip unless `CHOIX_UAT_ROOT` names an existing folder; there is no default.
 - **Nothing from a real corpus is public.** The repository is public: no folder or file name, serial number, date or location from a real photo archive goes into a fixture, a test expectation, a log pasted into a document, or a commit message. Tests choose corpus folders by rule and print them as `folder-1`, `folder-2`; they work on `cp -cR` clones, never on the originals. `frontend/prototype/mock/privacy.test.ts` scans the repository for denied terms.
 - Service tests use the `internal/platform/platformtest` fakes; platform tests run against `testdata/` fixtures.
 
@@ -262,7 +258,7 @@ Driver: `modernc.org/sqlite` (pure Go). Don't switch to `mattn/go-sqlite3` witho
 
 | Database | Where | Holds | Migrations |
 |---|---|---|---|
-| `state.db` | `<folder>/.choix/state.db` | files, thumbs, clusters, picks, `ai_signals`, `kv` | `internal/store/migrations/` (001–005), schema unchanged from v1 (`user_version` 5) |
+| `state.db` | `<folder>/.choix/state.db` | files, thumbs, clusters, picks, `ai_signals`, `kv` | `internal/store/migrations/` (001–007, `user_version` 7): 001–005 are v1's schema, 006 adds the walk generation (`files.seen_run`), 007 the feature print (`ai_signals.vision_print`, `vision_print_id`) |
 | `library.db` | the app's data directory | `folders` (path, bookmark, presence, persisted job, cached stats, preview stamp), `kv` (job sequence, window frame) | `internal/app/library/migrations/001_initial.sql` |
 
 - **Opened by path, never by a hand-built DSN.** `store.Open` and `library.OpenDB` take a filesystem path and build the URI with `store.FileURI`, which percent-encodes `%`, `#` and `?`. A `file:` string concatenated with a folder path is forbidden: a folder named `Day #2` would put the database outside the folder.
@@ -271,18 +267,19 @@ Driver: `modernc.org/sqlite` (pure Go). Don't switch to `mattn/go-sqlite3` witho
 - A session checks once, when it opens, that `.choix` is a real directory inside the folder and the database files are regular files; then SQLite opens `state.db` by path.
 - **A v1 folder opens as it is.** Its clusters and thumbnails show before any job runs; nothing is re-processed. Each `state.db` records the parameters of its last clustering in `kv` (`cluster_params`); a v1 folder has none and keeps its clusters until a job or a recluster rebuilds them.
 - `files.path` is unique by `LOWER(path)` (migration 003). `Insert` is an UPSERT; never reach for a GetByPath-then-Insert pattern.
+- **An older build opens a newer folder as it is.** Its migrations all lie at or below the stored `user_version`, so none runs, and it neither reads nor writes the columns it does not know. That is why migration 007 also installs the trigger `files_content_changed_clears_print`: whenever `files.content_hash` changes to a different value, whoever writes it, the file's `vision_print` and `vision_print_id` are cleared, so a photo edited and rescanned by 2.0.0 is pending again (and re-printed by the backfill) when this build opens the folder; `UpsertOnRescan` still clears both itself, for a change of size or mtime under the same content hash.
 - Adding a `state.db` migration: add `NNN_*.sql`, bump `PRAGMA user_version` in it, and update `wantVersion` in `internal/store/migrate_test.go`. `library.db` has its own migrations in `internal/app/library/migrations/`.
-- Unused columns from retired features (`clusters.label`, `clusters.ai_top_file_id`, `clusters.cloud_reasoning`, all of `ai_signals` apart from `clip_embedding`) stay; don't read or write them.
+- Unused columns from retired features (`clusters.label`, `clusters.ai_top_file_id`, `clusters.cloud_reasoning`, and every column of `ai_signals` apart from `file_id`, `vision_print`, `vision_print_id` and `computed_at`, `clip_embedding` included) stay; don't read, write or drop them.
 - Thumbnail rows store relative paths (`.choix/thumbs/<bucket>/<id>-<tier>.jpg`). Don't double-prefix when reading them back.
 
 ---
 
 ## Native media
 
-Choix runs no external tool: exiftool, ffmpeg and sips were removed and replaced by Apple frameworks in-process (`internal/platform/darwin/imageio` for stills, `avmedia` for video).
+Choix runs no external tool: exiftool, ffmpeg and sips were removed and replaced by Apple frameworks in-process (`internal/platform/darwin/imageio` for stills, `avmedia` for video, `vision` for the feature print).
 
 - **Formats** (`internal/scanner/format.go`): RAF, DNG, HEIC/HEIF, JPEG, TIFF and PNG stills; mov, mp4 and m4v video.
-- **RAW stills use the embedded JPEG.** `internal/rawpreview` reads it straight from the RAF or DNG container (pure Go, read-only); a full RAW decode is the last resort, for a file without a usable preview. The embedded JPEG carries the in-camera look CLIP and the quality score were computed on, and is far faster.
+- **RAW stills use the embedded JPEG.** `internal/rawpreview` reads it straight from the RAF or DNG container (pure Go, read-only); a full RAW decode is the last resort, for a file without a usable preview. The embedded JPEG carries the in-camera look the feature print and the quality score are computed from (through the preview tier), and is far faster.
 - **Metadata from the right source.** A RAF's metadata comes from its embedded JPEG; a DNG's from the container (IFD0 and Exif IFD), with the pixel size of the embedded preview the thumbnails use; a video's from AVFoundation plus the `mvhd` atom read in Go (`QuickTime:CreateDate`).
 - **One parser.** `meta.NativeReader` maps the ImageIO and AVFoundation dictionaries to a JSON record keyed like exiftool's `-j -G -n` output (`EXIF:Make`, `MakerNotes:SerialNumber`, `QuickTime:CreateDate`, …), though the app never runs exiftool. That record goes through the unchanged `meta.Parse` and is stored in `raw_exif`, so rows written by v1 and by the app are indistinguishable to `BackfillGPS` and `BackfillDeviceKey`.
 - **The device key is make + model + serial number** (`meta.DeviceKey`: `"<Make> <Model>#<Serial>"`, `"Unknown"` without make or model). It must match what v1 stored, or a folder scanned by v1 and extended by the app splits one camera into two devices.
@@ -292,30 +289,28 @@ Choix runs no external tool: exiftool, ffmpeg and sips were removed and replaced
 
 ---
 
-## Models and inference
+## Visual grouping and quality rating
 
-- **Registry:** `local.KnownModels` (`internal/ai/local/models.go`): pinned Hugging Face revisions, sizes and SHA-256. CLIP ViT-B/32 vision (about 352 MB) for visual grouping; TOPIQ-NR (about 177 MB) for the quality rating. Both are installed in `<data dir>/models/` by `local.Installer` (resumable, verified before the file is put in place).
-- **Downloads** (`internal/app/models`): sequential, CLIP first, three attempts (pauses 2 s, 10 s), then `failed` until `Models.Retry`. A model finishing its download in this session, or its setting being switched on with the model ready, queues a backfill job for every reachable folder; a model already on disk at launch queues nothing.
-- **Runtime:** ONNX Runtime 1.25.0 (official `onnxruntime-osx-arm64` release, MIT) for `onnxruntime_go` v1.28.0. The shipped build loads only `Contents/Frameworks/libonnxruntime.dylib`; builds without the `production` tag also try `CHOIX_ONNXRUNTIME_DYLIB` and the Homebrew paths.
-- **Sessions:** one `inference.Engine` per process owns the CLIP and quality sessions, creates each lazily, shares them with every folder session, runs one inference at a time and closes them once, at quit. Inside the App Sandbox CLIP runs on the CPU provider (spike S5: CoreML takes almost none of its graph and is slower); the quality model keeps the CoreML provider.
-- **Computing embeddings and using them are separate.** The analyze stage computes an embedding only while `visual_grouping` is on and the CLIP model is ready; otherwise it leaves `ai_signals.clip_embedding` NULL and the file is still `analyzed`. Clustering (`session.clusterLocked`) uses stored embeddings according to `visual_grouping` alone, whether or not the model is present:
-  - `visual_grouping` **off**: every file is treated as having no embedding, stored ones included, so clusters are the time buckets alone (and cross-device merging falls back to per-device grouping).
-  - **on, model ready**: new files are embedded; files that have an embedding are sub-clustered visually; the job's CLIP backfill re-analyzes files analyzed without one, which re-clusters.
-  - **on, model missing** (not downloaded yet, or failed): no new embeddings; files with stored embeddings are still sub-clustered visually, and files without one go into their time bucket's fallback cluster. When the model arrives, a backfill job embeds them.
+Both run inside the app, with nothing to download: the design is `docs/superpowers/specs/2026-11-12-builtin-grouping-and-quality-design.md` (§5 grouping, §6 quality).
 
-  Visual clustering uses cosine similarity ≥ `visual_cluster_threshold` (default 0.92) inside each time bucket; changing it re-clusters.
+### Visual grouping
+
+- **The feature print.** `platform.Vision` (`internal/platform/vision.go`; `internal/platform/darwin/vision`, cgo + Objective-C) asks Apple's Vision framework for the image feature print of a still: `VNGenerateImageFeaturePrintRequest` pinned to revision 2 and crop-and-scale "scale fill", `platform.FeaturePrintLen` (768) float32 values. It fails with a message, never a crash, when the revision is unsupported or the print has another element type or length. Like ImageIO, each request runs detached through `platform.Detach` and writes nothing. Tests use the `platformtest.Vision` fake.
+- **The analyze stage** (`internal/analyze`, 4 workers per job) makes the print of each file's **preview tier** (1600 px; for a video, the preview made from its first keyframe), or of its **thumb tier** when the file has no preview tier (v1 made only a thumb for a video), L2-normalises it and stores it in `ai_signals.vision_print` (768 little-endian float32, 3,072 bytes) stamped with `analyze.PrintID` (`"vnfp-r2/fill/preview/v1"`) in `vision_print_id`. Outcomes, each leaving the file `analyzed` unless noted: a print is stored; while `visual_grouping` is off nothing is stored and the row stays unstamped, so the file is pending when grouping is switched on; only when Vision cannot read the image (`platform.ErrUnreadableImage`, the file's own fault) or returns a malformed vector (not 768 finite values with a non-zero norm) is a NULL print stored **stamped**, so it is not retried on every job; any other Vision error (the framework's, possibly transient) leaves the file `analyzed` and its row unstamped, and the next job's backfill tries it again; cancellation or an unreachable folder leaves the row as it was; a cached image that cannot be opened while the folder is reachable makes the file `failed`. Each tier is found by one resolver shared with the quality scorer (`sessionThumbPath`): the `thumbs` row's file, else the tier's standard cache path (`thumb.CachePath`), both confined to `.choix/thumbs/`, so a stale row never hides a cache file at its standard place. A file whose content changed loses its print (and its rating) in `UpsertOnRescan`. Changing how prints are made (revision, crop option, input tier, normalisation) **must** bump `analyze.PrintID`: rows stamped with another id are pending again, and the job's backfill re-analyzes them.
+- **Clustering** (`internal/group`) is complete-link: similarity is the dot product of two unit vectors; two clusters merge while the lowest similarity between their members is strictly greater than `visual_similarity` (default 0.90), highest linkage first, ties broken by the smaller minimum ids (`group.Cluster`). It checks its context once per similarity-matrix row and once per merge, and a rebuild writes clusters only after all of its clustering returned, so a cancelled rebuild replaces nothing. A bucket with more than `group.MaxClusterWindow` (4,000) printed files is clustered in consecutive windows of 4,000 in time order (one similarity matrix of 4,000² at most); groups never span two windows.
+- **Using prints follows `visual_grouping` alone** (`session.clusterLocked`):
+  - **off**: no print is made, and clustering treats every file as having none, stored prints included, so clusters are the time buckets alone (and cross-device merging falls back to per-device grouping).
+  - **on**: new files get a print; files with a print stamped `analyze.PrintID` are sub-clustered visually, and files without one go into their time bucket's fallback cluster; the job's print backfill re-analyzes analyzed files that are pending for `analyze.PrintID`, which re-clusters. Switching it on queues a backfill job for every reachable folder; nothing is queued at launch for finished folders.
+- **Cluster parameters.** `session.ClusterParams` (`b=<bucket>;t=<similarity>;x=<cross-device>;v=<visual>;m=<analyze.PrintID>+complete`) is stored in `kv` after each clustering; a folder whose stored parameters differ (another setting, or a folder clustered by an earlier build) re-clusters when it is opened, keeping its picks.
 - **Advisory only.** No auto-pick, no rerank, no scored top candidate. The user's manual pick is the source of truth.
 
 ### Quality rating
 
-Spec and research: `docs/plans/2026-11-11-quality-rating.md`.
-
-- **What:** a per-photo technical-quality score (focus, motion blur, noise) from TOPIQ-NR (ResNet-50, KonIQ weights), shown as a 0–10 badge. Advisory only: nothing picks, rejects, sorts or highlights by it, and there is deliberately no "best in cluster" marker (differences under ~0.2 are noise).
-- **Licence:** CC BY-NC-SA 4.0 (non-commercial). Never bundled or redistributed; `build/quality-model/export.py` reproduces the ONNX file.
-- **Scoring recipe** (`internal/ai/local/quality.go`): tier-2 preview → long side ≤ 1600 px and ≤ the original's (never scaled up; short side < 384 px ⇒ unrated) → five native-resolution 384 px crops (centre + quadrant centres) → mean of the three best. Changing the model or the recipe **must** bump `QualityScorerID`: rows stamped with another id become pending and their old scores are hidden.
-- **Storage:** `files.quality_raw` (NULL = unrated) and `files.quality_model` (scorer id), migration 005. The 0–10 value is computed only in `local.QualityDisplay`: recalibrate there, never rescore. Only "this photo can never be rated" is stamped with a NULL score; cancellation, a disabled setting, inference or database errors leave the row pending. A changed file loses its rating in `UpsertOnRescan`.
-- **Runtime:** the rating pass (`quality.Pass`, `internal/quality/pass.go`) is the last step of every folder job, after the stats and preview refresh and the "clusters" announcement, run when `quality_rating` is on and the model is ready. Switching the setting off cancels the pass in flight. A photo that cannot be rated keeps `scan_status='analyzed'`; a missing rating is not a file failure.
-- **API:** `Models.Quality` returns the status snapshot and `quality:status` carries every change, so nothing polls. New ratings arrive as `folder:changed` with reason `ratings`, and the folder store then refetches `Catalog.Ratings`.
+- **What:** a per-photo technical-quality score (sharpness, noise, exposure) computed by a formula in pure Go (`internal/quality/measure.go`, about 42 ms per photo), shown as a 0–10 badge. It tells a damaged frame (blurred, noisy, badly exposed) from a good one **of the same scene**; it does not rank good photos of different scenes. Advisory only: nothing picks, rejects, sorts or highlights by it, and there is deliberately no "best in cluster" marker.
+- **Recipe** (spec §6.2): the preview tier, decoded with `image/jpeg`; short side under `quality.MinShortSide` (384 px) ⇒ unrated; a working copy box-resampled to long side 1024 when larger (never scaled up); noise-corrected Laplacian sharpness at σ = 1 and σ = 2, a robust noise estimate and an exposure term, combined into `quality.Raw`. Changing any step, constant or weight **must** bump `quality.ScorerID` (`"choix-sne-1024/v1"`): rows stamped with another id become pending and their old scores are hidden. `internal/quality/measure_test.go` pins the spec's reference values (§6.3).
+- **Storage:** `files.quality_raw` (NULL = unrated) and `files.quality_model` (scorer id), migration 005. The 0–10 value is computed only in `quality.Display` (`clamp((raw + 60) / 2, 0, 10)`): recalibrate there, never rescore. A value is shown only when `quality_model` equals `quality.ScorerID`. Only "this photo can never be rated" is stamped with a NULL score; cancellation, a disabled setting, an unreachable folder or a database error leaves the row pending. A changed file loses its rating in `UpsertOnRescan`.
+- **Runtime:** the rating pass (`quality.Pass`, `internal/quality/pass.go`, scoring through `quality.FileScorer`, `internal/quality/scorer.go`) is the last step of every folder job, after the stats and preview refresh and the "clusters" announcement, run when `quality_rating` is on. Three consecutive failures stop a pass; its photos stay pending for the next one. Switching the setting off cancels the pass in flight. A photo that cannot be rated keeps `scan_status='analyzed'`; a missing rating is not a file failure.
+- **API:** `Catalog.QualityStatus` returns the status snapshot (`disabled`, `waiting`, `scoring` or `idle`) and `quality:status` carries every change, so nothing polls. New ratings arrive as `folder:changed` with reason `ratings`, and the folder store then refetches `Catalog.Ratings`.
 
 ---
 
@@ -348,23 +343,23 @@ One source: the machine-wide `config.toml` in the app's data directory (`appdir.
 | TOML key | Default | What |
 |---|---|---|
 | `bucket_size_sec` | 600 | Time-bucket gap (seconds) inside a device |
-| `visual_cluster_threshold` | 0.92 | CLIP cosine similarity for the same-scene cluster |
-| `visual_grouping` | `true` | CLIP: download the model, compute embeddings, sub-cluster visually. Off: time-only clusters, no download |
+| `visual_similarity` | 0.90 | How alike (feature-print similarity, complete-link) two shots of one time bucket must be to share a cluster. The key `visual_cluster_threshold` of earlier builds is ignored and no longer written |
+| `visual_grouping` | `true` | Make Vision feature prints and sub-cluster each time bucket by them. Off: time-only clusters |
 | `cross_device_merging` | `false` | Merge clusters across devices using clock-skew detection |
 | `picks_dir` | `picks` | Where picks are exported (relative to the folder) |
 | `advance_on_action` | `false` | Move to the next photo after Pick/Reject in Focus |
 | `hide_rejected_photos` | `false` | Hide rejected photos in the Folder view |
-| `quality_rating` | `true` | Advisory quality rating: download the model, score photos, show badges |
+| `quality_rating` | `true` | Advisory quality rating: score photos, show badges |
 
-Saving `bucket_size_sec`, `visual_cluster_threshold`, `cross_device_merging` or `visual_grouping` re-clusters; clustering always reads the live settings under the session's clustering lock and stamps what it used.
+Saving `bucket_size_sec`, `visual_similarity`, `cross_device_merging` or `visual_grouping` re-clusters; clustering always reads the live settings under the session's clustering lock and stamps what it used.
 
-**Cross-device merging** (off by default): `internal/group/skew.go` estimates a per-device clock offset from high-confidence (≥ 0.95 cosine) CLIP anchor pairs taken within ±1 hour of each other, and the grouper runs on the merged timeline. Clusters spanning devices carry the `group.MergedDeviceKey` sentinel (`"*merged*"`). Files without embeddings never merge across devices; with no embedding at all, it falls back to the per-device path.
+**Cross-device merging** (off by default): `internal/group/skew.go` estimates a per-device clock offset from high-confidence anchor pairs (feature-print similarity ≥ 0.93, `anchorSimilarity`) taken within ±1 hour of each other, and the grouper runs on the merged timeline. The 0.93 anchor has not been checked on real two-camera data. Clusters spanning devices carry the `group.MergedDeviceKey` sentinel (`"*merged*"`). Files without a print never merge across devices; with no print at all, it falls back to the per-device path.
 
 ### Where data lives
 
 | Data | Location |
 |---|---|
-| Settings (`config.toml`), `library.db`, preview strips (`previews/<folder-id>/<n>.jpg`), models (`models/`) | `~/Library/Application Support/Choix/`, inside `~/Library/Containers/com.github.volodymyrsmirnov.choix/Data/` when sandboxed |
+| Settings (`config.toml`), `library.db`, preview strips (`previews/<folder-id>/<n>.jpg`) | `~/Library/Application Support/Choix/`, inside `~/Library/Containers/com.github.volodymyrsmirnov.choix/Data/` when sandboxed |
 | Logs (`choix.log`) | `~/Library/Logs/Choix/`, container-relative when sandboxed |
 | Per-folder state | `<folder>/.choix/state.db`, `<folder>/.choix/thumbs/` |
 | Picks | `<folder>/picks/` (or the folder's picks directory) |
@@ -376,10 +371,11 @@ Saving `bucket_size_sec`, `visual_cluster_threshold`, `cross_device_merging` or 
 These are the source of truth for *intent*. If you're adding a feature, find it (or its absence) in the spec first.
 
 - `docs/superpowers/specs/2026-11-11-choix-2-desktop-design.md` — the Choix 2.0 design: goals, non-goals, architecture, sandbox, native media, hard rules (§14), design gate (§15).
+- `docs/superpowers/specs/2026-11-12-builtin-grouping-and-quality-design.md` — visual grouping by Vision feature print and complete-link, the built-in quality formula with its reference values, no network access; amends the 2.0 design. Its plan: `docs/superpowers/plans/2026-11-12-builtin-grouping-and-quality.md`.
 - `docs/superpowers/specs/2026-11-11-choix-2-spike-results.md` — measured results of spikes S1–S7.
 - `docs/superpowers/plans/2026-11-11-choix-2-engine-and-wails.md` — the engine and Wails shell plan, with the calls and rulings (C1–C38) the code implements.
 - `docs/superpowers/plans/2026-11-11-design-prototype-and-gate.md` — the design system, the prototype and the approval gate. Day to day: `docs/design/README.md`.
-- `docs/plans/2026-11-11-quality-rating.md` — the quality rating.
+- `docs/plans/2026-11-11-quality-rating.md` — the quality rating's original plan (the badge, the rating pass, the status); its scoring is superseded by the spec above.
 - `docs/release/` — `signing-checklist.md`, `sandbox-smoke.md`, `uat.md`; `docs/release-checklist.md` for release day.
 - `v2.md` — deferred and out of scope. Don't sneak these in without renegotiating the scope.
 
@@ -390,8 +386,9 @@ These are the source of truth for *intent*. If you're adding a feature, find it 
 - **The Go embed needs `frontend/dist/index.html`.** `embed.go` embeds `frontend/dist`, so a fresh clone does not compile until something writes it. Every Go task runs `task frontend:bootstrap` first (a stub page from `build/frontend-stub/`); `task build` builds the real frontend.
 - **Rebuilt ad hoc apps lose folder access.** Security-scoped bookmarks are tied to the signing identity, so a folder added by a differently signed build shows "Choix lost access to this folder. Add it again." Adding it again replaces the bookmark.
 - **`task dev` is not sandboxed** (unsigned). The bookmark code still runs, so the same path is exercised, but sandbox denials only show in a `task package` build. Use `task smoke:sandbox` before a release.
-- **The hardened runtime needs a real identity.** Under ad hoc signing, library validation refuses the bundled ONNX Runtime ("different Team IDs"), so `sign:dev` leaves the hardened runtime off. Never "fix" that with `com.apple.security.cs.disable-library-validation`.
-- **`CHOIX_SELFCHECK=1`** runs a headless self-check instead of the app, prints one JSON report and exits; it stays in the shipped build because CI verifies the signed bundle with it (sandboxed, data directory writable, ONNX Runtime version, one inference per installed model, bookmark round trip, Trash check). It touches only the app's own directories, never a user folder, and makes no network request: like any start it creates the data directory, its `models/` directory and the logs directory, and opens `choix.log` for appending; its write probe creates a `.selfcheck-*.tmp` file in the data directory, writes, fsyncs and closes it, then removes it; and it makes a bookmark of the data directory in memory, storing nothing.
+- **`sign:dev` leaves the hardened runtime off.** Ad hoc builds are signed without `--options runtime`; turning it on for them is a pending follow-up. The Developer ID build (`sign:developer-id`) has it. Never add `com.apple.security.cs.disable-library-validation` or another exception entitlement.
+- **Model files of earlier builds are removed at start-up.** `runtime/legacy.go` deletes, best effort and logged once, the two model files earlier builds downloaded into `<data dir>/models/` (with their lock and partial files), then the directory if that left it empty; anything else there stays. The self-check does not do it.
+- **`CHOIX_SELFCHECK=1`** runs a headless self-check instead of the app, prints one JSON report and exits; it stays in the shipped build because CI verifies the signed bundle with it (sandboxed, data directory writable, one Vision feature print of a generated image, the quality formula on that image against its reference value, bookmark round trip, Trash check), for example `{"version":"…","dataDir":"…","dataDirWritable":true,"sandboxed":true,"vision":{"featurePrint":"ok","length":768,"revision":2},"quality":"ok","bookmarkRoundTrip":true,"trashCheck":true}`; a failed check carries `"error: …"` in place of `true` or `"ok"`. It touches only the app's own directories, never a user folder, and makes no network request: like any start it creates the data directory and the logs directory, and opens `choix.log` for appending; its write probe creates a `.selfcheck-*.tmp` file in the data directory, writes, fsyncs and closes it, then removes it; and it makes a bookmark of the data directory in memory, storing nothing.
 - **The `server` build tag is test-only.** It serves the same services and assets over HTTP on 127.0.0.1 for Playwright, with `testsupport` bound; it is never shipped. There is no HTTP API, no SSE, no idle shutdown and no browser UI in the app: the v1 shell was removed, and `internal/retired_test.go` keeps it removed.
 - **Generated bindings are committed.** CI regenerates them and fails on a diff.
 - **`SetMaxOpenConns(1)` is load-bearing.** If you need parallel reads, profile first.
@@ -414,9 +411,10 @@ These are the source of truth for *intent*. If you're adding a feature, find it 
 
 ## Where to stop and ask
 
-- The user is in control. If a request would change the spec's non-goals or anti-goals (Intel or other platforms, bundling the quality model, private APIs, network access beyond the two models, cloud telemetry, ranking auto-picks), surface the conflict before writing code.
+- The user is in control. If a request would change the spec's non-goals or anti-goals (Intel or other platforms, a downloaded or bundled model, private APIs, any network access, cloud telemetry, ranking or auto-picking by the quality score), surface the conflict before writing code.
 - **Anything that touches the sandbox:** a new entitlement, a temporary exception, a helper executable, `os/exec`, a private API. The answer is almost certainly no; ask first.
-- **A new download or a change to `local.KnownModels`** (URL, hash, model): ask first.
+- **Any network access at all** (a download, an update check, telemetry), and anything that would bundle a model or a library: ask first. Hard rule 6 says the app makes no network request.
+- **Changing how prints or ratings are made:** bump `analyze.PrintID` or `quality.ScorerID` in the same change, so stored values become pending instead of silently mixing.
 - **The design gate:** when a hook blocks a gated edit, or a change would re-stale every state, stop and tell the owner. Never approve.
 - **Destructive operations on the user's data** — modifying originals, deleting `.choix/state.db` or `library.db`, renaming files in a folder: confirm first. Auto mode is not a license to destroy.
 - **Signing and release:** identities, certificates, profiles and secrets belong to the owner. Never write them into the repository, never log them, never invent them.

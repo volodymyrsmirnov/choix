@@ -96,54 +96,6 @@ export class MenuActionEvent {
 }
 
 /**
- * ModelStatus is the download state of one model (design type ModelStatus).
- */
-export class ModelStatus {
-    /**
-     * clip | quality
-     */
-    "kind": string;
-
-    /**
-     * disabled | queued | downloading | failed | ready
-     */
-    "state": string;
-    "received": number;
-
-    /**
-     * 0 while unknown
-     */
-    "size": number;
-    "error"?: string;
-
-    /** Creates a new ModelStatus instance. */
-    constructor($$source: Partial<ModelStatus> = {}) {
-        if (!("kind" in $$source)) {
-            this["kind"] = "";
-        }
-        if (!("state" in $$source)) {
-            this["state"] = "";
-        }
-        if (!("received" in $$source)) {
-            this["received"] = 0;
-        }
-        if (!("size" in $$source)) {
-            this["size"] = 0;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ModelStatus instance from a string or object.
-     */
-    static createFrom($$source: any = {}): ModelStatus {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ModelStatus($$parsedSource as Partial<ModelStatus>);
-    }
-}
-
-/**
  * Progress is a folder's scan progress (design type ScanProgress).
  */
 export class Progress {
@@ -200,12 +152,9 @@ export class Quality {
     "enabled": boolean;
     "state": string;
     "active": boolean;
-    "received": number;
-    "size": number;
     "done": number;
     "total": number;
     "rated": number;
-    "error"?: string;
 
     /**
      * FolderID is the folder of the pass Done and Total describe; empty
@@ -230,12 +179,6 @@ export class Quality {
         if (!("active" in $$source)) {
             this["active"] = false;
         }
-        if (!("received" in $$source)) {
-            this["received"] = 0;
-        }
-        if (!("size" in $$source)) {
-            this["size"] = 0;
-        }
         if (!("done" in $$source)) {
             this["done"] = 0;
         }
@@ -253,10 +196,10 @@ export class Quality {
      * Creates a new Quality instance from a string or object.
      */
     static createFrom($$source: any = {}): Quality {
-        const $$createField10_0 = $$createType1;
+        const $$createField7_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("passes" in $$parsedSource) {
-            $$parsedSource["passes"] = $$createField10_0($$parsedSource["passes"]);
+            $$parsedSource["passes"] = $$createField7_0($$parsedSource["passes"]);
         }
         return new Quality($$parsedSource as Partial<Quality>);
     }

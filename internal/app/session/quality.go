@@ -7,29 +7,18 @@ package session
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"sync"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 )
 
 // States of quality:status (v1's quality.State names, frontend QualityState).
 const (
-	qualityDisabled       = "disabled"
-	qualityDownloading    = "downloading"
-	qualityDownloadFailed = "download_failed"
-	qualityWaiting        = "waiting"
-	qualityScoring        = "scoring"
-	qualityIdle           = "idle"
-	qualityError          = "error"
-)
-
-// States of events.ModelStatus the tracker reads.
-const (
-	modelDownloading = "downloading"
-	modelFailed      = "failed"
+	qualityDisabled = "disabled"
+	qualityWaiting  = "waiting"
+	qualityScoring  = "scoring"
+	qualityIdle     = "idle"
 )
 
 // qualityEventKey is the coalescing key of quality:status.
@@ -41,8 +30,6 @@ const qualityEventKey = "quality"
 type QualityOptions struct {
 	// Enabled reports the quality_rating setting.
 	Enabled func() bool
-	// Model returns the quality model's download status. nil: none known.
-	Model func() events.ModelStatus
 	// Busy reports whether a job is queued or running. nil: never.
 	Busy func() bool
 	// Emit receives quality:status (key "quality"). nil: no events.
@@ -59,14 +46,14 @@ type qualityPass struct {
 // QualityTracker is the job's QualityRun and the one source of the quality
 // status. Status computes the snapshot; quality:status sends it whenever it
 // changes: every change of state at once (EmitNow), progress within scoring
-// and downloading coalesced. Its methods are safe for concurrent use.
+// coalesced. Its methods are safe for concurrent use.
 type QualityTracker struct {
 	o QualityOptions
 
 	// sendMu serialises computing a status and handing it to the Coalescer,
 	// so statuses reach it in the order they were computed and a coalesced
 	// progress value can never follow a newer state. Lock order: sendMu,
-	// then the locks of Busy and Model, then mu.
+	// then the lock of Busy, then mu.
 	sendMu  sync.Mutex
 	sent    events.Quality // the last status handed to Emit; guarded by sendMu
 	hasSent bool
@@ -76,7 +63,6 @@ type QualityTracker struct {
 	mu       sync.Mutex
 	passes   []*qualityPass // in flight, oldest first
 	rated    int            // photos dealt with by the passes that ended
-	lastErr  string         // the error of the last pass when scoring could not work
 	queued   int            // Changed calls not yet published, a FIFO of contentless notifications
 	draining bool           // the drainer goroutine runs
 	drainers sync.WaitGroup // the drainer goroutine; tests wait on it
@@ -95,23 +81,16 @@ func NewQualityTracker(o QualityOptions) *QualityTracker {
 
 // Status returns the quality status. State, first match:
 //   - disabled: the setting is off;
-//   - downloading: the model is downloading (Received, Size);
-//   - download_failed: its download failed (Error);
 //   - scoring: a pass is running: Passes lists every pass in flight with
 //     its folder, oldest first; Done, Total and FolderID are the latest
 //     pass begun's (two folder jobs run at once, so two passes may);
-//   - error: the last pass ended because scoring cannot work
-//     (local.ErrQualityUnavailable; Error);
 //   - waiting: a job is queued or running;
-//   - idle otherwise.
+//   - idle otherwise, also after a pass that ended with an error (it is
+//     logged; its photos stay pending).
 //
-// Active is true for downloading, waiting and scoring. Rated counts the
-// photos the passes dealt with since the tracker was made; it only grows.
+// Active is true for waiting and scoring. Rated counts the photos the passes
+// dealt with since the tracker was made; it only grows.
 func (t *QualityTracker) Status() events.Quality {
-	var model events.ModelStatus
-	if t.o.Model != nil {
-		model = t.o.Model()
-	}
 	busy := t.o.Busy != nil && t.o.Busy()
 
 	t.mu.Lock()
@@ -122,30 +101,20 @@ func (t *QualityTracker) Status() events.Quality {
 	for i, p := range t.passes {
 		passes[i] = events.QualityPass{FolderID: p.folderID, Done: p.done, Total: p.total}
 	}
-	lastErr := t.lastErr
 	t.mu.Unlock()
 
 	switch {
 	case !on:
 		s.State = qualityDisabled
-	case model.State == modelDownloading:
-		s.State, s.Received, s.Size = qualityDownloading, model.Received, model.Size
-	case model.State == modelFailed:
-		s.State, s.Error = qualityDownloadFailed, model.Error
 	case len(passes) > 0:
 		latest := passes[len(passes)-1]
 		s.State, s.Done, s.Total, s.FolderID, s.Passes = qualityScoring, latest.Done, latest.Total, latest.FolderID, passes
-	case lastErr != "":
-		s.State, s.Error = qualityError, lastErr
 	case busy:
 		s.State = qualityWaiting
 	default:
 		s.State = qualityIdle
 	}
-	switch s.State {
-	case qualityDownloading, qualityWaiting, qualityScoring:
-		s.Active = true
-	}
+	s.Active = s.State == qualityWaiting || s.State == qualityScoring
 	return s
 }
 
@@ -197,14 +166,10 @@ func (t *QualityTracker) Begin(ctx context.Context, folderID string) (passCtx co
 		if i := slices.Index(t.passes, p); i >= 0 {
 			t.passes = slices.Delete(t.passes, i, i+1)
 		}
-		// Never below what the progress already counted.
+		// Never below what the progress already counted. A pass's error
+		// (the setting switched off, the folder gone, repeated failures of
+		// single photos) is not a state: the job logs it.
 		t.rated += max(p.done, rated)
-		// A pass stopped by the setting, by the folder going away or by
-		// repeated failures of single photos is not an error of the rating.
-		t.lastErr = ""
-		if errors.Is(err, local.ErrQualityUnavailable) {
-			t.lastErr = err.Error()
-		}
 		t.mu.Unlock()
 		t.publish(false)
 	}
@@ -226,15 +191,14 @@ func (t *QualityTracker) SettingChanged() {
 	t.publish(true)
 }
 
-// Changed reports that the quality model's status or the queue's state
-// changed: the status is computed again and sent when it differs from the
+// Changed reports that the queue's state changed: the status is computed again and sent when it differs from the
 // last one sent — a new state at once, progress coalesced. It returns at
 // once, so it may be called from anywhere, also from inside an Emitter or
-// while holding the lock that Busy or Model takes.
+// while holding the lock that Busy takes.
 //
-// The sources cannot be read on the caller's goroutine: the Queue and the
-// models Manager emit while holding the very locks Busy and Model take, and
-// the Coalescer holds its delivery lock while its Emitter runs. So each call
+// The source cannot be read on the caller's goroutine: the Queue emits while
+// holding the very lock Busy takes, and the Coalescer holds its delivery
+// lock while its Emitter runs. So each call
 // is queued and a single drainer goroutine reads the sources once per call,
 // in call order: no notification is merged into another, and every state the
 // drainer reads is sent, in order.
@@ -297,14 +261,13 @@ func (t *QualityTracker) publish(force bool) {
 // qualityEqual reports whether a and b are the same status.
 func qualityEqual(a, b events.Quality) bool {
 	return a.Enabled == b.Enabled && a.State == b.State && a.Active == b.Active &&
-		a.Received == b.Received && a.Size == b.Size && a.Done == b.Done && a.Total == b.Total &&
-		a.Rated == b.Rated && a.Error == b.Error && a.FolderID == b.FolderID &&
+		a.Done == b.Done && a.Total == b.Total && a.Rated == b.Rated && a.FolderID == b.FolderID &&
 		slices.Equal(a.Passes, b.Passes)
 }
 
 // qualityProgressOnly reports whether a and b differ only in progress:
-// bytes downloaded, photos done and rated, within the same state and the
-// same passes (the same folders, in the same order).
+// photos done and rated, within the same state and the same passes (the
+// same folders, in the same order).
 func qualityProgressOnly(a, b events.Quality) bool {
 	if len(a.Passes) != len(b.Passes) {
 		return false
@@ -314,7 +277,7 @@ func qualityProgressOnly(a, b events.Quality) bool {
 			return false
 		}
 	}
-	a.Received, a.Size, a.Done, a.Total, a.Rated = b.Received, b.Size, b.Done, b.Total, b.Rated
+	a.Done, a.Total, a.Rated = b.Done, b.Total, b.Rated
 	a.Passes = b.Passes
 	return qualityEqual(a, b)
 }

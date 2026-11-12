@@ -135,7 +135,7 @@ func TestOnChange_ReceivesOldAndNew(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	want := config.Defaults()
-	want.VisualClusterThreshold = 0.8
+	want.VisualSimilarity = 0.8
 	want.QualityRating = false
 	if len(got) != 1 || got[0].old != config.Defaults() || got[0].cur != want {
 		t.Fatalf("OnChange calls = %+v, want one (defaults → %+v)", got, want)

@@ -1,6 +1,5 @@
 // Package appdir centralizes the on-disk location of Choix's app-level
-// state: config.toml, downloaded models, the library database, preview
-// caches and logs. Everything lives under
+// state: config.toml, the library database, preview caches and logs. Everything lives under
 // <NSApplicationSupportDirectory, user domain>/Choix — inside the sandbox
 // container when the app is sandboxed — and logs under
 // <NSLibraryDirectory>/Logs/Choix.
@@ -15,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 const appName = "Choix"
@@ -63,19 +61,17 @@ func Config() (string, error) {
 	return filepath.Join(r, "config.toml"), nil
 }
 
-// Models returns Root/models, creating it if missing. Returns "" on error
-// so callers can degrade gracefully (a missing models dir means no model
-// is installed).
-func Models() string {
-	r, err := Root()
+// LegacyModels returns Root/models, where builds before the built-in
+// grouping and quality kept their downloaded models. It creates nothing,
+// neither that directory nor the data root, and returns "" when the data
+// root cannot be determined. Only the start-up clean-up of those files uses
+// it.
+func LegacyModels() string {
+	r, err := rootPath()
 	if err != nil {
 		return ""
 	}
-	dir := filepath.Join(r, "models")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return ""
-	}
-	return dir
+	return filepath.Join(r, "models")
 }
 
 // LibraryDB returns Root/library.db. The file itself is not created.
@@ -140,22 +136,6 @@ func Logs() (string, error) {
 		return "", fmt.Errorf("create logs dir: %w", err)
 	}
 	return dir, nil
-}
-
-// bundleFrameworksDir returns p, cleaned, when it is an absolute path of
-// the form <name>.app/Contents/Frameworks, and "" otherwise.
-func bundleFrameworksDir(p string) string {
-	if !filepath.IsAbs(p) {
-		return ""
-	}
-	p = filepath.Clean(p)
-	contents := filepath.Dir(p)
-	app := filepath.Base(filepath.Dir(contents))
-	if filepath.Base(p) != "Frameworks" || filepath.Base(contents) != "Contents" ||
-		len(app) <= len(".app") || !strings.HasSuffix(app, ".app") {
-		return ""
-	}
-	return p
 }
 
 // Sandboxed reports whether the process runs inside the App Sandbox, i.e.

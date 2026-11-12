@@ -200,8 +200,9 @@ func fill(st *store.Store, folder, thumbs string) error {
 				return err
 			}
 		}
-		// v1 without the CLIP model: the analyze stage wrote the row with a
-		// NULL embedding.
+		// v1 that computed no embedding: the analyze stage wrote the row with
+		// NULL in the legacy embedding column (clip_embedding), which 1.x and
+		// 2.0.0 wrote.
 		if _, err := db.ExecContext(ctx,
 			`INSERT INTO ai_signals (file_id, clip_embedding, computed_at) VALUES (?, NULL, ?)`,
 			o.id, fixedMtime.Add(30*time.Minute).Unix()); err != nil {

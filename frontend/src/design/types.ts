@@ -53,27 +53,27 @@ export interface SettingsBody {
   hide_rejected_photos: boolean
   cross_device_merging: boolean
   quality_rating: boolean
-  // New in 2.0 (spec §4.2): off means CLIP is never downloaded and folders
-  // cluster by time only.
+  // New in 2.0: off means no feature prints are made and folders cluster by
+  // time only.
   visual_grouping: boolean
 }
 
 // Snapshot of the background quality worker.
 export type QualityState =
-  | 'disabled' | 'downloading' | 'download_failed' | 'waiting' | 'scoring' | 'idle' | 'error'
+  | 'disabled'
+  | 'waiting'
+  | 'scoring'
+  | 'idle'
 export interface QualityStatus {
   enabled: boolean
   state: QualityState
   // Keep polling while true: work is in flight or queued, or a scan is
   // running that will hand the worker photos.
   active: boolean
-  received: number // model download, bytes
-  size: number     // 0 while unknown
   done: number     // photos rated in the current pass
   total: number
   // Photos dealt with since choix started; only grows.
   rated: number
-  error?: string
   // The folder of the pass that done/total describe (the latest begun);
   // absent when no pass runs.
   folder_id?: string
@@ -135,14 +135,6 @@ export interface FolderSummary {
    * own literals compile until the binding carries it.
    */
   added_at?: number
-}
-
-export interface ModelStatus {
-  kind: 'clip' | 'quality'
-  state: 'disabled' | 'queued' | 'downloading' | 'failed' | 'ready'
-  received: number
-  size: number
-  error?: string
 }
 
 export type ScreenId = 'library' | 'folder' | 'focus' | 'compare' | 'settings'

@@ -1,4 +1,4 @@
-// The Folder cases (200–229) against the approved scenarios, without a
+// The Folder cases (200–231) against the approved scenarios, without a
 // browser:
 //   - the cases cover exactly the registered Folder states, each driven;
 //   - FOLDER_STEPS (cases.ts, which runs on Node and cannot import the
@@ -23,7 +23,7 @@ import { reclusterWithToast } from '../../src/app/folder/recluster'
 import { filterClusters } from '../../src/design/screens/folder/filter'
 import { FolderScreen } from '../../src/design/screens/folder/FolderScreen'
 import type { FolderProps } from '../../src/design/screens/folder/props'
-import type { FolderFilter, ModelStatus, QualityStatus, SettingsBody } from '../../src/design/types'
+import type { FolderFilter, QualityStatus, SettingsBody } from '../../src/design/types'
 import type { FolderView } from '../../bindings/github.com/volodymyrsmirnov/choix/internal/app/catalog/models'
 import { CASES, FOLDER_STATES, FOLDER_STEPS, type FolderSteps } from './cases'
 import { mediaPhoto } from './fixtures'
@@ -155,7 +155,6 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
         row: summary.get().value,
         scan: scan.get().value?.[folderId],
         settings,
-        models: f.models as ModelStatus[],
         quality: (f.quality as QualityStatus | undefined) ?? null,
         filter,
         chosen: s.down ? (visible[s.down]?.id ?? null) : null,
@@ -180,7 +179,6 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
         'openMenu',
         'selectedClusterId',
         'settings',
-        'grouping',
         'quality',
         'reclustering',
         'failedFiles',
@@ -231,4 +229,12 @@ test('FOLDER_MEDIA gives each member the photo the scenario shows for it, and se
   const r = Bun.spawnSync(['bun', `${import.meta.dir}/fixtures/media.ts`])
   expect(r.exitCode).toBe(0)
   expect(JSON.parse(r.stdout.toString())).toEqual(MEDIA)
+})
+
+test("227's fixture answers visual grouping off, every other Folder state's answers it on; 227 draws as 203", () => {
+  for (const n of FOLDER_STATES) {
+    expect([n, (FOLDER[n]!.settings as SettingsBody).visual_grouping]).toEqual([n, n !== 227])
+  }
+  const html = (n: number) => renderToStaticMarkup(<FolderScreen {...folderScenarioProps(n)} />)
+  expect(html(227)).toBe(html(203))
 })

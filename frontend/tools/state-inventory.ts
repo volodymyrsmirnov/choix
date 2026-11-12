@@ -45,12 +45,6 @@ export interface NotState {
  */
 export const NOT_STATES: NotState[] = [
   {
-    what: 'No. 10, both models downloading',
-    reason:
-      'Cannot occur: the two model downloads run one at a time, CLIP first. 11 (CLIP downloading, quality queued) and 17 (CLIP ready, quality downloading) cover the sequence. It was dropped before the first committed snapshot, so the number was never registered and is not retired.',
-    source: 'frontend/prototype/scenarios/welcome.tsx (header)',
-  },
-  {
     what: 'No. 309',
     reason: 'There is no "last photo" state: photo navigation in Focus wraps around, as in v1.',
     source: 'frontend/prototype/scenarios/focus.tsx (header)',

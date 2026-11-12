@@ -1,7 +1,7 @@
 {
   "browser": "chromium 158.0.8127.18",
   "extractor": "16c3cecaf9db247f",
-  "sourceDigest": "c39ad48469eeb223b6c5e7d885e469ca3b785a022a76483e7d41e8500064bc5d",
+  "sourceDigest": "aff66a2269b9f26b945531521815baeb5bfa1b542c8877c8c1288bae4a6b228a",
   "states": {
     "100": {
       "hash": "5cf695feb3f6c50cb055a29913c4bf2dba69c190dd920bcb095aa0f98d4780ae",
@@ -93,15 +93,6 @@
         "min/dark/macos": "085f928550ff72b37a1bb2a568897068d35f307d35b0ceeb4147495cfefa2074"
       }
     },
-    "11": {
-      "hash": "1bc8be3fa2adcac5d65727ca2a9c74331e641afa15e32c5f095ae4624d246290",
-      "label": "CLIP downloading, quality queued",
-      "variants": {
-        "default/dark/macos": "b3f99d6e46f9f21e9f32e0f31337fa572d114acb519d47576c2ab97620681d9d",
-        "large/dark/macos": "14dcb02d5f4048e32f09811320e906efb6d2320d3efa84eed9795f59be481336",
-        "min/dark/macos": "ec2f4baf945df5c4df8bdbb8014d2326729f42632f0c3f8bdff839a412413eb2"
-      }
-    },
     "110": {
       "hash": "52a22de9c14d903e1a83a813b56b3a8af491200f0f014893feb1fc15f274e6fa",
       "label": "80-Char name, long RTL/emoji path",
@@ -118,15 +109,6 @@
         "default/dark/macos": "3d4463560ae138d81e1dcfebce8de6de5bf56cb14841e01c17b45be94e6cc5f9",
         "large/dark/macos": "23f5226932b01eb84ceb1121b335464a9dd60c8e22faa2cb2b2bb1799553a798",
         "min/dark/macos": "cecde3bc24134e109e4ca1d6bbae76802fa518a6ddf8c59754a2a1e7bd86655e"
-      }
-    },
-    "112": {
-      "hash": "15899063ee69ce7a45c55d54953e6cfa58800444b66e5fbaa0f7e1fb2bf9b636",
-      "label": "Compact model-download banner",
-      "variants": {
-        "default/dark/macos": "ca98ac139080acfe6a50346c62576b2ebc272a923fa3e24f12c7937286906f4c",
-        "large/dark/macos": "c595ec6a944f0e965291ec88d04fc0bd40c39d90890ecaeffd32f10bdf9899b3",
-        "min/dark/macos": "def05c153159de33944044395f680ff5794a97ba94ff3e103dbe957483ac84ec"
       }
     },
     "113": {
@@ -190,24 +172,6 @@
         "default/dark/macos": "32fcd6796211e4d3c53b970041000e33c548b308007c9c8a49baf0de6e19873f",
         "large/dark/macos": "2cf34551860e8b819bdc7fd48817e6218919537bfba7b85c9af1a469984a4619",
         "min/dark/macos": "05a343a7d86c9ece003b9d92010345b9dd952a6347a3431615bddb7fd3cce60d"
-      }
-    },
-    "12": {
-      "hash": "7dd9dd5394969f37c3d975382951732574170daf4cdd340f69a7e3fffb43be3b",
-      "label": "CLIP failed (Retry)",
-      "variants": {
-        "default/dark/macos": "fa1a5f940475bbf67c7d79a3284ceaa50fe524810f5dd6699ed50eb15c7b368f",
-        "large/dark/macos": "17d7a5ff7cba873f7f654f2ccbe4ca91bb06ce6ac0726ab27e0f28601655db44",
-        "min/dark/macos": "1e2eb09c2ce2ef08ca869e94a546db83e91d61c1a39f69741efa43faa99bb323"
-      }
-    },
-    "120": {
-      "hash": "20d3e480512f292f7452ddf604a2a854d4c22d446ff7c3fcf542ded8b2c10e13",
-      "label": "Compact banner, download failed",
-      "variants": {
-        "default/dark/macos": "b191581eac94953113c23e529991c5b8b5fb55cd62a0b006c687efa79977b91b",
-        "large/dark/macos": "2f7d81210e10ee914dcfa7cf05303034880a9dd5f4866d0519345b17d1659ee7",
-        "min/dark/macos": "4dae75adc4a61218b15f2c8d050f3291c9162c1eed9ff6299235ac7ce2f3b5f7"
       }
     },
     "121": {
@@ -291,15 +255,6 @@
         "min/dark/macos": "a77d82a6f45f242223f5fdf8e217885819e46d75dfba727a92a7490cebe98f87"
       }
     },
-    "13": {
-      "hash": "b498b2713d0efc63675f7537f00961d333e8b894c378d3a319759ab1865f36ba",
-      "label": "Quality failed",
-      "variants": {
-        "default/dark/macos": "79ba56c9fd7fb333d6f584d5c5dd9630263bf1856a206f630ebb4e90f046f300",
-        "large/dark/macos": "56b6f24e0745f9d03c1e8f138c3318f40de570f612d69372072f317f6570138e",
-        "min/dark/macos": "4af318477c60cb5ed6588c8227b25821880b0379a0d1b72dd48b087a28feaad2"
-      }
-    },
     "130": {
       "hash": "9ff04aa4cf3cc768e1d466912d83a25dbfa95f3618124092df860c2c9e7a2cbc",
       "label": "Filter with nothing to show",
@@ -316,42 +271,6 @@
         "default/dark/macos": "a2ff41295dcebe5fd373fdb8562e490ddcf2e098c94995465381e6f9bcf21815",
         "large/dark/macos": "832bb55669af52db8d514d1870f6fe25f57b695fbaa8e82dc782deccfc61c537",
         "min/dark/macos": "5040c8e7bed70b585682edd820655ef7bb92ef8536b9f88876924265ee1416ac"
-      }
-    },
-    "14": {
-      "hash": "7cecfd3a8b02c2fac2d335c589cc02941dc621c0f59646d036297dc5b4d5fe34",
-      "label": "Offline, both failed",
-      "variants": {
-        "default/dark/macos": "6afec530cbd21a51193288552ea41257c07906f90fdf213ccd89a0ff13412602",
-        "large/dark/macos": "0a0945c88dfd393827a174051c4373d02e8476dbed41ca2b5a9fb5e20bf8f6dd",
-        "min/dark/macos": "c9c64191ba72acd1e30c6f57d18747c18cb0b78c15a59c641acc9d3721f13713"
-      }
-    },
-    "15": {
-      "hash": "62274d24947b5014b37f11a8bb973c62963b799086d397cd190736eb833a312d",
-      "label": "Visual grouping off",
-      "variants": {
-        "default/dark/macos": "c0c110d6b3860eec9df9445bf4fafad52801654818166e877b20db76650aea70",
-        "large/dark/macos": "ad1e1f2c0f4260c9f3c206ee3c0da5648ab3377085a60111a46caf20b27e1627",
-        "min/dark/macos": "a4224e1b3494a271ba732047642488c45e481f390b6c12d02cd768f8cceca4a5"
-      }
-    },
-    "16": {
-      "hash": "1230320e360cf7dcfe264862c5c5c344f4c21fdc8daa37c20336e120eb54601f",
-      "label": "Quality rating off",
-      "variants": {
-        "default/dark/macos": "c992f2c9937c708962df5c8b4ce4df6e92d5d896fe9998550d97470924a43172",
-        "large/dark/macos": "71048769d7bdbe031727b6e6bd828eb3fed231f36e89b5f133967179efe783cd",
-        "min/dark/macos": "672df25f05e6ee91672db64f2abb81fdd4495b697bdf341e7a3f441e13b6e16a"
-      }
-    },
-    "17": {
-      "hash": "a6dea0ebfd54fc6c72ba8e41e5d5889b8687848702b3a251dac5943bc49ea23a",
-      "label": "CLIP ready, quality downloading",
-      "variants": {
-        "default/dark/macos": "fa34e81711e7599d037bcb2c60bff67314f80fbda96c2caa2d0e0723b2b4dcb0",
-        "large/dark/macos": "8dce80078514314beb789719505cde45593228a95d47b023ff85940b30d99518",
-        "min/dark/macos": "22c163176c28a987c6ae6b850eb6a969e1844e30eef4d493db51d13821d511e6"
       }
     },
     "200": {
@@ -373,111 +292,111 @@
       }
     },
     "202": {
-      "hash": "b5547fc17aea327092f71e8d07d421501d0a53aa1329c91e64f6d0518a140c89",
+      "hash": "593651915a4819d5658a1b870677b8d3b15a6fc07c610f3c1e4db17c96919ae2",
       "label": "Filled",
       "variants": {
-        "default/dark/macos": "34da0f4b631fea19ed45efcdc8047cb252920f0a2460e75aad1f4741720fb6f3",
-        "large/dark/macos": "8091e9a8da3abd6cb06d3f7a9174dedbd9610378b9cb2ad759b45750eec1117f",
-        "min/dark/macos": "d32147de2a92398962fa63624fb5b03f3f0c2607cd9986918836618859164609"
+        "default/dark/macos": "012fde2fbfca5ece61859caadb49c5c072c69dda0ba60248f616e6e850ca9c28",
+        "large/dark/macos": "7fcebdb0f1f39a6fb27568218cae15fb209a123ff5a4a1b8b4fd2c696a0dacc2",
+        "min/dark/macos": "176fe17597c74fb9973431a78b740cc9777ccc460419654e039386e6f445e5b3"
       }
     },
     "203": {
-      "hash": "e84bd609d279f6305a82eba4452ff12915cc19c78cfe5bfb700047635f275a7f",
+      "hash": "a3d33b1a6f1fd6636f1c64725d5dc0cf9c6f2c7aff652b78ae08302be77807e3",
       "label": "With picks and rejects",
       "variants": {
-        "default/dark/macos": "98954f7d393921f122f753a8d600332d10a3bc325ac7f131f7f76d54333d8aed",
-        "large/dark/macos": "acb14e0077232f8d094e92b9ea4ccf7731af4b556368d8726e5abb7df68e4f81",
-        "min/dark/macos": "b531741a293ba27900b46c9015fc7545e08aa48a44bb4e42897616009f0ec679"
+        "default/dark/macos": "c81ef4ec351274d65c5890e2c6856f2ca7eb25e0a68e22ddea9720eb2e58c4ad",
+        "large/dark/macos": "19c5ede9123a1ae68723096231470902fb6efa622ca8cff17e2585a1b26629fc",
+        "min/dark/macos": "a987e65079c561f67548041e72869bffd2ece1b7b507d9247c59a44c776cd640"
       }
     },
     "204": {
-      "hash": "25accde76766e8c5d2176d747ad76d83354cabc21089800c97b0472fe2901381",
+      "hash": "4588b15a4c0847ffa0fb68e6ba4f2b4d4af4f2aaa6d6720946a636f9ff0e0295",
       "label": "Filter text with results",
       "variants": {
-        "default/dark/macos": "6d1b6688e380079d4b2b1aad84a255276d95f7f98e5e097ab73fa5ac7ab23949",
-        "large/dark/macos": "b1585c2ba77f8ae9fa34a04342cba416f0bd779a78186e7e2f3b7d08058683c0",
-        "min/dark/macos": "0ff195a49df0f8a2984b806157440f5326909623092dc91b17873b89f0396041"
+        "default/dark/macos": "212f892f076a445be16ccc8c285b9359e2f0942d63fe5d5343b23e6583532280",
+        "large/dark/macos": "ea484b57797f4aedc405589235302ceaaf9e97ad10771ded7325919fa9eec7c0",
+        "min/dark/macos": "9088e04696621f21f7370e6f92ee15e954be88e8c00c694fc2ff14251157503c"
       }
     },
     "205": {
-      "hash": "1d35cfc178cf451fa20f243ec5922012dfedfc05ab032edcebb78e4a84e8a141",
+      "hash": "e3086cf169b03a1da45df2f025b9cc58b89d76a1b7c549cf2c54fe5fe0067f96",
       "label": "Filter, no match",
       "variants": {
-        "default/dark/macos": "72de64f2028c4a838a4f5a2fb459fa0a5aae6a24c7783a1c5af927686465ae1d",
-        "large/dark/macos": "7f3a3dfeb3fa4e1be7ab293c334c4f3b7357872a28fdaf21171e1ba99443b6e1",
-        "min/dark/macos": "cb1c8a6de6576b5fbe25892ee609719f8ec319f09306bf918ae0113f161cf19b"
+        "default/dark/macos": "9642e3f65c33b34b568fa0892a4a6e596d854838ac1aa8b959f97f54df6d1683",
+        "large/dark/macos": "ea3e9f66a2adb523d4c3c5bee89b4fd14b99e95ea3713452cdabb1e3f437ce98",
+        "min/dark/macos": "f24b7d7a5c4ebf6e5e0b944d0e223e7dc6ca5baaea9f029e7aba766c32cf605a"
       }
     },
     "206": {
-      "hash": "f27327c1da667d010b46879974fad8fc798beedb2bb0fdbdf420d81e01f733f1",
+      "hash": "dd6a46c43ac6420b9ac0fe7d2d38ebcad604f9eafdc41caed77324e972c13eb5",
       "label": "Camera menu open",
       "variants": {
-        "default/dark/macos": "d98f18ff378c41c9496ff147632db542381051a5485f27e42ac86958fdb19e68",
-        "large/dark/macos": "f87c6024a367699140f016e200f9e4f1d122090007315219cea38c61e9f3cd8f",
-        "min/dark/macos": "a7540ee24c9d0e6349fadf4836a6e49433e1be365130eb909ea492aeac6eba52"
+        "default/dark/macos": "492ba0007f5507f1063d06d52b7157fc8c6ca82fb28ccfa7418321e6821fd1a7",
+        "large/dark/macos": "869c03242719d18cd3b847caa117ccc49f9f82f53367403300ef0d789341656f",
+        "min/dark/macos": "2a24311e32e90f7bec9bafe206d018f75cf1dd4d2e9c608e94b15a8408e0cf9d"
       }
     },
     "207": {
-      "hash": "77ac6306e73b083dab5d795ee4a9e47d6caea1675810b9ffc86f30d189439efe",
+      "hash": "49b7803639e23942ea5a12d75fa647842c12c9dc77cb39bbe7afa24fdb7a0d42",
       "label": "Cluster keyboard-selected",
       "variants": {
-        "default/dark/macos": "298f499e2998de60e57aa38c2b239a5b438b5bd6d655b3368cdfae0e396b73c0",
-        "large/dark/macos": "6c615def7639d3b80b44ff146bb6e8a53a41d3c2cf6a93f5886f73abd32b8fbe",
-        "min/dark/macos": "bebb5f94ef750940bb353a44b011092ae57f8db3edebbd1bce813d9ca116d124"
+        "default/dark/macos": "8ecb93046d69b041569b22ddeb2ed5a7deebf82f832376be4df33c9d381c6b15",
+        "large/dark/macos": "2473cceef155c7807733207232928118a8a593e6b02832ddfc47bc62e21e3521",
+        "min/dark/macos": "8e592b3fb7a735b959e989f99eabb376d67c9836d4d8f7d81de7c0112d9315fa"
       }
     },
     "208": {
-      "hash": "59b5199343790a74e84fdfe28725a95562c54c0dfa6ee9ad49506b64e26a1f66",
+      "hash": "0876e6b15c565b10c2f55ff6bc78e5408d3a8a836098381d5bb2d6bd013e6a05",
       "label": "Scan running over content",
       "variants": {
-        "default/dark/macos": "01f66d575a0bfedea16c062a9d26d7c32a7a343959e9dddb394ff91b6d20c8d5",
-        "large/dark/macos": "18004c3da678cc0f4ee2d5abc7de3ef9666af0b4af9c08154baade50a9ee2ac8",
-        "min/dark/macos": "bc7533278e4e955393fd614419b397f952a4b96f55bd9e08a2ec8c6c33706ed4"
+        "default/dark/macos": "6ef9d0f987c340f5fb8643fc66bc271c06677a55065dc6fff18b0fe443c85e87",
+        "large/dark/macos": "47da1a59d900531d9fd2813c960207dd7748f56780b585563b5ae90412eb4617",
+        "min/dark/macos": "410f09185b27d41d64b4080b23792d339256fbea06fd4c1f76d2f51166c09a55"
       }
     },
     "209": {
-      "hash": "db36169718a3274ecd9b32749eef479534bc1d938d57b9270196bf8e7239534c",
+      "hash": "8672cc055ce19fd6379386bbd63dd3ca311e50b237652e1ad63b0def8eebad7c",
       "label": "Scan stopped",
       "variants": {
-        "default/dark/macos": "ae499139e1d3f092cd40a763600112cbd279c23af06d9e6f16d73dc07685d036",
-        "large/dark/macos": "3e0cb0ad62d96eb1789fcde5ca748a33acf1a4c9f28d6e1ae97dad7d3b940269",
-        "min/dark/macos": "abe1732e7291d87f98782f710ba2ca8704e13f4c9eab19936688cb79e244e726"
+        "default/dark/macos": "68d73effc370cd8309fdf3be61d5ecad2fb6d648ca753ca3a9a60551c8b826c7",
+        "large/dark/macos": "a42663e4d324bd87ebd6c47b5f180a2cc285e3a44193c1825e92c0bc2a8b2207",
+        "min/dark/macos": "7f118ab02a16abb9c8f394337cd84023cd7c047733d55a798bce3acf348b3a82"
       }
     },
     "210": {
-      "hash": "b6bbea08cd705153d11b53c18029fdf36a36006db93e6b88052cff9c412e2c77",
+      "hash": "5e3c5243774f0df766ea3da13c0159ee98729bfb80c1bbe5cf8a5f864aaaa197",
       "label": "Hide rejected on",
       "variants": {
-        "default/dark/macos": "77c2d51418b31aef81959e3ca876da32ceb8e6565f81d6c32f6c99c23848bdf1",
-        "large/dark/macos": "12d0abb65c96c4997ad24c08939e5589eca2792f6a1f6bfa8d3d9f90109eeee8",
-        "min/dark/macos": "cc2a82f9e409ff416025ac42e5de407d08b993f9d069023f873e3b09e664934c"
+        "default/dark/macos": "4a3ee667705b6097685c9910b21e1cd6760dc1761a351cc04e463fb0e311b3c4",
+        "large/dark/macos": "4ff779b67459eebcf8a6824cf192ef2f3f574cf8adf5cbfd367b1d2ce8d5268e",
+        "min/dark/macos": "2000a33584549765e8cf9f766b673d305c6f8162fbad737fbb218becb8b7df65"
       }
     },
     "211": {
-      "hash": "dd4edc9ad575044f5f1dfd5c57318d7a21579e833e3a44dae78adb03b5ec0d63",
+      "hash": "9ffacab19059b5bdd8095a770942b1d06e3f63712be0539b928ddbb3ac251893",
       "label": "Cross-device merged cluster",
       "variants": {
-        "default/dark/macos": "f891b1156b2685cba367cdba3e4ed6607caa62fdd293bd701bb87d83a718e246",
-        "large/dark/macos": "3b53c08e886654b94624b8e89ab824d417607605b419f5311f163846db744632",
-        "min/dark/macos": "dea6ee21f1ac2a82f20940a117dd2ec092ba37655a4ffe7963440420ad575b0c"
+        "default/dark/macos": "5cae8dbd821bc7ac2605601cd0f7f71d5ec8f75a15d7b6f9d4a931eaf4bb0b84",
+        "large/dark/macos": "9f3d5292c2de43f1469de5694e21e04bfadf92d9ebfde91412ba8c77efc7fca5",
+        "min/dark/macos": "8914bd21956429cb6dc8a70d11e93410843ac2deee4ffc78c16a5d55bd3b85bb"
       }
     },
     "212": {
-      "hash": "f645ce5b4b7cb54ed9ed815016a35e1a087c4096ee3ef7f5f923bf2c38bee975",
+      "hash": "2e9c986aaa17ce1495e1f970c1756a89d522e2320726cd92a78a5c2a5f20cbd1",
       "label": "Quality badges off",
       "variants": {
-        "default/dark/macos": "db7d597fc43671e85c063ca16855ffc7c98dc4396d1e851357c91c279a0ea95f",
-        "large/dark/macos": "551b06d6de7a5e78660ebf95be2bb3b12944692e3e0737989b86f663c9da9495",
-        "min/dark/macos": "e14271af894325d7c8a3e1dc18a26b2b87fb532a8d4db8a8aa1461339bd62742"
+        "default/dark/macos": "ad9afff56d5d3ce87c8f677be12d7f1fdfd5b9106cf2ab5c872895bf597b7392",
+        "large/dark/macos": "ccf94b623594e7841fa0c00926bc0cd7c57a641b76e259bbbb7e865be3b67e81",
+        "min/dark/macos": "9c34d3e9d48bd000fcdd95d28633dcf6b1f44a1c75ccd7a97d9a5693c959835c"
       }
     },
     "213": {
-      "hash": "4c1d683fe3b705d4992f297713d6233e1bf3c1cb857b512121aacc97002998f3",
+      "hash": "296127379bb596051abb7fca0a60cfb356b1e87e06f890e7204c3c3413f39a49",
       "label": "Video cluster (S3)",
       "variants": {
-        "default/dark/macos": "c32e0dc30729613423ca432152709052933524e391a340e56c80a461897cc3ab",
-        "large/dark/macos": "1b24cce73a9ee73e38192c1a7d58b4da662c5b7af2ca39a133081f64fa127b10",
-        "min/dark/macos": "c1f0601d4da3b6b38f695158d2f05ddfa01cca6f98818520e96ca38d8fbaf36c"
+        "default/dark/macos": "96cd1bebb1fa1a7815f075e7f2f5238e46d7fb4823bb248c84f40067a32b08fe",
+        "large/dark/macos": "7ec286d70bac0e2dc25c0b4ac29b0382a75a6a9cf268b7c2b860c84ac5498ceb",
+        "min/dark/macos": "21c6204d76d5f627ea260e956aa04641b76512ea23008ee8acc65f5b1f0c91ea"
       }
     },
     "214": {
@@ -490,138 +409,120 @@
       }
     },
     "215": {
-      "hash": "a8172b549a553db2f8f1f31681b3837804ead5d17b4f47bbb1738a836ce1562f",
+      "hash": "de54a2ad7a93eebb992950c846b169e64606f7369071b7fbbb1f67e8b27e779a",
       "label": "Re-clustering busy",
       "variants": {
-        "default/dark/macos": "baf2f75fe330eae4a434f07122b43d83ba0d87dfafa69cc354f91311324bcce0",
-        "large/dark/macos": "5f6e7d8535f86b6b16662f7cee1eb731fc0617c1a15da59cee6f80f4b0101689",
-        "min/dark/macos": "86f79dfe0237e4c0f245c9a47dcfe223fcec9d1de5f0edb5ef5675cd85bbf71e"
-      }
-    },
-    "216": {
-      "hash": "3da3bb9d6fafe8d82bbd738ace780716b7af2f937de3d4fb95fc9024685c1afa",
-      "label": "Time-only notice (model downloading)",
-      "variants": {
-        "default/dark/macos": "a8d0383cc73c7b1f715a26300e76b57d47075538fef0779cbdcc99ac9faa4af7",
-        "large/dark/macos": "fad1019237baedb7ff706e36e7000a70529de89ac822e11e1d635be9152285b1",
-        "min/dark/macos": "2e9b0b377e4c6aa0c6eb665e9aeb05710707fe249f64ae2f750ff9ff2413d9d2"
+        "default/dark/macos": "49e9d45b2ff4989f635f893f312a0ddcb65aaa5be41c9244f52f8835166d466e",
+        "large/dark/macos": "0d223962a20da85a85bad8be03f9c4810fb5b95c4a4b09c01ab3dfd03c50a2bb",
+        "min/dark/macos": "eb5a538e56e0fa34fe2b56983d51931dbd920219ce71022259561c97214ae792"
       }
     },
     "217": {
-      "hash": "b3cbcf111c440284e1174eabc4afa3bf62967c08ad1a951eb5ed9f0443f53521",
+      "hash": "248067b89fe059b32c289e8d12b443f22435be691e210ba5cb168c4f3e2e7ea5",
       "label": "Cluster fully reviewed",
       "variants": {
-        "default/dark/macos": "4142befda0c022e0c7a75475b71b0a31365f76c4b03615022b0796301ae50a24",
-        "large/dark/macos": "2467209fe7120817d27c4befa4ab0be897c2a7c1ae0bff84b7b82ff86a426f99",
-        "min/dark/macos": "68232bcdb8e551687ef206b0e3703ade492311f382466bdff01e58903fa5c12c"
+        "default/dark/macos": "33f768462bfe2fc04a1128187232a8b10b819f1d79807ac1ee9a1a591819d2a6",
+        "large/dark/macos": "e6e4a23567e9d23d8eef3e3f85ced1b58751f4fec4397b739b2b4d8c3a3b1a29",
+        "min/dark/macos": "e44a3748c04d8e44a392aa82b851662fcc061d00fb4aca3fa57ab1b06f702e2d"
       }
     },
     "218": {
-      "hash": "887469ac8c9da6c64533ae0c92d35654396651bac94bc4939eecd4fe071f510f",
+      "hash": "932f684ddbdf9b9da288929ab237f85c78ca01433dae180e4a4943aad2680980",
       "label": "Sort menu open",
       "variants": {
-        "default/dark/macos": "350e65284975852a74a515aad3e761be33161e933b7f69d90aaf6751919832ec",
-        "large/dark/macos": "76477c028f2c45733fff30385f27610733ea7ef88bf89ec5caab98318333b839",
-        "min/dark/macos": "52ee2a7e9ef52a8724a804d34ba5c1674f8a2bbd6896887d7c04729b68645019"
+        "default/dark/macos": "f1e658559b20b131d8a3106fd99d193df26ab390370b9f3e766dbe032967b036",
+        "large/dark/macos": "abfd7b81d3661aaee1de576c839f3e6f5a802a7824ac558577c4d10d1b664d4d",
+        "min/dark/macos": "f30d05724340b6ad971be577c169f89d648043fd41afa8153f4f002bd5a1d308"
       }
     },
     "219": {
-      "hash": "a3a73ccf8c781b990837778303508bde73663626f6b7cb3ad547cfc9998940ea",
+      "hash": "a46577b470ebabe88c9eb4781113afe5d89b873445ce09417d8e6b091141aefb",
       "label": "Camera filter applied",
       "variants": {
-        "default/dark/macos": "fd90c818c62ee9e5d839240b9846bb84ad1f24cb53f5efeb279b5c889f878433",
-        "large/dark/macos": "5988996b271fa012eb7be0ecd9ea4ae346e5fbabdd0140ce3c693e0109d10601",
-        "min/dark/macos": "6de49dfab8e168b2c765c3e20affb144d38c64985e627496f61172fe8f63d4ba"
+        "default/dark/macos": "e4a42c9af72583664d3e4197ce662b2a55686843157a937ccfc19c9130e6c28d",
+        "large/dark/macos": "e27a0b007e309d4fe7adc8971af20a35a29e65fcb636560d2745244cf656c50b",
+        "min/dark/macos": "bed35eb20be2a841533fca49cb2afc72d331733fc1b0859ce57bd0879682ad31"
       }
     },
     "220": {
-      "hash": "ba502912952aaf4fff186549387fb455f99887046aae3e0bafac5cf4d05b0c29",
+      "hash": "bc0a89414a78188864e5731f0f609aae8078555615c5f456e5479a926b82af96",
       "label": "Strip with +N overflow",
       "variants": {
-        "default/dark/macos": "f0de011d258a543d78dd14ddf6e3758941023de33c2825d5813fd57fea6aaa02",
-        "large/dark/macos": "88c8f17de66dc6646c539d962bb5c99517860bc65cfe2f078cdf2dbf9712b204",
-        "min/dark/macos": "82d42e7f6067ae20d82b97d5eb33406821e480758b33abb116d0de2037a067c4"
+        "default/dark/macos": "7a42540356ea3f6e73fc30e81e1951a5b0f005be51c724b179e7bc4c21178de7",
+        "large/dark/macos": "06650805710566f8946d5c892283677b4efa5bd787f3cb7a6cbf07c049f0b4d8",
+        "min/dark/macos": "927b48a605e054ca0f259bc87cf9695b33311a39a6a91174e2557496210e2b51"
       }
     },
     "221": {
-      "hash": "93b78434afbb2c6559316aa549a4f0e9bad0fe4e24db5f813971813e14198317",
+      "hash": "01f5daed9328a5abf06a544516bf4d91d737d75c126e114d7e6ade505545c577",
       "label": "Failed-files count",
       "variants": {
-        "default/dark/macos": "022d19e4885f9fd55beccedde2b940f0d40d447a696aed981a24531ee1663160",
-        "large/dark/macos": "803230bfedfb76be38fcdb33be31c7a33f9d4ebb85ec7fefc1e5a05308e7f43b",
-        "min/dark/macos": "9bfbd6a075bb54641b9d8a5662fe25f0c0a35a37d9ff12d84c8c26eebf67f75a"
+        "default/dark/macos": "040707b506739633e7df7a319591e6b265d425a21956e7115b488ac2ab578f92",
+        "large/dark/macos": "dd662a01c5449360bc68e88e6e304bda3dd94b8d4d7e7dcbcb5bafa25c7f1fe2",
+        "min/dark/macos": "e915f53e89256a91cfad443cd4b15fc0866ebe75ccab336c69d0e095c58cb84f"
       }
     },
     "222": {
-      "hash": "dadb0ed48829494e50aef89ecb958d07afb174cb659a32cc39e637bbbbc06939",
+      "hash": "335977213114c96a1e98e878beec333ba007f808460dab7eb3b9c201cf6335f2",
       "label": "Re-cluster done toast",
       "variants": {
-        "default/dark/macos": "7be81805c873b0b2d8c38e19f3c04011ea9b1144a2c90a5ba6b69e73b802b66e",
-        "large/dark/macos": "35c14b8895b44cdd18785b2316dcd6eb21d26c8b120e2b89051213965787a5f7",
-        "min/dark/macos": "1124ee9ed2d3d72b948e84134ce706d9ed184022b705e80476d1601d2a521a07"
+        "default/dark/macos": "e76d815ba8b8bc90887a95cb9eb2c690720b75e533b974e51c4465c369ffba08",
+        "large/dark/macos": "0cd6697f869847c129d31b74910614aedf2c6106575c855275cab48477b2c3e8",
+        "min/dark/macos": "3d77aea4bf25bf2c993d5449c9abc1610c5254d7fe7d69907d681b6b5c9aee56"
       }
     },
     "223": {
-      "hash": "37a3ddf286f2223d87748df10e4f29a52e23bc7367433c0dafbfec4bcc8ae254",
+      "hash": "7a57e24f8ddfc4cf36b5bc43264df338cafa8fe7518ceea57faba2950ffbf370",
       "label": "Re-cluster failed toast",
       "variants": {
-        "default/dark/macos": "ac8e41844d83ed0ce8aa1ce9791ee63cc810d6bbacdcd774b46a6949b15d4c2c",
-        "large/dark/macos": "b053e9c17b6501d7e583915ce1c67af6583b69a0cc99fea635c8bffe7a4d3204",
-        "min/dark/macos": "7b22fd8ef31fdee6737a4732dfae59cdae5efb15713ed07636689e210d56c7b0"
+        "default/dark/macos": "f2be53de22e5eb68062234a63e3ff6ac396f1eb36e4bb3418160a7bbba47f40a",
+        "large/dark/macos": "9e8d936b56afdcf668c146f9e59a060382065d2b5083f6ae170336cf05a2090c",
+        "min/dark/macos": "7442d03a538215df48fa619f2809345ac78fe982c931d0fac448cd4cf313e337"
       }
     },
     "224": {
-      "hash": "a72574ebed31905e509cb9f858440d86c4e42675ef1711a88281b57c9ed50b86",
+      "hash": "088615275d64f765d41e7aca4c212a8bcbc7bb2c75cab31f6df27afabd7417bd",
       "label": "Folder went offline while open",
       "variants": {
-        "default/dark/macos": "69d109d9200fde04026d0d3de7943a8b6c0a0c6a545d3fb8d42a1bef933f1e6f",
-        "large/dark/macos": "f8ac5128cb153bb4fbac3dc485140637b05f9a668fbeab61cfa55b01b7f3840d",
-        "min/dark/macos": "f7850a668f14e3c15e9e1bd782ff764be3359a535dc0f525bc454153c19748a1"
+        "default/dark/macos": "8bb9363cf4bade2b768900ebc01edc6fc4908d8c37629813260ff14da2ca07a1",
+        "large/dark/macos": "03618d9b503c13e4b13d73169d567141b83e3aa10daa87dd60e6de07279da25e",
+        "min/dark/macos": "8fd64f176024cc9a38776753c1ca18cb9130a06c70c0540c9c9f4a9e5b0b29c6"
       }
     },
     "225": {
-      "hash": "cf9d5d408bcbad228b83634be1b0276631d11e75edca799355e8297d0cdd2810",
+      "hash": "d2c0ffce5a88741db60ac29336ede63eaa61772782aa7aa6d8b10dbe2914087d",
       "label": "Read-only volume while open",
       "variants": {
-        "default/dark/macos": "4bb79fd278662313622aa5becb1d3b28afdc22c49fdaee02f68fa671c7e33c1a",
-        "large/dark/macos": "ae9aa0dc2cca983b3f6be4a27beff45f5763bf2a2c15b50f799b8e472dd3097f",
-        "min/dark/macos": "c0f393b855f21ce2c4569299f58a3d572d81a589d4e141f9d8503003f71cbe80"
+        "default/dark/macos": "d3e28082918b8d577f27eaf7516f92903e854d0b1b39236dd2bc985c13dfcb09",
+        "large/dark/macos": "4117e676f55ab265fcad22a6b78166a2f29ca5043ae215323ece6016df9914d3",
+        "min/dark/macos": "8cda33363faa41b54ab48a18b33f72b3788f9cd6138a029efd7e4f73815979de"
       }
     },
     "226": {
-      "hash": "b77df5d666cfb5b97f73f863a2c363f50b54bfd329bed8124fd43494a0f43f9e",
+      "hash": "81038b5fff4eaf5e8fa19fe76a0db71c4bbe3bf0c88059b18bd5fdba1f8f7429",
       "label": "Picks missing their copies (notice)",
       "variants": {
-        "default/dark/macos": "d7cae0b2f64b7b653d7aaebc995064eeb7298d82c96b5ab6a8bd1a764cf62e83",
-        "large/dark/macos": "03eb2fbcdc34fa25dc51f6c1f2396e2b8597e7528418ec7c5b451949eb7bf9bf",
-        "min/dark/macos": "b0b071fec4a5e9bcc281e50e7110379fc8192ba487c62c281c72aa98d7c18c53"
+        "default/dark/macos": "cb8eb1af35fd99fb806307274e13ea0a038f02d2a0ab22b5a1bf19d1ead7a1ec",
+        "large/dark/macos": "03893038c0616787b594fd4f2b91a0987dcaeb056ba2548a0bb605a6c98ae112",
+        "min/dark/macos": "76dbea503047c533a66263c6df3007039b89aa415e76c58af50a68dea98d8187"
       }
     },
     "227": {
-      "hash": "e84bd609d279f6305a82eba4452ff12915cc19c78cfe5bfb700047635f275a7f",
+      "hash": "a3d33b1a6f1fd6636f1c64725d5dc0cf9c6f2c7aff652b78ae08302be77807e3",
       "label": "Visual grouping off (no notice)",
       "variants": {
-        "default/dark/macos": "98954f7d393921f122f753a8d600332d10a3bc325ac7f131f7f76d54333d8aed",
-        "large/dark/macos": "acb14e0077232f8d094e92b9ea4ccf7731af4b556368d8726e5abb7df68e4f81",
-        "min/dark/macos": "b531741a293ba27900b46c9015fc7545e08aa48a44bb4e42897616009f0ec679"
-      }
-    },
-    "228": {
-      "hash": "c569d36c007183a9d65d640fc9813ce076ddd2f0a8e4f18deb5e7baa8ab7435b",
-      "label": "Time-only notice (model download failed)",
-      "variants": {
-        "default/dark/macos": "d45dd2fbe19931c5152aae5239330e48fc520bd62af69acb31fb004a74a9e053",
-        "large/dark/macos": "af8a710e5a1b614d8edb8e78f8d98fecc5c9c8168036ae898ed4b137fd97eea6",
-        "min/dark/macos": "8ab6bf8f02d3b3b56be7d665179d4b833617d1087850faca470ffef086b5e857"
+        "default/dark/macos": "c81ef4ec351274d65c5890e2c6856f2ca7eb25e0a68e22ddea9720eb2e58c4ad",
+        "large/dark/macos": "19c5ede9123a1ae68723096231470902fb6efa622ca8cff17e2585a1b26629fc",
+        "min/dark/macos": "a987e65079c561f67548041e72869bffd2ece1b7b507d9247c59a44c776cd640"
       }
     },
     "229": {
-      "hash": "629e9a3652f3e4767e1211f84bb0543055eebeecf0d23fcfaef8dd3f5a5e758a",
+      "hash": "8abeda6e704ce813c326f0c81845a90c932e6960e129e2d481335866af4be0cf",
       "label": "Title bar with quality indicator",
       "variants": {
-        "default/dark/macos": "231f83665539ddee32ab747688ae85fc7b95f085645c72f62d22b60832b99c14",
-        "large/dark/macos": "1f77b75fa29b5cde0266551add3eb13bd65a6d0af2acaa28e846b6c59eb5ffe7",
-        "min/dark/macos": "d63f24f1fa061fd9ce4625affcdb8c5cd1846816438a7835908081ed27441bd3"
+        "default/dark/macos": "3123ce2ecc54b66ae70f31bdd54b126a6ae9c6796bf34f4a000b04422883c5ad",
+        "large/dark/macos": "ac808d3f4f07c1eb2fbe1a496c4c16f4219f1791f569cf5a1169eeb981ae7897",
+        "min/dark/macos": "41d3c28a615c836a2a4711157263fc66243d6499c751f3af5ed57626b1084bd0"
       }
     },
     "230": {
@@ -634,12 +535,12 @@
       }
     },
     "231": {
-      "hash": "c21decd8da030fec7f064618e60f397ab9dba5fbab1f9a7308ec9190c308f1d2",
+      "hash": "d6f1d42709f82c830864da5008af5ff81c984032774ec1c37352c5a982a9ecbd",
       "label": "Long name, scan running (indicator keeps its label)",
       "variants": {
-        "default/dark/macos": "f3fffd792fad0d1b91f9541829c4ab81c97a0976616ac7a13f2c4f794b9f6480",
-        "large/dark/macos": "d0e91e7bbff7d6fff994e16de387b98a96067fbb2b29a93c69bd6d1d4368a2a5",
-        "min/dark/macos": "9317fd54e8ce2c202c39f6dfc37903a40677ec975771ef512b7acbaaa3b3f695"
+        "default/dark/macos": "2d9cf0981e7b95f5351d7250be797940b8e592a59bd0c24c7b0d24b371954a59",
+        "large/dark/macos": "ba9d53d81e7fb6f26a524684fb865c2cc28624ecda0b733ba049766ae6f09727",
+        "min/dark/macos": "40371e101caf6f8f3122ca3fd6a49e3bc4f5ec5b05a2cfe865bd9f326ceea376"
       }
     },
     "30": {
@@ -976,93 +877,75 @@
       }
     },
     "500": {
-      "hash": "16a728fc3a15340fdf2625fd566a5d04d19928e6e1bce71bb82b613949ca610f",
+      "hash": "71f2614482672fc6a5661fa933a24a6f3beed998284dedb8a7e52ac6cb1d8ce5",
       "label": "Saved values, Grouping section active",
       "variants": {
-        "default/dark/macos": "d1cfd52b979149cac833b68edbae39acc0b71008879f0eaa24acaba92e1bb2ea",
-        "large/dark/macos": "25a850ce97ae2602644b90021cc1c2556ac860c90eb76339584d634ab8a20fdf",
-        "min/dark/macos": "b4f93496ed48277e2d91c8214761953a3c821d8c8234dd5ae2efec14e86baf65"
+        "default/dark/macos": "9ae6688867482d04af2617587a116ac93fb1f32ddb6b0f10e1efde984a7bbdf3",
+        "large/dark/macos": "fc81d359776e0147a1111effa09e5a1537e59941e6a9a7abe6c199f8dd6196d2",
+        "min/dark/macos": "f62ee38b511508205768f225b9e87a0e8be48b9d128ff4aa4438b9dbfcbefa2a"
       }
     },
     "501": {
-      "hash": "8b9e39cb59eed6119b805ef674cc0575c98d1fc46872a3785243abcc2fb894ed",
+      "hash": "414632319e117d31edbd0831d607fcf4beb7f349b73359f59244c00449249123",
       "label": "Unsaved changes (section marked)",
       "variants": {
-        "default/dark/macos": "a03b71943d131bda524692f497fcf85243e3e9881e17c72a67fbf70a3909cdf0",
-        "large/dark/macos": "4cb7330ff9eb392f97f19e21d4e5324b3dbbe8502dde72ef2e765d28c93ea73a",
-        "min/dark/macos": "c2d44a40840783c591e8c928cf0454010d111348e7507ca9b7269a3e1fe282f0"
+        "default/dark/macos": "ce6a0ac218a48d9703e7b9212a8e19a6388015cc8f87e0c2619f1cc5426dd91a",
+        "large/dark/macos": "434e91c11f4fafd6b5da46b48a238c3e87f6789b9dde7347128b75de93b8f366",
+        "min/dark/macos": "dc45e234bcb685f111c1a8b042d38b9ab87924f92a7f48feed69363d6225c966"
       }
     },
     "502": {
-      "hash": "982a5e980fde946b6c5bbd221863aa7d1f4e4385c0a58f525c885001efde28f2",
+      "hash": "1dc37ae7643a15d963e4a8fc3755edb33be8e07115b1f23318076bd0c488b435",
       "label": "Bucket validation error",
       "variants": {
-        "default/dark/macos": "3f50d4a7b5b5cc7d6e2b1a372c5a06657955debe914c0eccc717606e95b61118",
-        "large/dark/macos": "149134e7dbb42240632f7f5f17283db93980408c354da5db3873f98f00b3c832",
-        "min/dark/macos": "63b2b28e8816b4680906457d824e434d37c06f49ffa7d55a7d7e6c8ba13d0973"
+        "default/dark/macos": "7113403783d1323ca44558554fca97e0f3208ae1b7e8d2245898b538ddc37f38",
+        "large/dark/macos": "68aa796b20ffedde52da20d8a3cd796f5614c56c11728c781d730c8acde17dfe",
+        "min/dark/macos": "7a204495d90d7604427e626459bc1cdc116e225a98db5766b51dbcbae0a41f26"
       }
     },
     "503": {
-      "hash": "373f8349a4acbc22ed75d3253ccb015ed397906379158f58cafc9856e11b2e65",
+      "hash": "351d083b3296c4b508a66022708f5ee531960be4958601c5d772b892d83f42bf",
       "label": "Picks-folder validation error",
       "variants": {
-        "default/dark/macos": "7f2635676f578eb72320777a6d1b43b0d4d8ca8096156473d5e65b34ca4e5d11",
-        "large/dark/macos": "5bf8d08ccd847fce1d152f68c1fdaa475d3287953da3b83982860a14fa93a83d",
-        "min/dark/macos": "a6e3a43c9cbae9f497fa01f5ede7ecca95a54ec357a8f42709321c3f69337fd6"
+        "default/dark/macos": "556406e7ff346385830aa768986f148f191138c07f0604f1df2f05b562b45d93",
+        "large/dark/macos": "aa8ae79408cee4ac94d187cceb482b540c50902e3af5a9b93e11a17b39d3d7e1",
+        "min/dark/macos": "6328b61d19c82f490efc26e11b60fe580e208d2c90c14b5cc2e36d37c9f1514c"
       }
     },
     "504": {
-      "hash": "003e76f0653b0a09c6976e93b989f7f5bb9e3b3de1c4e2f0e180bbb3fab5c125",
+      "hash": "5164af03d74f3a41efa59ce733a90ad82d61e2c4644bc619055c85d9370e3e6f",
       "label": "Saving",
       "variants": {
-        "default/dark/macos": "8085e9430f5662848ddd16f83d90da417836f2af5920f8dbd40d07da0f434ecb",
-        "large/dark/macos": "e5a0c2b0f0c8936f5d03ea4065ae4f26fafbda97a0a0c90d7764243396fc9708",
-        "min/dark/macos": "b3f97552fb553b6b70bd9ae7f7796b623e6920816ad88862f44eb150f445fc7a"
-      }
-    },
-    "505": {
-      "hash": "12b5f2892d37c13ca48d3514e8d1c8903f6d8db078cbee828c5cfdb2730acc99",
-      "label": "Quality model downloading",
-      "variants": {
-        "default/dark/macos": "c8be8a63361f8510b0f38895b11bae0d0fee0a76def17f90647b82942819361a",
-        "large/dark/macos": "7fb30760d9f64272805684e3bf9aaf43ab3413ecc3ed5bf4f317d8c592945320",
-        "min/dark/macos": "2c4e0a8ed479c5a6deac07f3dd7f8f14d086d6c716a680d8ddd7e199bec979d0"
-      }
-    },
-    "506": {
-      "hash": "cf7fd5853bec794c6776fdc38a1f7fbc85dfb9d0d47527466feabbcd81edb6c1",
-      "label": "Quality download failed (Retry)",
-      "variants": {
-        "default/dark/macos": "e96362385d699241bdd4debeefa25f25d0aacd794fed939e72dd553ce8b6757d",
-        "large/dark/macos": "5bd96372a46db88769c1b9f493ceea83d2c9a2599efc83a5456cbdf4c73480db",
-        "min/dark/macos": "441ae2b661d0d4b2f2bf9c3192993054be5da4b52f159ea29bfaa7f6f4d8d5bb"
+        "default/dark/macos": "5dbae3e671789cc943c8a31555aae9a0473fd24fa5fe1993f1967667403663bc",
+        "large/dark/macos": "f23b5ae4f61b4e922c00f5b4488d69799092cc5a4f833f1ccd2233cb943bd38f",
+        "min/dark/macos": "84320e464b8c7d22c6def3ca552b26275c79e8c8508f82cc2432492a91793ea7"
       }
     },
     "507": {
-      "hash": "3b782c9e0cbae5b2dbb2a2bc9c91b8b24fd08dc885b60600572b7790ad80c610",
+      "hash": "c138864bdd8156a34b9b8bd81260fa7b78a785275b5ea257f24a36b10e8c69a9",
       "label": "Visual grouping off",
       "variants": {
-        "default/dark/macos": "f80403728e499a719ca66aef49a3e70810dd282cb91d49628190751766cb9b88",
-        "large/dark/macos": "be4cb7c8d32baf5ae2e3b28a4c7dafa2b47650f8595b64e88a1c451174e8a3d1",
-        "min/dark/macos": "304cca1178158003f14dc0e6a228dd10e9e142257d2addca4e801bf9fc8bc15d"
+        "default/dark/macos": "799210534a51a51e2cc0b3706bafae6b19657ea972516aa3b8eaf7b5eca0a45e",
+        "large/dark/macos": "6f0f497a8540435bd50de0a2c0808121c2e53830d63407816344925c7b95f9b6",
+        "min/dark/macos": "4e956e3b16e7b85ff631e3847da806dc4a0214f8147aeede68fd3949932aa0bb"
       }
     },
     "508": {
-      "hash": "adc6a30c82518331b907433d73a766f9dd6652d3fada40e46554283c4ab7a586",
+      "hash": "723970f3f3a8d1debd791bd1e1f206aae8908217996cc15d71e0ea67f377a12f",
       "label": "Leave-without-saving prompt",
       "variants": {
-        "default/dark/macos": "82ae83afad4cf3ea8e69c066801298da5c7ed95bef6dd84ef6c5389ee031fb54",
-        "large/dark/macos": "d8d06c64d704c65e76550c95799875cea6d59d8dbe2b2b96a106ba5d8c5446a6",
-        "min/dark/macos": "58dad243f1e4d4c14017065dc85c453bb558cc7f679439c047dbdc4ff942cf03"
+        "default/dark/macos": "e69b201027ec411a132bf1b0af08adb0bfbb33546dab38f050fa20dbb5c82ce0",
+        "large/dark/macos": "750d94c1416639b254a2c6d08908dbea08db71fdbf706406e4e8900bd5aa47b5",
+        "min/dark/macos": "3b9c250801411268a9b54aa553fd8eea409b86919ccd3e9c07f7caf9007cf74e"
       }
     },
     "509": {
-      "hash": "b729fb86d221112c2581943f11af42981e47a3d4ea73f0194b1554eab91b7c21",
+      "hash": "cee78d0a88022dba9cc6a2b576fd00cf3252eeb5f08d79ab274640d71e745140",
       "label": "Quality scoring progress",
       "variants": {
-        "default/dark/macos": "cc81478adb9461cda98eccc4c2b5887a27d5e6ee77caa370280a6c6c146589ec",
-        "large/dark/macos": "7a1db0674ce039b2432db3fcad9c76826911692146a123e9bb4a2032beee4c03",
-        "min/dark/macos": "31bba2edbd808b888bc8f854751e17e09c64b409ce47fcd8c9d86a85cad2af35"
+        "default/dark/macos": "93cf456d3006264e25ee9f2bd3a257f94f262a1b1f79483164364fee789d58c0",
+        "large/dark/macos": "4be8b4c6fa0730fa7beccc27a056c6cbab99889ae01c4ad2b029429be4058188",
+        "min/dark/macos": "2befb824826faec073239b5832fe36beb2f9eaba3f5201d08b1d2d920e5a291f"
       }
     },
     "510": {
@@ -1084,84 +967,48 @@
       }
     },
     "512": {
-      "hash": "84e8732f0b1fb21313a0d473543e5e4554c267af9b0f83f96efc80d3bad9f115",
+      "hash": "aaf8dc2b7a3b8ab6b596555fd5ef7efbcc4a93943cac1321f12a086b8524db87",
       "label": "Save failed toast",
       "variants": {
-        "default/dark/macos": "55fc43b137c39a22a9ae082f13f8e9feb5403509fbdd96b361c682f1eb707592",
-        "large/dark/macos": "1bc01990fbe5645c575de2ba9acb7151c3ed7387a65133f5bdf95cfe07ef407d",
-        "min/dark/macos": "2946ba3e55ff5b0ee8484a6abf5b161cfdf990bbb6dc9b48d3e163015a61b403"
+        "default/dark/macos": "f2f208c2c811efd4f40138c06a87364e80c9be1b03f0fad7ea819538f7eb5643",
+        "large/dark/macos": "ae9b93208c632221daf71540adb92ba99d6cee050e77c1c291963e7fe7fd3482",
+        "min/dark/macos": "b72bcef9dedfdf6fbfa63e12d8ff38e61fec347035ef95d5e0450eb85141bd7d"
       }
     },
     "513": {
-      "hash": "177750a532f214d585286b8eb7ffca6b44c82a33ab2154c7f781082703f10b92",
+      "hash": "de1c5ab53582983fa834c8d034e12d746098d43c16cca9da6ed3dc9f3fa48a68",
       "label": "Quality waiting for scan",
       "variants": {
-        "default/dark/macos": "a352aee928ce14b3b97b05b31cdb30e12e8c7dfdb2d5b254558c456e72a452db",
-        "large/dark/macos": "19c73ef66524292a4f225ab843bf3201e953c589021ee77a6b1697b23c7aa867",
-        "min/dark/macos": "ab9835c90ca57bae58b3bc0954cbf414f7e1a28620d063538545652440c6a0d5"
-      }
-    },
-    "514": {
-      "hash": "6017c2c2188e3699ab447abdf181cf6d681fc2a85096ea490d9cb159c7df310a",
-      "label": "Quality error",
-      "variants": {
-        "default/dark/macos": "7cd3d8215b6b76a15f9d61a176dcedae3d1a43e9c1af4c3dd05a26c2d6ffe6fa",
-        "large/dark/macos": "6a89f4af626f6e61050e3302123844cb73fb028cbf870dc5a4cb39eb3d9e308c",
-        "min/dark/macos": "08b596e4785ada85a720ae1ebf9ca372c5b5a8c6d008d6b60b8205dce94399fa"
-      }
-    },
-    "515": {
-      "hash": "a3907403785e73de1e64ecf72e136bf0c33993888d84e70db230f4f2d740dcaf",
-      "label": "Retrying",
-      "variants": {
-        "default/dark/macos": "95a047e5263b2277db4f97a7934e79f40c5e16e19b81752e4e43670f031809ec",
-        "large/dark/macos": "3f75046bf1e38e6e6b1bbbd44c3356429105b833cdb532c35be0d3a05d475691",
-        "min/dark/macos": "050e94771b7fa0cbf696fd677402d255255b8d24bf9e507f52b282ecdff25472"
-      }
-    },
-    "516": {
-      "hash": "e9cdfa7b6f1ba1ff115784e77a06bb8a7650b03d24635fdcfab7919195bcaa36",
-      "label": "CLIP downloading row",
-      "variants": {
-        "default/dark/macos": "7b47ea1be5bc705ea63a6dc5cb64168119b0205da9c7444cec7ecc2bdda82535",
-        "large/dark/macos": "1ec1247ce23a4e46db50dc503afa903635603a69c54cb24241cd949cbccf9e6d",
-        "min/dark/macos": "ab70b74a14e162152422c76ff9d8ff05855cc2c138f850ebf1708f6de980d84a"
-      }
-    },
-    "517": {
-      "hash": "ce09d204cef4d3ff5afe83bad4836c0fea37127e03d31075297cb828ee09b277",
-      "label": "CLIP failed row",
-      "variants": {
-        "default/dark/macos": "4cb97bd88a900ebb08c3dfe79c6ab918eb45fea02abb65d091657465d3dc8c9d",
-        "large/dark/macos": "04ca1396225db6f59a2148d5d7be84e19917e6c371deaf9e4ba80744b0eb29bc",
-        "min/dark/macos": "f7fb0a6f02dac9fa46e6005163700dbc7016effd2e43a0d4c8a9121b4d61d6dc"
+        "default/dark/macos": "e8ad16c8a5f2c25b9726e7b2c8c439fb1922b669a00375cb20476f1a49c19719",
+        "large/dark/macos": "79cba806210f911e34f6fd806ea29640b973876119c08481c09cfd300f7c50c8",
+        "min/dark/macos": "1c15fb797728bb57930172833747ab000ab9b970f24d4d6649b87faf60822727"
       }
     },
     "518": {
-      "hash": "d18e596c65fe2d9b0c88cb674f47fb9bf11e463ec4e2b81f8c157ef26d9da972",
+      "hash": "e7500bfa05272fd0e556942bd658c4ef376bf77ee81a8b9feefdb4ad73afd3d0",
       "label": "At defaults",
       "variants": {
-        "default/dark/macos": "ed1303461aadfdb58d6006fe0845ecca242d12764cff6fba2f905fb08ee7b0eb",
-        "large/dark/macos": "32f24484dbb2647a9779fd0c06301bab847490e83869585ea2a361cdd681c854",
-        "min/dark/macos": "2da23cc8a65b401ce23483e54cb5e0dcde3e95c0e61c838af7b4e33efb56f211"
+        "default/dark/macos": "2a60c481672c6cfa86da0e159a13656f93407c81a26c9941f7576a40415773c9",
+        "large/dark/macos": "a57ffea5066415212bed12339cb211b72fa3080ac9ee33d9a077b10498b9c966",
+        "min/dark/macos": "4483c56679a44d1b01e73d0502006ef5b388f01addf1357a6144b71b9ef9d824"
       }
     },
     "519": {
-      "hash": "546268c1942ecd091393faf7a27c1786eb2383d788a5bb43718288d562327ea2",
+      "hash": "3933a1babffdcaac6a78dc3137824fa640172b5abcb113d7241066227a442ab9",
       "label": "Behaviour section active",
       "variants": {
-        "default/dark/macos": "e4c5ca6f0dd9cd78f040f69ce54178f89fcd3bfdb48c396083b974f9b30d834b",
-        "large/dark/macos": "fa1ce6539920ab800e16653a02c0c324fb69bfd4b541eea64813734c9de9261f",
-        "min/dark/macos": "64a085958bc1d78c4472bd78ae7428a3a27684c57dfe3903a83f2e111541d617"
+        "default/dark/macos": "eb055f5a692a89ffea90cb32ff124c31593c3648a34667fd7bcf5c466f20be05",
+        "large/dark/macos": "547e2a049c8170cf921227fd65bac8d18b1a75ce22d93f9150e8c0074167d955",
+        "min/dark/macos": "e29b33f12848dfc15c8b4ae66305df84fff670552a200a812ff3399eeeedf99b"
       }
     },
     "520": {
-      "hash": "f4c93e31da5a39efa9a54cbea3113317e58a16f2ba9ecdd3e33b1b3c3d9d6f06",
+      "hash": "30ca794c90767ea2c76234c28953e8ccce3f8e82da61f684aec599326b05f17f",
       "label": "Output section active",
       "variants": {
-        "default/dark/macos": "f6805a20b307a93e60aeaa1b4c7890729877f8b968cae6ebfeb7b532dfbc2f8e",
-        "large/dark/macos": "7a902829bd21dde1926e9250a88a43b7ff3673519d565a36d2155981eb7d2e7e",
-        "min/dark/macos": "4b461b8a3b2df6b1ab7899ee51a8c21192961db73bbd08764f3d6781abb199e3"
+        "default/dark/macos": "d05385591f4aab9814a9204602224267f1bd99d9d0632fb6bcbf99e3ea0a345d",
+        "large/dark/macos": "5bd25e98a895e59810a7352d7ecd84c7671018fbad192b760da5b1a078a7733a",
+        "min/dark/macos": "1811f32611b4a6952f0d3b1af0b706604b4166a71baca2c886c547f14e8e8f1b"
       }
     },
     "600": {
@@ -1192,12 +1039,12 @@
       }
     },
     "603": {
-      "hash": "c69e047e363d26570ff9e29cd98f1cb7579c3b57bf149f721e776d3363173fe0",
+      "hash": "ab2643e3249232136b27f83b7b1dd7c2be32a3b6374603641e20dc7f22929be2",
       "label": "Three stacked toasts",
       "variants": {
-        "default/dark/macos": "0f2fb29d7c2d1f855de38d960648e09fa73b51ed171e67e582516286f8a6e6bf",
-        "large/dark/macos": "8454ff4410e94415acd4e13f52be991c9e3cb8977b974d04875849528bcb6ae0",
-        "min/dark/macos": "06e5ea8726f3c0d4661880a52681aee5ab3cd2ec417efaeb98618fb89518c10e"
+        "default/dark/macos": "63db189fa76b71e3095bfdf7b64acdd21f7b59db5245228593c47d32640e20cf",
+        "large/dark/macos": "9710c17465411fff2280baa7e537154c578f739e0ef14ff4aa09999a10db2165",
+        "min/dark/macos": "648ca1906123cf3c29365285ee44882e3d00ff0419c03ff20435c75c369e2fea"
       }
     },
     "604": {
@@ -1210,12 +1057,12 @@
       }
     },
     "605": {
-      "hash": "425ffec6aa80e861ab3fe9bdc193d27399b3426e28734cd17016834b9d9cc17f",
+      "hash": "1d15b9348b3108e417de0e07954bc3d5b49f5a67ac068b69bba1f439daa40093",
       "label": "Info toast",
       "variants": {
-        "default/dark/macos": "b0c2849609dd3c3da3b9185514118e0d9e8522cbd738ff3cbf15c97c74dd54b1",
-        "large/dark/macos": "d2663a71b71abefe5dbc2dade4f5a1010822e95a8849620b8f03e6a3631d686d",
-        "min/dark/macos": "3478a3b2f414a1a51da20d8484b4e70faefdf4bb559e5d00ab13f60333421b57"
+        "default/dark/macos": "7e81e451f6f0549d16d00ef70624c32aabbe6fbcdfe83cb9d1ae54a483596892",
+        "large/dark/macos": "e0740515e8be3212b8c7e00c103f448a2563f51ee6051606ff4356ef65f37131",
+        "min/dark/macos": "07104606dd588cc30cb9083b85ca99a44bf34337025991a2ead0f581fb323a1a"
       }
     },
     "700": {
@@ -1237,21 +1084,21 @@
       }
     },
     "702": {
-      "hash": "04629f19f7826170d52f5d368ccb9df8619eaade329eed9c4542fedd3bb5ac5e",
+      "hash": "c7b04a6a011de51214999eea11f362e710575428015179640e4b04192266b4d3",
       "label": "File (Folder)",
       "variants": {
-        "default/dark/macos": "2a47f259146ceef128cae89bdb585a322eee413a00b2504f6e120ab26b60e32e",
-        "large/dark/macos": "ada9f0b4b885c251911afd5fd6497988076db6dcb51ed11390e005863cae0cd0",
-        "min/dark/macos": "4b604f1c1bd1a3752a93d5a951f7a5cfe79d9714f731cf748c922ff03edc1f92"
+        "default/dark/macos": "c5b035231424d04685ded31dc540f791bb0faa896b2b50167047d910390ecd85",
+        "large/dark/macos": "8bc036576a0631e2df9e681d05cc6b0d78dbabe23c90e82b4e51c863919e305c",
+        "min/dark/macos": "329c89ba401e9aefadd23452c0e063f340e8820c162d703334c0053ff2fa8a37"
       }
     },
     "703": {
-      "hash": "9c1a5df22734d9475525cb4362ac5d49aa963ff731ba29fd64ce01576f100182",
+      "hash": "c6e9a20dd607fbd2876ce57f8514798ff97b913cd9b41a58f78729afbb20bfd7",
       "label": "Edit",
       "variants": {
-        "default/dark/macos": "5723573ba7cc32c512c1256d887654bc1ee81b378b40b78c8737f7d949f67be6",
-        "large/dark/macos": "1eeaaea667d649cd27a0bf2011a3388c28171d6ee469a00676e18b64042b863f",
-        "min/dark/macos": "56fd85f1c412f1b50686cd25fcef6d08a7f3fa62e6a27aa83fc4130d049ad574"
+        "default/dark/macos": "69575918c8bc428114c16737c2a37b9a99f1312b3f27f3e47281f7549c315e75",
+        "large/dark/macos": "bc3dda1762234500ce7418b07e77a985321f1293abb78b032fb067c72201ca18",
+        "min/dark/macos": "0b955f2f36f71f4cc89d0f5272e4ab9436302de4e519f1c338af5ed172f50a39"
       }
     },
     "704": {
@@ -1372,12 +1219,12 @@
       }
     },
     "803": {
-      "hash": "6e36e957150c0db860ffb6d7e464ac753eb2333ca32b86cfbc3b6cbe1aec30d1",
+      "hash": "c51b6c22bc3e55a00d5e9819a9dc0f0ed47d15515531a60cd546e98d0e1e475b",
       "label": "Inputs and switches",
       "variants": {
-        "default/dark/macos": "c602022505d13645a779833e719b91be81992754d6a89fc44b0c977fa9570775",
-        "large/dark/macos": "af2498fdc444d98967d6ce4006a9c66047c7397d567fa0afdf792fe95ee70748",
-        "min/dark/macos": "9c2de052b4f1d98b2150f6b95af98265d9e591ba74e2305187129c1f08a36110"
+        "default/dark/macos": "898422dfbed29c251980c5285c5ea61088dbfe09fcd1cce71aa978cf70ce47f7",
+        "large/dark/macos": "83a79265382a81dca62cbfdbaff8734ec09ceb7f2457d5ffa0b55150527b10dd",
+        "min/dark/macos": "4135cda6fcf06c71851f2c0b1a97ea110b159074b425840d4d2e7ff1f1307d97"
       }
     },
     "804": {
@@ -1390,12 +1237,12 @@
       }
     },
     "805": {
-      "hash": "2fe19abb150b044527f3cbc43ea49bc646997302e42f4e259536c03e115a3eb4",
+      "hash": "e276062dc89659aa9feaecbe1c49b04b45cdd43a113d4e3bd73cb7eecb92a91f",
       "label": "Badges, dots, progress, spinner",
       "variants": {
-        "default/dark/macos": "f7154ebf03662d8d37bf2ebbbe9520292536d2df7764079a15f62cb45adbe288",
-        "large/dark/macos": "24ef73b914c264265136141f21ad13153c6a833a9cb1508213e3cefcdf92be2c",
-        "min/dark/macos": "b2e5aeecc224a6a97504d64ef055c9e0021ac3abd2a0da74c1632db6fee0dab8"
+        "default/dark/macos": "8c5bb7007d8bed5d082cd6e8e97009bbe235ab95f31cf336ab952bc1417a0ccc",
+        "large/dark/macos": "90a8189e6650915748dd810af4d2846aca5d97e1af463fbc54cdfd33008b4006",
+        "min/dark/macos": "dd3dd48c2fb9ada0da7c9e44b327ddb4d969065179251dbf17744eed07f5ad1a"
       }
     },
     "806": {
@@ -1408,12 +1255,12 @@
       }
     },
     "807": {
-      "hash": "d594c13db4dc8255cead03889294e412abbf31d59feffe2723d8770625c01167",
+      "hash": "e8a4704a24f4fea65bec97da190c3740a5399dbc64e1a0ad925eccbb3898ca01",
       "label": "Title bar variants, including full screen (no traffic-light inset)",
       "variants": {
-        "default/dark/macos": "68adf83156dc76483ab275b436227eff801fa698833730bfb6096e08a9b995f0",
-        "large/dark/macos": "b58b0661da67f29428ee77d0606d6f0080c8bba3bb05355d427c04a5ec16b4bd",
-        "min/dark/macos": "a83900f12e86f0254d42f6bb241a441ee4b31f880378a82a2e9d8fba881ea327"
+        "default/dark/macos": "f12b3e634d60e89c0a81dda0518eb4aa629ef0bc11b922d70486aafa0928b03b",
+        "large/dark/macos": "9d25aa338bba4772865891ec5e32ea229125e49801e1337ed4cef2edc57911a2",
+        "min/dark/macos": "e1c6995e95f9a186f6e9bc9c1108bb55c95e85953d710e8f8fdb64014e884423"
       }
     },
     "808": {

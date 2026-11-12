@@ -38,7 +38,6 @@ function setup(
   opts: {
     saved?: SettingsBody
     save?: SettingsDraftDeps['save']
-    retry?: SettingsDraftDeps['retry']
     get?: () => Promise<SettingsBody>
     from?: Route
   } = {},
@@ -46,7 +45,6 @@ function setup(
   let body: SettingsBody = opts.saved ?? SAVED
   let gets = 0
   let clock = 0
-  const reloads: string[] = []
   const settings = createSettingsStore({
     get: () => {
       gets++
@@ -67,20 +65,7 @@ function setup(
         body = { ...body, ...(patch as Partial<SettingsBody>) }
         return Promise.resolve({ saved: true, reclustered: 'bucket_size' in patch })
       }),
-    retry: opts.retry ?? (() => Promise.resolve()),
     settings,
-    models: {
-      reload: () => {
-        reloads.push('models')
-        return Promise.resolve()
-      },
-    },
-    quality: {
-      reload: () => {
-        reloads.push('quality')
-        return Promise.resolve()
-      },
-    },
     router,
     toast: (t) => {
       toasts.push(t)
@@ -94,7 +79,6 @@ function setup(
     settings,
     saves,
     toasts,
-    reloads,
     tick: (ms: number) => {
       clock += ms
     },
@@ -329,42 +313,11 @@ describe('settingsDraft', () => {
     stop()
   })
 
-  test('retry asks Go, then reads both statuses again', async () => {
-    let release: () => void = () => {}
-    const kinds: string[] = []
-    const s = setup({
-      retry: (kind) => {
-        kinds.push(kind)
-        return new Promise<void>((resolve) => {
-          release = resolve
-        })
-      },
-    })
+  test('no model Retry: the state has no retrying, the controller no retry', async () => {
+    const s = setup()
     await started(s)
-    const done = s.ctl.retry('quality')
-    expect(s.ctl.state().retrying).toBe(true)
-    // A second press while one is in flight sends nothing.
-    void s.ctl.retry('quality')
-    expect(kinds).toEqual(['quality'])
-    release()
-    await done
-    expect(s.ctl.state().retrying).toBe(false)
-    expect(s.reloads.sort()).toEqual(['models', 'quality'])
-    // CLIP's Retry has no busy look of its own.
-    const clip = s.ctl.retry('clip')
-    expect(s.ctl.state().retrying).toBe(false)
-    release()
-    await clip
-    expect(kinds).toEqual(['quality', 'clip'])
-    expect(s.toasts).toEqual([])
-  })
-
-  test('a failed retry shows the Retry failed toast', async () => {
-    const s = setup({ retry: () => Promise.reject(rejected({ code: 'internal', message: 'the queue is closed' })) })
-    await started(s)
-    await s.ctl.retry('quality')
-    expect(s.ctl.state().retrying).toBe(false)
-    expect(s.toasts).toEqual([{ tone: 'reject', title: 'Retry failed', body: 'the queue is closed' }])
+    expect('retrying' in s.ctl.state()).toBe(false)
+    expect('retry' in s.ctl).toBe(false)
   })
 
   test('a failed load shows the error, and Try Again shows loading', async () => {

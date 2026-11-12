@@ -10,7 +10,7 @@
 //     state is still loading (300); where the state shows a load that failed
 //     (316), the fixture's `calls` makes Cluster reject with the state's
 //     message, which the app shows as Go's;
-//   - Catalog.Open / Clusters, Library.List, Settings.Get, Models.Status:
+//   - Catalog.Open / Clusters, Library.List, Settings.Get:
 //     the folder as the approved Folder page shows it (fixtures/folder.ts,
 //     state 203: the Dolomites folder with its picks and rejects), or, for
 //     the one-cluster folder of 317, the same answers built for that folder;
@@ -96,16 +96,15 @@ function onlyRow(): FolderSummary {
 }
 
 /** The folder a Focus state shows (its Back button's name) and Go's answers for it. */
-function folderOf(p: FocusProps): { id: string } & Pick<ParityFixture, 'folders' | 'models' | 'settings' | 'view'> {
+function folderOf(p: FocusProps): { id: string } & Pick<ParityFixture, 'folders' | 'settings' | 'view'> {
   if (p.folder === DOLOMITES.name) {
-    const { folders, models, settings, view } = DOLOMITES_FOLDER
-    return { id: DOLOMITES.id, folders, models, settings, view }
+    const { folders, settings, view } = DOLOMITES_FOLDER
+    return { id: DOLOMITES.id, folders, settings, view }
   }
   if (p.folder === ONLY_FOLDER) {
     return {
       id: ONLY_FOLDER_ID,
       folders: [onlyRow()],
-      models: DOLOMITES_FOLDER.models,
       settings: DOLOMITES_FOLDER.settings,
       view: viewFor(ONLY_FOLDER, [ONLY.cluster]),
     }
@@ -156,7 +155,6 @@ export function focusFixture(p: FocusProps): ParityFixture {
   return plain({
     route: `#/folder/${encodeURIComponent(folder.id)}/focus/${p.data?.cluster.id ?? CLUSTER_IDS.ridge}`,
     folders: folder.folders,
-    models: folder.models,
     settings,
     view: viewBefore(folder.view, busy),
     ...(p.data !== null ? { focus: clusterBefore(p.data, busy) } : p.loadError === null ? { focus: 'pending' as const } : {}),

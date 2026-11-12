@@ -6,12 +6,11 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRoot } from '../../design/components'
-import type { ModelStatus, QualityStatus, SettingsBody } from '../../design/types'
+import type { QualityStatus, SettingsBody } from '../../design/types'
 import { createActions } from '../shell/actions'
 import { ShellContext, type Flag, type Shell } from '../shell/context'
 import type { AppEvents, On } from '../shell/events'
 import type { FolderSession } from '../shell/folderSession'
-import { createModelsStore } from '../shell/modelsStore'
 import { createQualityStore } from '../shell/qualityStore'
 import { createRouter } from '../shell/router'
 import { createScanStore } from '../shell/scanStore'
@@ -56,9 +55,7 @@ const row = (id: string, name: string, over: Partial<FolderRowData> = {}): Folde
   ...over,
 })
 
-const model = (kind: ModelStatus['kind'], state: ModelStatus['state']): ModelStatus => ({ kind, state, received: 0, size: 0 })
-const READY = [model('clip', 'ready'), model('quality', 'ready')]
-const IDLE: QualityStatus = { enabled: true, state: 'idle', active: false, received: 0, size: 0, done: 0, total: 0, rated: 0 }
+const IDLE: QualityStatus = { enabled: true, state: 'idle', active: false, done: 0, total: 0, rated: 0 }
 const BODY: SettingsBody = {
   bucket_size: 600,
   similarity: 0.92,
@@ -73,7 +70,7 @@ const BODY: SettingsBody = {
 const flag = (): Flag => ({ get: () => false, set: () => {}, subscribe: () => () => {} })
 
 /** A shell on fakes, its stores started and loaded. */
-async function shellWith(rows: FolderRowData[], models: ModelStatus[] = READY, quality: QualityStatus = IDLE) {
+async function shellWith(rows: FolderRowData[], quality: QualityStatus = IDLE) {
   const bus = fakeBus()
   const toasts = createToasts()
   const router = createRouter({ getHash: () => '#/', setHash: () => {}, onHashChange: () => () => {} })
@@ -94,14 +91,13 @@ async function shellWith(rows: FolderRowData[], models: ModelStatus[] = READY, q
     actions,
     toasts,
     scan: createScanStore({ list, on: bus.on }),
-    models: createModelsStore({ status: () => Promise.resolve(models), on: bus.on }),
-    quality: createQualityStore({ quality: () => Promise.resolve(quality), on: bus.on }),
+    quality: createQualityStore({ qualityStatus: () => Promise.resolve(quality), on: bus.on }),
     settings: createSettingsStore({ get: () => Promise.resolve(BODY) }),
     library: createLibraryStore({ list, on: bus.on, toasts }),
     sheet: flag(),
     start: () => () => {},
   }
-  for (const s of [shell.scan, shell.models, shell.quality, shell.settings, shell.library]) s.start()
+  for (const s of [shell.scan, shell.quality, shell.settings, shell.library]) s.start()
   await flush()
   return { shell, bus }
 }
@@ -143,8 +139,7 @@ describe('LibraryContainer', () => {
     timeline.shell.toasts.push({ tone: 'info', title: 'Hello' })
     expectTitleBarUncovered(render(timeline.shell))
 
-    // Welcome (no folders, a model still to come), drop zone, loading.
-    expectTitleBarUncovered(render((await shellWith([], [model('clip', 'downloading'), model('quality', 'queued')])).shell))
+    // No folders (the drop zone), loading.
     expectTitleBarUncovered(render((await shellWith([])).shell))
     const loading = await shellWith([])
     const never = createLibraryStore({ list: () => new Promise(() => {}), on: fakeBus().on, toasts: createToasts() })
@@ -167,22 +162,14 @@ describe('LibraryContainer', () => {
     expect(rowA).toContain('aria-current="true"')
     expect(html.slice(html.indexOf('data-folder="b"'))).not.toContain('aria-current="true"')
 
-    // No folders and a model downloading: the welcome panel.
-    const welcome = await shellWith([], [model('clip', 'downloading'), model('quality', 'queued')])
-    expect(render(welcome.shell)).toContain('Welcome to Choix')
-
-    // No folders, every model ready: the drop zone.
+    // No folders: the drop zone as soon as the list has loaded (nothing is downloaded).
     const empty = await shellWith([])
     const emptyHtml = render(empty.shell)
     expect(emptyHtml).toContain('data-drop-zone')
     expect(emptyHtml).not.toContain('Welcome to Choix')
 
-    // Folders and a download: the compact banner.
-    const banner = await shellWith([row('a', 'Harbour walk')], [model('clip', 'downloading'), model('quality', 'ready')])
-    expect(render(banner.shell)).toContain('data-testid="model-banner"')
-
     // A rating pass in its folder's row (not in the bar: no duplicate status).
-    const scoring = await shellWith([row('a', 'Harbour walk')], READY, {
+    const scoring = await shellWith([row('a', 'Harbour walk')], {
       ...IDLE,
       state: 'scoring',
       active: true,
@@ -198,7 +185,7 @@ describe('LibraryContainer', () => {
     // The real combination: the folder is still `scanning` (its job runs the
     // rating pass last) and its pass is listed: the row says Rating quality,
     // not the scan's last stage.
-    const rating = await shellWith([row('a', 'Harbour walk')], READY, {
+    const rating = await shellWith([row('a', 'Harbour walk')], {
       ...IDLE,
       state: 'scoring',
       active: true,

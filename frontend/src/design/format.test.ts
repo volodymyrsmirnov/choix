@@ -2,8 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import {
   abbreviatePath,
   acceleratorLabel,
-  bytes,
-  megabytes,
   monthLabel,
   dateRange,
   formatQuality,
@@ -60,21 +58,6 @@ describe('abbreviatePath', () => {
   })
 })
 
-describe('bytes', () => {
-  test('decimal units, as Finder', () => {
-    expect(bytes(0)).toBe('0 B')
-    expect(bytes(999)).toBe('999 B')
-    expect(bytes(999_999)).toBe('1 MB')
-    expect(bytes(999_999_999)).toBe('1 GB')
-    expect(bytes(999_600)).toBe('1 MB')
-    expect(bytes(999_400)).toBe('999 KB')
-    expect(bytes(2_048)).toBe('2 KB')
-    expect(bytes(177_000_000)).toBe('177 MB')
-    expect(bytes(352_400_000)).toBe('352 MB')
-    expect(bytes(1_500_000_000)).toBe('1.5 GB')
-  })
-})
-
 describe('noOrphan', () => {
   test('binds the last two words of four or more', () => {
     expect(noOrphan('Your photos never leave it.')).toBe(`Your photos never leave${NBSP}it.`)
@@ -116,14 +99,5 @@ describe('monthLabel', () => {
   test('a YYYY-MM month as the timeline names it', () => {
     expect(monthLabel('2026-10')).toBe('October 2026')
     expect(monthLabel('2025-01')).toBe('January 2025')
-  })
-})
-
-describe('megabytes', () => {
-  test('whole decimal megabytes, grouped, without the unit', () => {
-    expect(megabytes(137_000_000)).toBe('137')
-    expect(megabytes(352_400_000)).toBe('352')
-    expect(megabytes(1_499_600_000)).toBe('1,500')
-    expect(megabytes(0)).toBe('0')
   })
 })

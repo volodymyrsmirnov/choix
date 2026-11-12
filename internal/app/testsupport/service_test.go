@@ -4,14 +4,12 @@ package testsupport
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
@@ -38,16 +36,6 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
-}
-
-// noDownloads is a models.Downloader with no model installed; both model
-// settings are off, so it is never asked to download.
-type noDownloads struct{}
-
-func (noDownloads) Has(local.ModelKind) bool { return false }
-
-func (noDownloads) Download(context.Context, local.ModelKind, func(received, total int64)) error {
-	return errors.New("noDownloads: the network is not used in tests")
 }
 
 // recEmitter records the events it is given.
@@ -85,7 +73,7 @@ type fixture struct {
 }
 
 // newFixture starts a runtime over the platform fakes in a fresh data
-// directory, with both model settings off, and a Service whose E2E root is
+// directory, with visual grouping and the quality rating off, and a Service whose E2E root is
 // root (rootFn's result; "" when rootFn is nil).
 func newFixture(t *testing.T, rootFn func(root string) string) *fixture {
 	t.Helper()
@@ -113,15 +101,15 @@ func newFixture(t *testing.T, rootFn func(root string) string) *fixture {
 
 	d := &Dialogs{}
 	rt, err := runtime.New(runtime.Deps{
-		Bookmarks:  &platformtest.Bookmarks{},
-		Volumes:    vols,
-		Workspace:  &platformtest.Workspace{},
-		Stills:     &platformtest.Stills{},
-		Video:      &platformtest.Video{},
-		Downloader: noDownloads{},
-		Picker:     d,
-		Confirm:    d,
-		Home:       parent,
+		Bookmarks: &platformtest.Bookmarks{},
+		Volumes:   vols,
+		Workspace: &platformtest.Workspace{},
+		Stills:    &platformtest.Stills{},
+		Video:     &platformtest.Video{},
+		Vision:    &platformtest.Vision{},
+		Picker:    d,
+		Confirm:   d,
+		Home:      parent,
 	})
 	if err != nil {
 		t.Fatalf("runtime.New: %v", err)

@@ -119,26 +119,26 @@ func TestPass_StopsAfterThreeConsecutiveFailures(t *testing.T) {
 	}
 }
 
-func TestPass_UnavailableStopsImmediately(t *testing.T) {
-	unavailable := errors.New("onnx runtime missing")
-	sc := newPassScorer(1, 2, 3)
-	sc.outcome = func(_ context.Context, id int64) error {
-		if id == 2 {
-			return unavailable
-		}
-		return nil
-	}
-	p := &Pass{Scorer: sc, IsUnavailable: func(err error) bool { return errors.Is(err, unavailable) }}
+// Three failures in a row stop the pass with the last error, whatever the
+// error is; the photos stay pending for a later pass.
+func TestPass_ThreeFailuresStop(t *testing.T) {
+	boom := errors.New("database is locked")
+	sc := newPassScorer(1, 2, 3, 4)
+	sc.outcome = func(context.Context, int64) error { return boom }
+	p := &Pass{Scorer: sc}
 
 	rated, err := p.Run(context.Background())
-	if !errors.Is(err, unavailable) {
-		t.Fatalf("err = %v, want %v", err, unavailable)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want %v", err, boom)
 	}
-	if rated != 1 {
-		t.Fatalf("rated = %d, want 1", rated)
+	if rated != 0 {
+		t.Fatalf("rated = %d, want 0", rated)
 	}
-	if got := sc.callCount(); got != 2 {
-		t.Fatalf("Score called %d times, want 2 (stop at the unavailable error)", got)
+	if got := sc.callCount(); got != 3 {
+		t.Fatalf("Score called %d times, want 3", got)
+	}
+	if n, _ := sc.CountPending(); n != 4 {
+		t.Fatalf("pending after the pass = %d, want 4 (failed photos stay pending)", n)
 	}
 }
 

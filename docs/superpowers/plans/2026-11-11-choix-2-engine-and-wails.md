@@ -1,5 +1,7 @@
 # Choix 2.0 Engine and Wails Shell — Implementation Plan
 
+Superseded in part by `2026-11-12-builtin-grouping-and-quality-design.md`: the models, ONNX Runtime and the download are gone.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Status:** revision 4 (final), after three review rounds by Codex gpt-6-astra and Fable and the controller's rulings R1–R24 (all folded in).

@@ -9,8 +9,8 @@
 // exist before the app first renders.
 //
 // Answers (answer()):
-//   - A binding that reads data (Library.List, Models.Status, Settings.Get,
-//     Catalog.Open/Clusters/Cluster/Ratings, …) waits until a fixture is
+//   - A binding that reads data (Library.List, Settings.Get,
+//     Catalog.Open/Clusters/Cluster/Ratings/QualityStatus, …) waits until a fixture is
 //     loaded, then answers from it: the value (a fresh copy per call);
 //     'pending': never answers (a loading state); 'error': rejects as the
 //     Wails runtime rejects a Go error, an Error whose `cause` is the app
@@ -20,10 +20,10 @@
 //     Where the fixture's `calls` names the binding, `calls` decides instead
 //     of the field (as for an acting binding, below): a load that fails with
 //     a given app error (Catalog.Cluster's in state 316).
-//   - A binding that only acts (SetMenuContext, CheckNow, Rescan, Retry, …)
+//   - A binding that only acts (SetMenuContext, CheckNow, Rescan, …)
 //     answers at once, fixture or not, as Go answers when nothing goes wrong.
 //     Those wired through act() (Catalog.Recluster, Catalog.SetPick,
-//     Settings.Save, Models.Retry) answer as the loaded
+//     Settings.Save) answer as the loaded
 //     fixture's `calls` says instead, where it names them: 'pending' never
 //     answers (the call stays in flight), an app error rejects with it.
 //
@@ -35,7 +35,7 @@
 import { CancellablePromise } from '@wailsio/runtime/cancellable'
 import type { FolderView } from '../../../bindings/github.com/volodymyrsmirnov/choix/internal/app/catalog/models'
 import type { ParityUiHost } from '../../../src/app/shell/parityUi'
-import type { FocusResponse, FolderSummary, ModelStatus, QualityStatus, SettingsBody, ToastItem } from '../../../src/design/types'
+import type { FocusResponse, FolderSummary, QualityStatus, SettingsBody, ToastItem } from '../../../src/design/types'
 import { dispatch } from './runtime'
 
 /** A data field's value: the answer, or how the binding misbehaves. */
@@ -46,9 +46,7 @@ export interface ParityFixture {
   route: string
   /** Library.List (and so the scan store). */
   folders?: FolderSummary[] | 'pending'
-  /** Models.Status: always [clip, quality]. */
-  models?: ModelStatus[]
-  /** Models.Quality. */
+  /** Catalog.QualityStatus. */
   quality?: QualityStatus
   /** Settings.Get. */
   settings?: SettingsBody | 'pending' | 'error'

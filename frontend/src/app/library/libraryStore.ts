@@ -17,10 +17,10 @@
 // shows its own.
 //
 // createLibraryHandlers holds the screen's calls into Go: Add Folder (the
-// native picker), the native folder menu, the picks folder, and the model
-// rows' Retry and switch. Each reports its own failures to onError.
-import type { FolderState, FolderSummary, ModelStatus, ScanProgress, SettingsBody } from '../../design/types'
-import type { AddResult, FolderSummaryModel, SettingsPatch } from '../shell/api'
+// native picker), the native folder menu and the picks folder. Each reports
+// its own failures to onError.
+import type { FolderState, FolderSummary, ScanProgress } from '../../design/types'
+import type { AddResult, FolderSummaryModel } from '../shell/api'
 import { appError, errorText } from '../shell/errors'
 import type { On } from '../shell/events'
 import type { ScanMap } from '../shell/scanStore'
@@ -76,18 +76,16 @@ export function createLibraryStore(deps: LibraryStoreDeps): Store<FolderRowData[
 }
 
 /** What the Library screen shows (mirrors LibraryScreen's own choice; the tests state the rule with it). */
-export type LibraryScreenKind = 'loading' | 'welcome' | 'empty' | 'timeline'
+export type LibraryScreenKind = 'loading' | 'empty' | 'timeline'
 
 export interface LibraryView {
   screen: LibraryScreenKind
-  /** null while the list or the models' first answer is still to come. */
+  /** null while the list's first answer is still to come. */
   folders: FolderSummary[] | null
-  models: ModelStatus[]
 }
 
 export interface LibraryViewInput {
   list: StoreSnapshot<FolderRowData[]>
-  models: StoreSnapshot<ModelStatus[]>
   /** The shell's scan store value (undefined before its first load). */
   scan: ScanMap | undefined
 }
@@ -116,19 +114,12 @@ function toRow(r: FolderRowData, scan: ScanMap | undefined): FolderSummary {
   return row
 }
 
-export function libraryView({ list, models, scan }: LibraryViewInput): LibraryView {
-  // Models.Status failing counts as settled (nothing to wait for): only its
-  // first answer still to come holds the spinner, so the drop zone never
-  // shows for a moment before the welcome panel replaces it.
-  const modelList = models.value ?? []
-  if (list.value === undefined || (models.status === 'loading' && models.value === undefined)) {
-    return { screen: 'loading', folders: null, models: modelList }
-  }
+export function libraryView({ list, scan }: LibraryViewInput): LibraryView {
+  // Nothing is downloaded: with no folders the drop zone shows as soon as
+  // the list has loaded.
+  if (list.value === undefined) return { screen: 'loading', folders: null }
   const folders = list.value.map((r) => toRow(r, scan))
-
-  const settled = modelList.every((m) => m.state === 'disabled' || m.state === 'ready')
-  const screen: LibraryScreenKind = folders.length > 0 ? 'timeline' : settled ? 'empty' : 'welcome'
-  return { screen, folders, models: modelList }
+  return { screen: folders.length > 0 ? 'timeline' : 'empty', folders }
 }
 
 /** What createLibraryHandlers calls. */
@@ -138,15 +129,11 @@ export interface LibraryHandlerDeps {
     ShowFolderMenu(folderId: string, x: number, y: number): PromiseLike<unknown>
     OpenPicksFolder(folderId: string): PromiseLike<unknown>
   }
-  models: { Retry(kind: string): PromiseLike<unknown> }
-  settings: { Save(p: SettingsPatch): PromiseLike<unknown> }
   toasts: Pick<Toasts, 'push'>
   /** The Library's selection (actions.select). */
   select(folderId: string | null): void
   /** A folder's name from the list, if it is in it. */
   folderName(folderId: string): string | undefined
-  /** The settings were saved with this patch; null when a failed save may still have saved (reload them). */
-  onSaved(patch: Partial<SettingsBody> | null): void
   /** A call failed; `title` names what failed (an action when absent). */
   onError(e: unknown, title?: string): void
 }
@@ -158,12 +145,7 @@ export interface LibraryHandlers {
   openPicks(folderId: string): Promise<void>
   /** The native folder menu at window coordinates (the ⋯ button and a right-click); null closes the replica: nothing to do. */
   menu(folderId: string | null, at?: { x: number; y: number }): void
-  retryModel(kind: ModelStatus['kind']): Promise<void>
-  toggleModel(kind: ModelStatus['kind'], on: boolean): Promise<void>
 }
-
-/** The setting each model's switch stands for. */
-const MODEL_SETTING = { clip: 'visual_grouping', quality: 'quality_rating' } as const
 
 export function createLibraryHandlers(deps: LibraryHandlerDeps): LibraryHandlers {
   const guard = async (run: () => PromiseLike<unknown>, title?: string) => {
@@ -213,21 +195,6 @@ export function createLibraryHandlers(deps: LibraryHandlerDeps): LibraryHandlers
     menu(folderId, at) {
       if (folderId === null || !at) return
       void guard(() => deps.system.ShowFolderMenu(folderId, Math.round(at.x), Math.round(at.y)))
-    },
-
-    retryModel: (kind) => guard(() => deps.models.Retry(kind)),
-
-    toggleModel: async (kind, on) => {
-      const patch = { [MODEL_SETTING[kind]]: on } as Partial<SettingsBody>
-      try {
-        await deps.settings.Save(patch)
-      } catch (e) {
-        // Save may fail after saving (a re-cluster after it): ask again.
-        deps.onSaved(null)
-        deps.onError(e, 'Save failed')
-        return
-      }
-      deps.onSaved(patch)
     },
   }
 }

@@ -40,7 +40,12 @@ let lists = 0
 const ok = () => Promise.resolve()
 
 mock.module('../shell/api', () => ({
-  Catalog: { Open: () => Promise.resolve({}), Close: ok, Undo: ok },
+  Catalog: {
+    Open: () => Promise.resolve({}),
+    Close: ok,
+    Undo: ok,
+    QualityStatus: () => Promise.resolve({ enabled: true, state: 'idle', active: false, done: 0, total: 0, rated: 0 }),
+  },
   Library: {
     List: () => {
       lists++
@@ -50,12 +55,6 @@ mock.module('../shell/api', () => ({
     AddFolders: () => Promise.resolve([]),
     Rescan: ok,
     Remove: () => Promise.resolve(false),
-  },
-  Models: {
-    Status: () => Promise.resolve([]),
-    Quality: () =>
-      Promise.resolve({ enabled: true, state: 'idle', active: false, received: 0, size: 0, done: 0, total: 0, rated: 0 }),
-    Retry: ok,
   },
   Settings: { Get: () => Promise.resolve({}), Save: () => Promise.resolve({ saved: true, reclustered: false }) },
   System: {
@@ -87,6 +86,9 @@ test('the Library store lives for the shell: gone on another screen toasts once'
   await flush()
   // Loaded by start(), with no Library screen mounted.
   expect(shell.library.get().value?.map((f) => f.id)).toEqual(['a', 'b'])
+  // The quality worker from Catalog.QualityStatus; no models store (nothing is downloaded).
+  expect(shell.quality.get().value).toMatchObject({ state: 'idle', active: false })
+  expect('models' in shell).toBe(false)
 
   // The Library's selection points at the folder that goes away.
   shell.actions.select('a')

@@ -19,7 +19,7 @@ test('a number prefix lists every state it starts', () => {
   const ns = search('10', STATES).map((s) => s.n)
   expect(ns).toContain(100)
   expect(ns).toContain(109)
-  expect(ns).not.toContain(11)
+  expect(ns).not.toContain(110)
 })
 
 test('every word must match, in any order, ignoring case', () => {

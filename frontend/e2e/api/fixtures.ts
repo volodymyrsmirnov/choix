@@ -59,7 +59,7 @@ export class CallError extends Error {
   }
 }
 
-export type ServiceName = 'Library' | 'Catalog' | 'Settings' | 'Models' | 'System' | 'TestSupport'
+export type ServiceName = 'Library' | 'Catalog' | 'Settings' | 'System' | 'TestSupport'
 
 /** The shapes the specs read from the bindings (a subset of the models). */
 export interface AddResult {
@@ -290,7 +290,7 @@ export function rawGet(path: string, headers: Record<string, string> = {}, port 
 /**
  * test gives every spec the worker's harness page on the shared server, and
  * checks after each test that the page sent no request away from
- * 127.0.0.1 (the model settings are off, so nothing may be downloaded).
+ * 127.0.0.1 (the app makes no network request).
  */
 export const test = base.extend<{ stayLocal: void }, { harness: Harness }>({
   harness: [

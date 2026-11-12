@@ -1,7 +1,7 @@
 //go:build uat && darwin
 
-// TestUAT runs the whole headless runtime — the real platform packages and
-// the real inference engine — over clones of the owner's photo archive and
+// TestUAT runs the whole headless runtime — the real platform packages,
+// Vision's feature print and the quality formula — over clones of the owner's photo archive and
 // checks what a user would rely on. It is opt-in: it skips unless
 // CHOIX_UAT_ROOT is set to an existing folder; there is no default.
 //
@@ -10,9 +10,8 @@
 //	CHOIX_UAT_ROOT=<archive> go test -tags uat -run TestUAT -v ./internal/e2e/ -folder 1  (folder-1 only, every file)
 //
 // -folder K scans and checks only folder-K and skips the preemption and quit
-// phase; the originals of every folder are still compared. The model
-// settings follow the models present in CHOIX_MODELS_DIR: a directory that
-// holds only the CLIP model leaves the quality pass off.
+// phase; the originals of every folder are still compared. Visual grouping
+// and the quality rating are both on.
 //
 // Privacy (R22): the archive is private and this repository is public. The
 // test never prints a folder name, file name, serial, camera model, date or
@@ -22,9 +21,7 @@
 //
 // The archive is only read: its manifest is recorded, each folder is cloned
 // with `cp -c` (APFS clones) into a temporary directory, and every write the
-// app makes lands in the clone or in a temporary data directory. Models are
-// linked from CHOIX_MODELS_DIR (default: the app's models directory) and
-// never downloaded.
+// app makes lands in the clone or in a temporary data directory.
 package e2e_test
 
 import (
@@ -55,18 +52,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/app/runtime"
 	"github.com/volodymyrsmirnov/choix/internal/app/session"
-	"github.com/volodymyrsmirnov/choix/internal/appdir"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/bookmark"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/vision"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/volumes"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/workspace"
 	"github.com/volodymyrsmirnov/choix/internal/rawpreview"
@@ -83,8 +80,6 @@ var (
 const (
 	// uatRootEnv names the archive. It has no default.
 	uatRootEnv = "CHOIX_UAT_ROOT"
-	// uatModelsEnv names the directory the models are linked from.
-	uatModelsEnv = "CHOIX_MODELS_DIR"
 	// uatShortLimit is the files per folder under -short.
 	uatShortLimit = 200
 	// uatPreemptStart bounds the time from opening a queued folder to the
@@ -305,16 +300,6 @@ func (h countingHandler) WithGroup(string) slog.Handler      { return h }
 
 // --- runtime fakes and recorder -----------------------------------------------
 
-// diskModels is the model downloader: a model is installed when its file is
-// on disk; nothing is ever downloaded.
-type diskModels struct{ models *local.ModelStore }
-
-func (d diskModels) Has(kind local.ModelKind) bool { return d.models.Has(kind) }
-
-func (diskModels) Download(context.Context, local.ModelKind, func(int64, int64)) error {
-	return errors.New("uat: models are never downloaded")
-}
-
 type uatPicker struct {
 	mu    sync.Mutex
 	paths []string
@@ -405,7 +390,7 @@ func (r *recorder) progressCount(id string) int {
 // timing is one folder job's wall times.
 type timing struct {
 	stages map[string]time.Duration // per pipeline stage; absent: not observed
-	after  time.Duration            // from the pipeline's end to ready: CLIP backfill, rating, preview strip
+	after  time.Duration            // from the pipeline's end to ready: print backfill, rating, preview strip
 	job    time.Duration            // from scanning to ready
 }
 
@@ -473,7 +458,6 @@ type uat struct {
 	picker   *uatPicker
 	r        *runtime.Runtime
 	limit    int
-	clip     bool            // CLIP model present and ONNX Runtime usable
 	stills   platform.Stills // the real ImageIO reader, shared with the runtime
 	stopped  chan struct{}
 	stopOnce sync.Once
@@ -664,21 +648,9 @@ func (u *uat) checkOriginals(folders []*uatFolder) {
 // stopSampling stops the native-call sampler; it is idempotent.
 func (u *uat) stopSampling() { u.stopOnce.Do(func() { close(u.stopped) }) }
 
-// setup points the data directory at a temporary one, links the models in,
-// writes the settings, and starts a runtime on the real platform.
+// setup points the data directory at a temporary one, writes the settings,
+// and starts a runtime on the real platform.
 func (u *uat) setup(t *testing.T) {
-	// The models directory, read before CHOIX_DATA_DIR changes what appdir
-	// returns: CHOIX_MODELS_DIR, or the app's own models directory —
-	// Root/models, derived from PreviewsPath, which creates nothing.
-	modelsDir := os.Getenv(uatModelsEnv)
-	if modelsDir == "" {
-		p, err := appdir.PreviewsPath("0000000000000000")
-		if err != nil {
-			u.fatalf("the app's data directory: %v", err)
-		}
-		modelsDir = filepath.Join(filepath.Dir(filepath.Dir(p)), "models")
-	}
-
 	data := t.TempDir()
 	t.Setenv("CHOIX_DATA_DIR", data)
 	parent, err := filepath.EvalSymlinks(t.TempDir())
@@ -689,57 +661,29 @@ func (u *uat) setup(t *testing.T) {
 	u.red.addRoots(data, parent)
 	u.stills = imageio.New()
 
-	// Link each model file into the temporary models directory.
-	linked := filepath.Join(data, "models")
-	if err := os.MkdirAll(linked, 0o750); err != nil {
-		u.fatalf("models directory: %v", err)
-	}
-	present := map[local.ModelKind]bool{}
-	for _, kind := range []local.ModelKind{local.ModelCLIP, local.ModelQuality} {
-		name := local.KnownModels[kind].FileName
-		src := filepath.Join(modelsDir, name)
-		if st, err := os.Stat(src); err != nil || st.Size() == 0 {
-			u.logf("%s: absent", kind)
-			continue
-		}
-		if err := os.Symlink(src, filepath.Join(linked, name)); err != nil {
-			u.fatalf("link the %s model: %v", kind, err)
-		}
-		present[kind] = true
-		u.logf("%s: present", kind)
-	}
-	ort := true
-	if v, err := local.RuntimeVersion(); err != nil {
-		ort = false
-		u.logf("onnxruntime: unavailable, inference-dependent checks skipped (%v)", err)
-	} else {
-		u.logf("onnxruntime: %s", v)
-	}
-	u.clip = present[local.ModelCLIP] && ort
-
-	// A model that is absent, or cannot run, has its setting off: nothing
-	// tries to download it.
+	// Neither setting needs anything downloaded: the feature prints come
+	// from Vision and the rating from the built-in formula.
 	cfg, err := config.Load()
 	if err != nil {
 		u.fatalf("load the settings: %v", err)
 	}
-	cfg.VisualGrouping = u.clip
-	cfg.QualityRating = present[local.ModelQuality] && ort
+	cfg.VisualGrouping = true
+	cfg.QualityRating = true
 	if err := config.Save(cfg); err != nil {
 		u.fatalf("save the settings: %v", err)
 	}
 
 	r, err := runtime.New(runtime.Deps{
-		Bookmarks:  bookmark.New(),
-		Volumes:    volumes.New(),
-		Workspace:  workspace.New(),
-		Stills:     u.stills,
-		Video:      avmedia.New(),
-		Downloader: diskModels{models: local.NewModelStore(linked)},
-		Emit:       u.rec,
-		Picker:     u.picker,
-		Confirm:    uatConfirm{},
-		Home:       parent,
+		Bookmarks: bookmark.New(),
+		Volumes:   volumes.New(),
+		Workspace: workspace.New(),
+		Stills:    u.stills,
+		Video:     avmedia.New(),
+		Vision:    vision.New(),
+		Emit:      u.rec,
+		Picker:    u.picker,
+		Confirm:   uatConfirm{},
+		Home:      parent,
 	})
 	if err != nil {
 		u.fatalf("runtime.New: %v", err)
@@ -1003,7 +947,9 @@ func (u *uat) checkFiles(label, root string) checkResult {
 	_ = trows.Close()
 
 	embedded := map[int64]bool{}
-	erows, err := db.QueryContext(ctx, `SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL AND length(clip_embedding) > 0`)
+	erows, err := db.QueryContext(ctx, `SELECT file_id FROM ai_signals
+		WHERE vision_print IS NOT NULL AND length(vision_print) = ? AND vision_print_id = ?`,
+		platform.FeaturePrintLen*4, analyze.PrintID)
 	if err != nil {
 		u.fatalf("%s: query ai_signals: %v", label, err)
 	}
@@ -1107,12 +1053,8 @@ func (u *uat) checkFiles(label, root string) checkResult {
 	if res.clusters == 0 {
 		u.errorf("%s: no clusters", label)
 	}
-	if u.clip {
-		if nonFailed > 0 && withEmbedding*100 < nonFailed*99 {
-			u.errorf("%s: %d of %d non-failed files have an embedding; want at least 99%%", label, withEmbedding, nonFailed)
-		}
-	} else {
-		u.logf("%s: embedding check skipped (no CLIP)", label)
+	if nonFailed > 0 && withEmbedding*100 < nonFailed*99 {
+		u.errorf("%s: %d of %d non-failed files have a feature print; want at least 99%%", label, withEmbedding, nonFailed)
 	}
 	// One camera must be one device. Two bodies of one model (two serials)
 	// are two devices by design; see splitCameras.

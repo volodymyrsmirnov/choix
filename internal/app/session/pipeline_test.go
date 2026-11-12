@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,11 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
+	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
@@ -46,7 +49,8 @@ func sessionTestStillProps(captured time.Time) map[string]any {
 }
 
 // sessionTestInsertAnalyzed inserts an analyzed photo row captured at
-// captured, with emb as its CLIP embedding when not nil.
+// captured, with emb as its feature print (stamped analyze.PrintID) when not
+// nil.
 func sessionTestInsertAnalyzed(t *testing.T, st *store.Store, rel string, captured time.Time, emb []float32) int64 {
 	t.Helper()
 	id, err := st.Files().Insert(store.File{Path: rel, Size: 1, Mtime: 1, ContentHash: "h-" + rel, Kind: "photo", Format: "jpeg", ScanStatus: "analyzed"})
@@ -58,15 +62,17 @@ func sessionTestInsertAnalyzed(t *testing.T, st *store.Store, rel string, captur
 		captured.Unix(), id); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AISignals().Upsert(store.AISignals{FileID: id, Embedding: emb}); err != nil {
-		t.Fatal(err)
+	if emb != nil {
+		if err := st.AISignals().UpsertPrint(id, emb, analyze.PrintID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return id
 }
 
-// sessionTestUnit returns a 512-dim unit vector along axis i.
+// sessionTestUnit returns a feature-print-long unit vector along axis i.
 func sessionTestUnit(i int) []float32 {
-	v := make([]float32, 512)
+	v := make([]float32, platform.FeaturePrintLen)
 	v[i] = 1
 	return v
 }
@@ -113,8 +119,56 @@ func sessionTestWaitErr(t *testing.T, errc <-chan error) error {
 
 func TestClusterParams(t *testing.T) {
 	cfg := config.Defaults()
-	if got, want := ClusterParams(cfg), "b=600;t=0.9200;x=false;v=true"; got != want {
+	if got, want := ClusterParams(cfg), "b=600;t=0.9000;x=false;v=true;m=vnfp-r2/fill/preview/v1+complete"; got != want {
 		t.Fatalf("ClusterParams(defaults) = %q; want %q", got, want)
+	}
+}
+
+// TestEnsureClustered_OldParamsRecluster: a folder clustered by an earlier
+// build (its params have no method, and another similarity) re-clusters by
+// itself when it is opened, and keeps every pick.
+func TestEnsureClustered_OldParamsRecluster(t *testing.T) {
+	h := newSessionTestHarness(t, sessionTestOptions{})
+	id, _ := h.folder(t, "old")
+	s, release := h.acquire(t, id)
+	defer release()
+	ctx := context.Background()
+	var ids []int64
+	for i := range 3 {
+		ids = append(ids, sessionTestInsertAnalyzed(t, s.Store, string(rune('a'+i))+".jpg",
+			sessionTestDay.Add(time.Duration(i)*time.Second), nil))
+	}
+	picked := []store.Pick{
+		{FileID: ids[0], State: "picked", PickedAt: 100, Rating: sql.NullInt64{Int64: 4, Valid: true}},
+		{FileID: ids[2], State: "rejected", PickedAt: 200},
+	}
+	for _, p := range picked {
+		if err := s.Store.Picks().Upsert(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Store.KV().Set(sessionKVClusterParams, "b=600;t=0.9200;x=false;v=true"); err != nil {
+		t.Fatal(err)
+	}
+
+	reclustered, err := s.EnsureClustered(ctx, h.settings.get)
+	if err != nil || !reclustered {
+		t.Fatalf("EnsureClustered = %v, %v; want true", reclustered, err)
+	}
+	if got, want := sessionTestStoredParams(t, s.Store), ClusterParams(h.settings.get()); got != want {
+		t.Fatalf("stored params = %q; want %q", got, want)
+	}
+	if n := sessionTestClusterCount(t, s.Store); n != 1 {
+		t.Fatalf("clusters = %d; want 1 (one time bucket, no prints yet)", n)
+	}
+	for _, want := range picked {
+		got, err := s.Store.Picks().Get(want.FileID)
+		if err != nil || got != want {
+			t.Fatalf("pick of %d = %+v, %v; want %+v", want.FileID, got, err, want)
+		}
+	}
+	if again, err := s.EnsureClustered(ctx, h.settings.get); err != nil || again {
+		t.Fatalf("second EnsureClustered = %v, %v; want false", again, err)
 	}
 }
 
@@ -263,7 +317,7 @@ func TestClusterer_OlderRunCannotOverwriteNewer(t *testing.T) {
 	}
 }
 
-func TestClusterer_VisualGroupingOffIgnoresEmbeddings(t *testing.T) {
+func TestClusterer_VisualGroupingOffIgnoresPrints(t *testing.T) {
 	h := newSessionTestHarness(t, sessionTestOptions{})
 	id, _ := h.folder(t, "visual")
 	s, release := h.acquire(t, id)
@@ -277,7 +331,7 @@ func TestClusterer_VisualGroupingOffIgnoresEmbeddings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := sessionTestClusterCount(t, s.Store); n != 3 {
-		t.Fatalf("visual clusters = %d; want 3 (three unrelated embeddings)", n)
+		t.Fatalf("visual clusters = %d; want 3 (three unrelated prints)", n)
 	}
 
 	p, _ := s.NewPipeline(h.settings.get) // built with visual grouping on
@@ -352,9 +406,9 @@ func TestPicksDir_OrphanDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestNewPipeline_VisualGroupingOffComputesNoEmbeddings(t *testing.T) {
-	emb := &sessionTestEmbedder{}
-	h := newSessionTestHarness(t, sessionTestOptions{embedder: emb})
+func TestNewPipeline_VisualGroupingOffComputesNoPrints(t *testing.T) {
+	vis := &platformtest.Vision{}
+	h := newSessionTestHarness(t, sessionTestOptions{vision: vis})
 	id, root := h.folder(t, "noembed")
 	sessionTestWriteJPEG(t, root, "a.jpg")
 	sessionTestWriteJPEG(t, root, "b.jpg")
@@ -367,25 +421,28 @@ func TestNewPipeline_VisualGroupingOffComputesNoEmbeddings(t *testing.T) {
 	if err := p.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if n := emb.calls.Load(); n != 0 {
-		t.Fatalf("embedder called %d times with visual grouping off; want 0", n)
+	if n := len(vis.Calls()); n != 0 {
+		t.Fatalf("Vision called %d times with visual grouping off; want 0", n)
 	}
 	if n, err := s.Store.Files().CountByStatus("analyzed"); err != nil || n != 2 {
 		t.Fatalf("analyzed = %d, %v; want 2", n, err)
 	}
-	embeds, err := s.Store.AISignals().AllEmbeddings()
-	if err != nil || len(embeds) != 0 {
-		t.Fatalf("embeddings = %d, %v; want none", len(embeds), err)
+	prints, err := s.Store.AISignals().AllPrints(analyze.PrintID)
+	if err != nil || len(prints) != 0 {
+		t.Fatalf("prints = %d, %v; want none", len(prints), err)
+	}
+	if n, err := s.Store.Files().CountAnalyzedMissingPrint(analyze.PrintID); err != nil || n != 2 {
+		t.Fatalf("pending for a print = %d, %v; want 2", n, err)
 	}
 
-	// The same pipeline embeds once the setting is back on.
+	// The same pipeline prints once the setting is back on.
 	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
 	sessionTestWriteJPEG(t, root, "c.jpg")
 	if err := p.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if n := emb.calls.Load(); n != 1 {
-		t.Fatalf("embedder called %d times; want 1 (the new file)", n)
+	if n := len(vis.Calls()); n != 1 {
+		t.Fatalf("Vision called %d times; want 1 (the new file)", n)
 	}
 }
 
@@ -468,7 +525,7 @@ func TestPicksDir_RefusesDotAndDotDot(t *testing.T) {
 	}
 }
 
-func TestNewPipeline_MissingThumbnailFailsReadably(t *testing.T) {
+func TestNewPipeline_MissingPreviewFailsReadably(t *testing.T) {
 	h := newSessionTestHarness(t, sessionTestOptions{})
 	id, _ := h.folder(t, "nothumb")
 	s, release := h.acquire(t, id)
@@ -480,13 +537,13 @@ func TestNewPipeline_MissingThumbnailFailsReadably(t *testing.T) {
 
 	p, _ := s.NewPipeline(h.settings.get)
 	if err := p.Resume(context.Background()); err != nil {
-		t.Fatalf("Resume: %v (one file without a thumbnail must not stop the job)", err)
+		t.Fatalf("Resume: %v (one file without a preview must not stop the job)", err)
 	}
 	f, err := s.Store.Files().GetByID(fid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "cannot analyze: no cached thumbnail image for this file (not found)"
+	const want = "cannot analyze: no cached preview image for this file (not found)"
 	if f.ScanStatus != "failed" || f.ErrMsg.String != want {
 		t.Fatalf("file = %s %q; want failed %q", f.ScanStatus, f.ErrMsg.String, want)
 	}
@@ -567,7 +624,9 @@ func TestScorer_FolderGoneLeavesPhotoPending(t *testing.T) {
 	}
 }
 
-func TestScorer_SharedAndUnavailableWithoutInferer(t *testing.T) {
+// The session's scorer is shared, rates the file's preview with the
+// built-in formula and stamps the scorer id.
+func TestScorer_SharedAndRatesThePreview(t *testing.T) {
 	h := newSessionTestHarness(t, sessionTestOptions{})
 	id, root := h.folder(t, "score")
 	s, release := h.acquire(t, id)
@@ -589,8 +648,108 @@ func TestScorer_SharedAndUnavailableWithoutInferer(t *testing.T) {
 	if err != nil || len(items) != 1 {
 		t.Fatalf("pending = %+v, %v; want the one photo", items, err)
 	}
-	if err := q.Score(context.Background(), items[0]); !errors.Is(err, local.ErrQualityUnavailable) {
-		t.Fatalf("Score without an inferer = %v; want local.ErrQualityUnavailable", err)
+	if err := q.Score(context.Background(), items[0]); err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	var raw sql.NullFloat64
+	var model string
+	if err := s.Store.DB().QueryRowContext(context.Background(),
+		`SELECT quality_raw, quality_model FROM files WHERE id = ?`, fid).Scan(&raw, &model); err != nil {
+		t.Fatal(err)
+	}
+	if !raw.Valid || model != quality.ScorerID {
+		t.Fatalf("stored raw=%+v model=%q; want a score stamped %q", raw, model, quality.ScorerID)
+	}
+}
+
+// A preview row whose file is gone does not make the photo unratable when
+// the preview is at its standard place (thumb.CachePath): the scorer rates it.
+func TestScorer_StalePreviewRowUsesTheStandardCachePath(t *testing.T) {
+	h := newSessionTestHarness(t, sessionTestOptions{})
+	id, root := h.folder(t, "stalescore")
+	s, release := h.acquire(t, id)
+	defer release()
+
+	fid := sessionTestInsertAnalyzed(t, s.Store, "a.jpg", sessionTestDay, nil)
+	if _, err := thumb.WriteCache(root, fid, thumb.TierPreview, platformtest.MakeJPEG(t, 512, 512)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Store.Thumbs().Upsert(store.Thumb{FileID: fid, Tier: thumb.TierPreview,
+		RelPath: ".choix/thumbs/00/gone-preview.jpg", Width: 512, Height: 512}); err != nil {
+		t.Fatal(err)
+	}
+	q := s.Scorer()
+	items, err := q.ListPending(0, 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("pending = %+v, %v; want the one photo", items, err)
+	}
+	if err := q.Score(context.Background(), items[0]); err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	var raw sql.NullFloat64
+	var model string
+	if err := s.Store.DB().QueryRowContext(context.Background(),
+		`SELECT quality_raw, quality_model FROM files WHERE id = ?`, fid).Scan(&raw, &model); err != nil {
+		t.Fatal(err)
+	}
+	if !raw.Valid || model != quality.ScorerID {
+		t.Fatalf("stored raw=%+v model=%q; want a score stamped %q", raw, model, quality.ScorerID)
+	}
+}
+
+// sessionThumbPath stays inside the thumbnail cache: a row naming an
+// original, or a path that leaves .choix/thumbs/, is not used, nor is a
+// symbolic link at the standard cache path; the row's own file wins over
+// the standard path.
+func TestSessionThumbPath_StaysInTheCache(t *testing.T) {
+	h := newSessionTestHarness(t, sessionTestOptions{})
+	id, root := h.folder(t, "confined")
+	sessionTestWriteJPEG(t, root, "a.jpg")
+	s, release := h.acquire(t, id)
+	defer release()
+	fid := sessionTestInsertAnalyzed(t, s.Store, "a.jpg", sessionTestDay, nil)
+	setRow := func(rel string) {
+		t.Helper()
+		if err := s.Store.Thumbs().Upsert(store.Thumb{FileID: fid, Tier: thumb.TierPreview, RelPath: rel, Width: 8, Height: 8}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{"a.jpg", ".choix/thumbs/../../a.jpg", ".choix/thumbs/../state.db", "/etc/hosts"} {
+		setRow(rel)
+		if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err == nil {
+			t.Errorf("row %q resolved to %s; want it refused", rel, p)
+		}
+	}
+
+	std := thumb.CachePath(s.Root, fid, thumb.TierPreview)
+	if err := os.MkdirAll(filepath.Dir(std), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(s.Root, "a.jpg"), std); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err == nil {
+		t.Errorf("a symbolic link at the standard path resolved to %s; want it refused", p)
+	}
+	if err := os.Remove(std); err != nil {
+		t.Fatal(err)
+	}
+
+	stdRel, err := thumb.WriteCache(s.Root, fid, thumb.TierPreview, platformtest.MakeJPEG(t, 8, 8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setRow("a.jpg")
+	if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err != nil || p != std {
+		t.Errorf("with a refused row: %s, %v; want the standard path %s", p, err, std)
+	}
+	other := filepath.ToSlash(filepath.Join(filepath.Dir(filepath.FromSlash(stdRel)), "other-preview.jpg"))
+	if err := os.WriteFile(filepath.Join(s.Root, filepath.FromSlash(other)), platformtest.MakeJPEG(t, 8, 8), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setRow(other)
+	if p, err := sessionThumbPath(s.Store, s.Root, fid, thumb.TierPreview); err != nil || p != filepath.Join(s.Root, filepath.FromSlash(other)) {
+		t.Errorf("with a usable row: %s, %v; want the row's file, not the standard one", p, err)
 	}
 }
 

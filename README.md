@@ -43,20 +43,11 @@ GitHub Releases and update the cask
 
 ## First launch
 
-1. **Models.** The Library opens with a welcome panel and two downloads, which
-   start by themselves, one after the other:
-   - **CLIP** (about 352 MB) for visual grouping;
-   - the **quality model** (about 177 MB) for the advisory quality rating.
-
-   Each row shows its progress, offers Retry if it fails, and has a switch that
-   turns the feature off; switched off, its model is never downloaded. Both are
-   pinned to a fixed revision and SHA-256 verified. These two downloads are the
-   only network access Choix makes.
-2. **Add folders.** Click **Add Folder** (⌘O) and choose one or more folders in
-   the system picker, or drop folders on the window. You never have to wait for
-   the models: a folder scanned before CLIP is ready is grouped by time only,
-   and regrouped when CLIP arrives.
-3. **Cull.** Folders scan in the background, up to two at a time; the one you
+1. **Add folders.** The Library opens empty. Click **Add Folder** (⌘O) and
+   choose one or more folders in the system picker, or drop folders on the
+   window. There is nothing to download first: visual grouping and the quality
+   rating are built in, and Choix makes no network request at all.
+2. **Cull.** Folders scan in the background, up to two at a time; the one you
    open goes first. Open a folder to see its clusters, then pick (Space) or reject
    (X), move with the arrow keys, compare (C), pixel-peep (Z), undo with ⌘Z.
    Press `?` for every shortcut. **Open Picks** (⌘P) shows the copies in Finder.
@@ -80,11 +71,13 @@ discover → metadata → thumb → analyze → cluster
    capture time.
 3. **thumb** — makes 256 px (grid) and 1600 px (Focus) JPEGs. RAW files (RAF,
    DNG) use the JPEG preview embedded by the camera; videos get five keyframes.
-4. **analyze** — computes a CLIP embedding per file (when visual grouping is on
-   and the model is ready).
+4. **analyze** — computes an image feature print per file with Apple's Vision
+   framework, on the device, from the 1600 px preview, or from the 256 px
+   thumbnail of a file that has no preview (when visual grouping is on).
 5. **cluster** — sorts by `(device, capture time)`, splits into time buckets at
-   the gap threshold, then sub-clusters each bucket by CLIP similarity. Picks
-   survive re-clustering untouched.
+   the gap threshold, then sub-clusters each bucket by how alike the feature
+   prints are (complete-link: every shot in a cluster is close to every other).
+   Picks survive re-clustering untouched.
 
 The quality rating runs after that, in the same background job.
 Supported files: RAF, DNG, HEIC, JPEG, TIFF and PNG photos; MOV, MP4 and M4V videos.
@@ -100,6 +93,8 @@ are gone, replaced by Apple frameworks inside the app.
   fsync) before the app shows it as done.
 - **Per-file failures are isolated.** A corrupt RAF or a video without a video
   track fails just that file; the scan keeps going.
+- **Nothing leaves your Mac.** Choix makes no network request: grouping and
+  the quality rating run on the device, with nothing to download.
 - **Sandboxed.** The app runs in the macOS App Sandbox. It reaches a folder
   only after you chose it, through a security-scoped bookmark.
 - **Folders scanned by Choix 1.x open as they are**, with their clusters,
@@ -112,34 +107,24 @@ Each photo gets an advisory **technical-quality rating from 0 to 10**
 every Compare pane and in the Info panel. It exists for one job: inside a
 cluster of near-identical frames, showing which one is sharpest and cleanest.
 
-- **What it measures:** focus, motion blur and noise, as judged by
-  [TOPIQ](https://arxiv.org/abs/2308.03060) (no-reference, ResNet-50,
-  KonIQ-10k weights) on five full-detail crops of the 1600 px preview.
+- **What it measures:** sharpness (focus and motion blur), noise and exposure
+  (a dark, blown-out or clipped frame), with a small formula built into the
+  app and run on the 1600 px preview (a few tens of milliseconds a photo).
+  Nothing is downloaded and there is no model.
 - **What it does not measure:** composition, expression, exposure taste or
   whether the sharp part is your subject. A frame focused on the background
   rates like a sharp one.
-- **How to read it:** compare numbers *within a cluster*. Different scenes are
-  not comparable (a flawless foggy landscape legitimately scores lower than a
-  flawless brick wall), and differences under about 0.2 are noise. Critical
-  sharpness is still a job for pixel-peep (`Z`).
+- **How to read it:** compare numbers *within a cluster*. The rating tells a
+  damaged frame from a good one of the same scene; it does not rank good
+  photos of different scenes. Critical sharpness is still a job for
+  pixel-peep (`Z`).
 - **It never acts:** nothing is picked, rejected, hidden or reordered by it,
   and there is no shortcut tied to it.
 - **Photos only.** Videos, images under 384 px on a side and extreme panoramas
   are left unrated.
 
-It is **on by default**. Turn it off with the switch in the welcome panel or in
-Settings → Behaviour → Quality rating. Off means no download, no scoring and no
-badges.
-
-**Licence of the model.** The TOPIQ weights come from
-[IQA-PyTorch](https://github.com/chaofengc/IQA-PyTorch) (Chaofeng Chen et
-al.) under **CC BY-NC-SA 4.0**, and Choix downloads an ONNX conversion of
-them from
-[`nocturna/topiq-nr-koniq-onnx`](https://huggingface.co/nocturna/topiq-nr-koniq-onnx)
-under the same licence. Choix does not bundle or redistribute the model.
-The licence is **non-commercial**: if you use Choix for paid work, turn the
-quality rating off. `build/quality-model/` has the scripts that reproduce
-and verify the ONNX file.
+It is **on by default**. Turn it off in Settings → Behaviour → Quality rating.
+Off means no scoring and no badges.
 
 ## Settings
 
@@ -150,8 +135,8 @@ command-line flags, environment variables or per-folder settings.
 | Key                        | Default | What                                                         |
 |----------------------------|---------|--------------------------------------------------------------|
 | `bucket_size_sec`          | 600     | Time-bucket gap (seconds) within a device                    |
-| `visual_cluster_threshold` | 0.92    | CLIP cosine similarity for same-scene clustering             |
-| `visual_grouping`          | true    | Visual grouping with CLIP; off means time-only clusters and no CLIP download |
+| `visual_similarity`        | 0.90    | How alike two shots of one time bucket must look to share a cluster |
+| `visual_grouping`          | true    | Visual grouping with Apple's on-device image analysis; off means time-only clusters |
 | `cross_device_merging`     | false   | Merge clusters across devices via clock-skew anchors         |
 | `picks_dir`                | `picks` | Where picks are copied (a folder inside the photo folder)    |
 | `advance_on_action`        | false   | Move to the next photo after Pick/Reject in Focus            |
@@ -159,7 +144,8 @@ command-line flags, environment variables or per-folder settings.
 | `quality_rating`           | true    | Advisory 0–10 technical-quality rating (see above)           |
 
 A folder that already has picks keeps copying them where they are, whatever
-`picks_dir` says. Settings from Choix 1.x (`~/.choix/config.toml`) are not
+`picks_dir` says. The `visual_cluster_threshold` key of earlier versions is
+ignored: its scale was different, so the similarity starts from 0.90. Settings from Choix 1.x (`~/.choix/config.toml`) are not
 imported: a sandboxed app cannot read them.
 
 ## Where data lives
@@ -168,7 +154,6 @@ imported: a sandboxed app cannot read them.
 |---|---|
 | Settings (`config.toml`) | `~/Library/Application Support/Choix/` — inside `~/Library/Containers/com.github.volodymyrsmirnov.choix/Data/…` when sandboxed |
 | Library (folders, bookmarks, cached stats, preview strips) | same directory: `library.db` + `previews/<folder-id>/<n>.jpg` |
-| Models | same directory: `models/` |
 | Logs | `~/Library/Logs/Choix/` (container-relative when sandboxed) |
 | Per-folder state | `<folder>/.choix/state.db`, `<folder>/.choix/thumbs/` |
 | Picks | `<folder>/picks/` |
@@ -182,16 +167,14 @@ You need macOS 14 or later on Apple Silicon, the Xcode command-line tools,
 ```bash
 git clone https://github.com/volodymyrsmirnov/choix.git
 cd choix
-task tools deps:onnxruntime build package
+task tools build package
 open bin/Choix.app
 ```
 
 - `task tools` installs the pinned `wails3` CLI and checks for golangci-lint and bun.
-- `task deps:onnxruntime` fetches Microsoft's official ONNX Runtime library for
-  macOS arm64 from a pinned URL and verifies its SHA-256 (build time only).
 - `task build` builds the frontend and the arm64 binary `bin/Choix`.
-- `task package` assembles `bin/Choix.app` with the ONNX Runtime library in
-  `Contents/Frameworks/` and signs it ad hoc with the sandbox entitlements.
+- `task package` assembles `bin/Choix.app` and signs it ad hoc with the
+  sandbox entitlements.
 
 `task dev` runs the app with hot reload (unsigned, so not sandboxed).
 `task --list` shows every task. Signing for distribution (`task sign:developer-id`,
@@ -202,9 +185,9 @@ Developer identities; see [`docs/release/signing-checklist.md`](docs/release/sig
 
 | Command | What it proves | What it needs |
 |---|---|---|
-| `task test` | Every Go package, with the race detector | Nothing extra; ONNX tests use the fetched runtime and skip without a model |
+| `task test` | Every Go package, with the race detector | Nothing extra |
 | `task lint` | `go vet` and golangci-lint, 0 issues | golangci-lint |
-| `task test:smoke` | The pipeline end to end on a synthetic folder | Nothing: no network, no models |
+| `task test:smoke` | The pipeline end to end on a synthetic folder | Nothing: no network |
 | `task test:e2e` | Playwright against the app's test-only server build: the bindings (`api`) and the real UI (`ui`) | Playwright Chromium: `cd frontend && bunx playwright install chromium` |
 | `task parity` | The app renders exactly the approved design states | Playwright Chromium |
 | `task test:frontend` | Frontend unit tests, type check and design lint | bun |
@@ -221,7 +204,7 @@ The architecture, hard rules and conventions are documented in
   HTTP server), [modernc.org/sqlite](https://modernc.org/sqlite) (pure Go).
 - **Native media:** ImageIO and AVFoundation through cgo and Objective-C;
   security-scoped bookmarks and `NSWorkspace` for folder access and Finder.
-- **AI:** [onnxruntime_go](https://github.com/yalue/onnxruntime_go) with
-  Microsoft's ONNX Runtime bundled in the app; CLIP for grouping, TOPIQ for
-  the quality rating.
+- **Grouping and rating:** Apple's Vision image feature print for visual
+  grouping; a sharpness, noise and exposure formula in Go for the quality
+  rating. No model is downloaded or bundled.
 - **Frontend:** React + TypeScript + Tailwind, built with Vite and `bun`.

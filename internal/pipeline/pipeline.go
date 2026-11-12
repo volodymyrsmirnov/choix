@@ -53,8 +53,9 @@ type Pipeline struct {
 	Reporter      *Reporter
 
 	// Concurrency keys: "metadata" | "thumb" | "analyze". Missing key falls
-	// back to runtime.NumCPU(). Analyze typically uses 1 to keep CoreML
-	// inference single-threaded.
+	// back to runtime.NumCPU(). The session runs analyze on a few workers:
+	// each feature print is a native call, already bounded by
+	// platform.NativeSlots.
 	Concurrency map[string]int
 
 	// BatchSize overrides DefaultBatchSize when > 0.

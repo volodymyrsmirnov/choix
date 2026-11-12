@@ -4,7 +4,7 @@ import { FIELD_COPY, minutesTextToSeconds, picksDirReason, secondsToMinutesText,
 
 const ok: SettingsDraft = {
   bucket_size: '10',
-  similarity: 0.92,
+  similarity: 0.9,
   picks_dir: 'picks',
   advance_on_action: false,
   hide_rejected_photos: false,

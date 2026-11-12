@@ -13,25 +13,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/meta"
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/platform"
+	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/safefs"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
@@ -64,15 +65,14 @@ func init() {
 }
 
 // Deps are what sessions are built from. Settings returns the live
-// machine-wide settings; Embedder and CropInferer are the app's shared ONNX
-// sessions (owned and closed elsewhere) and may be nil.
+// machine-wide settings; Vision makes the feature prints of visual grouping
+// and may be nil (no print is made; the runtime always sets it).
 type Deps struct {
-	Library     *library.Library
-	Settings    func() config.Config
-	Stills      platform.Stills
-	Video       platform.Video
-	Embedder    local.Embedder
-	CropInferer local.CropInferer
+	Library  *library.Library
+	Settings func() config.Config
+	Stills   platform.Stills
+	Video    platform.Video
+	Vision   platform.Vision
 }
 
 // The folder's working directory and database, relative to its root.
@@ -123,7 +123,7 @@ type Session struct {
 	picksMissing atomic.Int64
 
 	scorerOnce sync.Once
-	scorer     *local.QualityScorer
+	scorer     *quality.FileScorer
 }
 
 // Context returns parent carrying the session's Inflight: every native call
@@ -190,16 +190,11 @@ func sessionCleanPicksDir(d string) (string, error) {
 	return clean, nil
 }
 
-// Scorer returns the folder's quality scorer, built once. It runs crops
-// through Deps.CropInferer; without one, Score fails with
-// local.ErrQualityUnavailable.
-func (s *Session) Scorer() *local.QualityScorer {
+// Scorer returns the folder's quality scorer, built once. It rates each
+// photo's preview with the built-in formula (quality.Measure).
+func (s *Session) Scorer() *quality.FileScorer {
 	s.scorerOnce.Do(func() {
-		var inf local.CropInferer = sessionNoInferer{}
-		if s.deps.CropInferer != nil {
-			inf = s.deps.CropInferer
-		}
-		s.scorer = local.NewQualityScorer(s.Store, inf, func(fileID int64) (string, error) {
+		s.scorer = quality.NewFileScorer(s.Store, func(fileID int64) (string, error) {
 			return sessionThumbPath(s.Store, s.Root, fileID, thumb.TierPreview)
 		})
 		// A preview unreadable because the folder is gone leaves the photo
@@ -219,29 +214,20 @@ func sessionRootReachable(root string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// sessionNoInferer is the CropInferer of a session built without one.
-type sessionNoInferer struct{}
-
-func (sessionNoInferer) QualityCrop([]float32) (float64, error) {
-	return 0, local.ErrQualityUnavailable
-}
-
-// errSessionVisualGroupingOff is what the analyze stage's embedder answers while
-// visual grouping is off: the file is analyzed without an embedding.
-var errSessionVisualGroupingOff = errors.New("session: visual grouping is off")
-
-// sessionGatedEmbedder embeds only while the live visual_grouping setting is
-// on.
-type sessionGatedEmbedder struct {
-	inner    local.Embedder
+// sessionPrinter is the analyze stage's printer: the feature print of a
+// preview through Vision, made only while the live visual_grouping setting
+// is on (read for every file). Off, it answers analyze.ErrPrintsOff, so the
+// file is analyzed without a print and stays pending for one.
+type sessionPrinter struct {
+	vision   platform.Vision
 	settings func() config.Config
 }
 
-func (e *sessionGatedEmbedder) Embed(img image.Image) ([]float32, error) {
-	if !e.settings().VisualGrouping {
-		return nil, errSessionVisualGroupingOff
+func (p *sessionPrinter) Print(ctx context.Context, path string) ([]float32, error) {
+	if !p.settings().VisualGrouping {
+		return nil, analyze.ErrPrintsOff
 	}
-	return e.inner.Embed(img)
+	return p.vision.FeaturePrint(ctx, platform.ImageInput{Path: path})
 }
 
 // openSession makes the checks of a session open on root, already accessed
@@ -356,24 +342,63 @@ func sessionWritable(dir string) error {
 	return nil
 }
 
-// sessionThumbPath returns the absolute path of the file's cached thumbnail
-// of tier: the thumbs row's path, or the deterministic cache layout when the
-// row is missing and the file exists there.
+// sessionCachePrefix is where every thumbnail tier lives inside a folder.
+// A thumbs row naming any other place (an original among them) is not used.
+const sessionCachePrefix = ".choix/thumbs/"
+
+// sessionThumbPath is the one resolver of a file's cached image of tier, for
+// the analyze stage and the quality scorer: the thumbs row's path when it
+// names a regular file, otherwise the tier's standard cache path
+// (thumb.CachePath) when a regular file is there. A row whose file is gone
+// (a stale row) therefore does not hide the file at its standard place.
+//
+// Both candidates stay inside the folder's thumbnail cache: the row's path
+// must be a local, slash-separated path under .choix/thumbs/, and the last
+// element of either must be a regular file, not a symbolic link. Nothing
+// here opens an original.
+//
+// With neither, the error names the tier and why the row could not be used
+// (or, without a row, "not found").
 func sessionThumbPath(st *store.Store, root string, fileID int64, tier string) (string, error) {
 	t, err := st.Thumbs().Get(fileID, tier)
-	if err == nil && t.RelPath != "" && filepath.IsLocal(filepath.FromSlash(t.RelPath)) {
-		return filepath.Join(root, filepath.FromSlash(t.RelPath)), nil
+	if err == nil {
+		var p string
+		if p, err = sessionRowCachePath(root, t.RelPath); err == nil {
+			if err = sessionRegularFile(p); err == nil {
+				return p, nil
+			}
+		}
 	}
 	abs := thumb.CachePath(root, fileID, tier)
-	if _, statErr := os.Stat(abs); statErr == nil {
+	if sessionRegularFile(abs) == nil {
 		return abs, nil
-	}
-	if err == nil {
-		err = errors.New("its cache entry is unusable")
 	}
 	name := "thumbnail"
 	if tier == thumb.TierPreview {
 		name = "preview"
 	}
 	return "", fmt.Errorf("no cached %s image for this file (%w)", name, err)
+}
+
+// sessionRowCachePath returns the absolute path a thumbs row's rel names,
+// or an error when rel is not a local path under .choix/thumbs/.
+func sessionRowCachePath(root, rel string) (string, error) {
+	slash := filepath.ToSlash(rel)
+	if rel == "" || !filepath.IsLocal(filepath.FromSlash(rel)) || !strings.HasPrefix(path.Clean(slash), sessionCachePrefix) {
+		return "", fmt.Errorf("its cache entry %q is unusable", rel)
+	}
+	return filepath.Join(root, filepath.FromSlash(rel)), nil
+}
+
+// sessionRegularFile reports why p is not usable as a cached image: it does
+// not exist, or it is not a regular file (a symbolic link is refused).
+func sessionRegularFile(p string) error {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", p)
+	}
+	return nil
 }

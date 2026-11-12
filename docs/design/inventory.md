@@ -4,18 +4,18 @@
 
 There is no Figma file for this project: the prototype is the design source, and the owner approves each state in it. The Design source column names the scenario file that draws the state; the Reference column names what the state was built from: a screen of the owner's 2026-11-11 mockup (`mockup-2026-11-11#<screen>`, not committed), a v1 file under `internal/ui/web/src/` (`v1:<path>`), or `missing design`.
 
-159 states. Each number opens its state at `http://localhost:8811/#s<N>` while the review build is served (`task design:build && task design:serve`). Numbers are permanent: a removed state is retired, never renumbered or reused. How states are reviewed and approved: [README.md](README.md).
+142 states. Each number opens its state at `http://localhost:8811/#s<N>` while the review build is served (`task design:build && task design:serve`). Numbers are permanent: a removed state is retired, never renumbered or reused. How states are reviewed and approved: [README.md](README.md).
 
 ## Groups
 
 | Group | Range | States | Scenario file |
 |---|---|---|---|
-| Welcome and shell | 10–49 | 16 | [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) |
-| Library | 100–199 | 32 | [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) |
-| Folder | 200–299 | 32 | [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) |
+| Welcome and shell | 10–49 | 9 | [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) |
+| Library | 100–199 | 30 | [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) |
+| Folder | 200–299 | 30 | [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) |
 | Focus | 300–399 | 18 | [scenarios/focus.tsx](../../frontend/prototype/scenarios/focus.tsx) |
 | Compare | 400–449 | 10 | [scenarios/compare.tsx](../../frontend/prototype/scenarios/compare.tsx) |
-| Settings | 500–599 | 21 | [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) |
+| Settings | 500–599 | 15 | [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) |
 | Overlays | 600–699 | 6 | [scenarios/overlays.tsx](../../frontend/prototype/scenarios/overlays.tsx) |
 | Native replicas | 700–799 | 14 | [scenarios/native.tsx](../../frontend/prototype/scenarios/native.tsx) |
 | Gallery | 800–899 | 10 | [scenarios/gallery.tsx](../../frontend/prototype/scenarios/gallery.tsx) |
@@ -24,13 +24,6 @@ There is no Figma file for this project: the prototype is the design source, and
 
 | # | State | Group | Design source | Reference |
 |---|---|---|---|---|
-| [11](http://localhost:8811/#s11) | CLIP downloading, quality queued | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
-| [12](http://localhost:8811/#s12) | CLIP failed (Retry) | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
-| [13](http://localhost:8811/#s13) | Quality failed | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
-| [14](http://localhost:8811/#s14) | Offline, both failed | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
-| [15](http://localhost:8811/#s15) | Visual grouping off | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
-| [16](http://localhost:8811/#s16) | Quality rating off | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
-| [17](http://localhost:8811/#s17) | CLIP ready, quality downloading | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-c` |
 | [30](http://localhost:8811/#s30) | Scan discovering (indeterminate), in its row | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-a` |
 | [31](http://localhost:8811/#s31) | Rating quality, in its row | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `v1:components/primitives.tsx` |
 | [32](http://localhost:8811/#s32) | Scan stopped, in its row | Welcome and shell | prototype: [scenarios/welcome.tsx](../../frontend/prototype/scenarios/welcome.tsx) | `mockup-2026-11-11#s-a` |
@@ -52,7 +45,6 @@ There is no Figma file for this project: the prototype is the design source, and
 | [109](http://localhost:8811/#s109) | Forty folders | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [110](http://localhost:8811/#s110) | 80-Char name, long RTL/emoji path | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [111](http://localhost:8811/#s111) | Loading | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | missing design |
-| [112](http://localhost:8811/#s112) | Compact model-download banner | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [113](http://localhost:8811/#s113) | “Folder removed” toast | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `v1:components/Toaster.tsx` |
 | [114](http://localhost:8811/#s114) | “Already in Library” toast | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `v1:components/Toaster.tsx` |
 | [115](http://localhost:8811/#s115) | Read-only volume error | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
@@ -60,7 +52,6 @@ There is no Figma file for this project: the prototype is the design source, and
 | [117](http://localhost:8811/#s117) | Scanning, previews not ready | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [118](http://localhost:8811/#s118) | Single folder | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [119](http://localhost:8811/#s119) | Folder with 0 photos | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
-| [120](http://localhost:8811/#s120) | Compact banner, download failed | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [121](http://localhost:8811/#s121) | Folder with 1 photo | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [122](http://localhost:8811/#s122) | Folder with 1 video | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
 | [123](http://localhost:8811/#s123) | Two folders scanning, one queued | Library | prototype: [scenarios/library.tsx](../../frontend/prototype/scenarios/library.tsx) | `mockup-2026-11-11#s-a` |
@@ -88,7 +79,6 @@ There is no Figma file for this project: the prototype is the design source, and
 | [213](http://localhost:8811/#s213) | Video cluster (S3) | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Library.tsx` |
 | [214](http://localhost:8811/#s214) | No photos or videos found | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Empty.tsx` |
 | [215](http://localhost:8811/#s215) | Re-clustering busy | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Library.tsx` |
-| [216](http://localhost:8811/#s216) | Time-only notice (model downloading) | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | missing design |
 | [217](http://localhost:8811/#s217) | Cluster fully reviewed | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Library.tsx` |
 | [218](http://localhost:8811/#s218) | Sort menu open | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Library.tsx` |
 | [219](http://localhost:8811/#s219) | Camera filter applied | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Library.tsx` |
@@ -100,7 +90,6 @@ There is no Figma file for this project: the prototype is the design source, and
 | [225](http://localhost:8811/#s225) | Read-only volume while open | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | missing design |
 | [226](http://localhost:8811/#s226) | Picks missing their copies (notice) | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | missing design |
 | [227](http://localhost:8811/#s227) | Visual grouping off (no notice) | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | missing design |
-| [228](http://localhost:8811/#s228) | Time-only notice (model download failed) | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | missing design |
 | [229](http://localhost:8811/#s229) | Title bar with quality indicator | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/primitives.tsx` |
 | [230](http://localhost:8811/#s230) | First scan, clustering, another folder rating | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Empty.tsx` |
 | [231](http://localhost:8811/#s231) | Long name, scan running (indicator keeps its label) | Folder | prototype: [scenarios/folder.tsx](../../frontend/prototype/scenarios/folder.tsx) | `v1:components/Library.tsx` |
@@ -137,8 +126,6 @@ There is no Figma file for this project: the prototype is the design source, and
 | [502](http://localhost:8811/#s502) | Bucket validation error | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [503](http://localhost:8811/#s503) | Picks-folder validation error | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [504](http://localhost:8811/#s504) | Saving | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
-| [505](http://localhost:8811/#s505) | Quality model downloading | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
-| [506](http://localhost:8811/#s506) | Quality download failed (Retry) | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [507](http://localhost:8811/#s507) | Visual grouping off | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | missing design |
 | [508](http://localhost:8811/#s508) | Leave-without-saving prompt | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [509](http://localhost:8811/#s509) | Quality scoring progress | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
@@ -146,10 +133,6 @@ There is no Figma file for this project: the prototype is the design source, and
 | [511](http://localhost:8811/#s511) | Failed to load | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | missing design |
 | [512](http://localhost:8811/#s512) | Save failed toast | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [513](http://localhost:8811/#s513) | Quality waiting for scan | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
-| [514](http://localhost:8811/#s514) | Quality error | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
-| [515](http://localhost:8811/#s515) | Retrying | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
-| [516](http://localhost:8811/#s516) | CLIP downloading row | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | missing design |
-| [517](http://localhost:8811/#s517) | CLIP failed row | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | missing design |
 | [518](http://localhost:8811/#s518) | At defaults | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [519](http://localhost:8811/#s519) | Behaviour section active | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
 | [520](http://localhost:8811/#s520) | Output section active | Settings | prototype: [scenarios/settings.tsx](../../frontend/prototype/scenarios/settings.tsx) | `v1:components/Settings.tsx` |
@@ -186,7 +169,27 @@ There is no Figma file for this project: the prototype is the design source, and
 
 ## Retired
 
-No state is retired yet. A retired number is listed in `docs/design/retired.json`, and the registry refuses to register it again.
+From `docs/design/retired.json`. The registry refuses to register these numbers again.
+
+| # |
+|---|
+| 11 |
+| 12 |
+| 13 |
+| 14 |
+| 15 |
+| 16 |
+| 17 |
+| 112 |
+| 120 |
+| 216 |
+| 228 |
+| 505 |
+| 506 |
+| 514 |
+| 515 |
+| 516 |
+| 517 |
 
 ## Not states
 
@@ -194,7 +197,6 @@ Deliberately not given a state.
 
 | What | Why | Recorded in |
 |---|---|---|
-| No. 10, both models downloading | Cannot occur: the two model downloads run one at a time, CLIP first. 11 (CLIP downloading, quality queued) and 17 (CLIP ready, quality downloading) cover the sequence. It was dropped before the first committed snapshot, so the number was never registered and is not retired. | frontend/prototype/scenarios/welcome.tsx (header) |
 | No. 309 | There is no "last photo" state: photo navigation in Focus wraps around, as in v1. | frontend/prototype/scenarios/focus.tsx (header) |
 | The folder picker | A macOS system panel: the app opens it, the system draws it. | docs/superpowers/plans/2026-11-11-design-prototype-and-gate.md, item 9 of "How this plan reads the prompt" |
 | The About panel | A macOS system panel, as the folder picker. | docs/superpowers/plans/2026-11-11-design-prototype-and-gate.md, item 9 of "How this plan reads the prompt" |

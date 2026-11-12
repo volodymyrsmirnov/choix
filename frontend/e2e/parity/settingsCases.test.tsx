@@ -4,12 +4,13 @@
 //   - SETTINGS_STEPS (cases.ts, which runs on Node and cannot import the
 //     scenarios) stands for exactly the props the fixture cannot carry, and
 //     the fixture's `calls`, `events` and `ui` for exactly what the state
-//     shows (a save or retry in flight, a refused load, Go's later values,
-//     the opening scroll to the quality field);
-//   - the app's own controller and stores (createSettingsDraft, the settings,
-//     models and quality stores, the real router), fed each fixture, its
-//     events and the steps the way the screen reports them, give the Settings
-//     screen the scenario's props;
+//     shows (a save in flight, a refused load, Go's later value, the opening
+//     scroll to the quality field);
+//   - the app's own controller and stores (createSettingsDraft, the settings
+//     and quality stores, the real router), fed each fixture (the quality
+//     worker as Catalog.QualityStatus answers it), its events and the steps
+//     the way the screen reports them, give the Settings screen the
+//     scenario's props;
 //   - the toast the app puts up itself when Save fails carries the approved
 //     copy of the toast 512 seeds.
 import { describe, expect, test } from 'bun:test'
@@ -17,7 +18,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { TOAST_SAVE_FAILED } from '../../prototype/mock/settings'
 import { scenarios as settingsSceneList } from '../../prototype/scenarios/settings'
 import type { AppEvents, On } from '../../src/app/shell/events'
-import { createModelsStore, type ModelStatusData } from '../../src/app/shell/modelsStore'
 import { createQualityStore, type QualityData } from '../../src/app/shell/qualityStore'
 import { createRouter, type HashHost } from '../../src/app/shell/router'
 import { createSettingsStore } from '../../src/app/shell/settingsStore'
@@ -93,7 +93,6 @@ function stepsOf(p: SettingsProps): SettingsSteps {
   if (p.activeSection !== 'grouping' && p.reveal === undefined) out.section = p.activeSection
   if (p.saving) out.save = true
   if (p.leavePrompt) out.back = true
-  if (p.retrying) out.retry = true
   return out
 }
 
@@ -128,7 +127,6 @@ describe('each step, call, event and ui value stands for what the scenario shows
       expect(f.calls ?? {}).toEqual({
         ...(p.saved === null && p.loadError !== null ? { 'Settings.Get': { code: 'internal', message: p.loadError } } : {}),
         ...(p.saving ? { 'Settings.Save': 'pending' } : {}),
-        ...(p.retrying ? { 'Models.Retry': 'pending' } : {}),
       })
       expect(f.ui).toEqual(p.reveal === undefined ? undefined : { 'settings.reveal': p.reveal })
       // The revealed field's section is the one the state highlights.
@@ -137,11 +135,10 @@ describe('each step, call, event and ui value stands for what the scenario shows
       const ev = SETTINGS_EVENTS[n]
       if (ev) {
         // What Go reported before differs from what the state shows; the events bring it.
-        if (ev.before.models) expect(ev.before.models).not.toEqual(p.models)
         if (ev.before.quality) expect(ev.before.quality).not.toEqual(p.quality)
         expect(f.events).toEqual(JSON.parse(JSON.stringify(ev.events(p))))
       } else {
-        expect([f.models, f.quality, f.events]).toEqual([p.models, p.quality ?? undefined, undefined])
+        expect([f.quality, f.events]).toEqual([p.quality ?? undefined, undefined])
       }
     })
   }
@@ -159,8 +156,7 @@ function appFor(f: ParityFixture) {
     return Promise.resolve(structuredClone(value))
   }
   const settings = createSettingsStore({ get: () => answer('Settings.Get', f.settings) })
-  const models = createModelsStore({ status: () => answer('Models.Status', f.models as ModelStatusData[] | undefined), on: bus.on })
-  const quality = createQualityStore({ quality: () => answer('Models.Quality', f.quality as QualityData | undefined), on: bus.on })
+  const quality = createQualityStore({ qualityStatus: () => answer('Catalog.QualityStatus', f.quality as QualityData | undefined), on: bus.on })
   const router = createRouter(fakeHost())
   router.start()
   router.navigate({ name: 'settings' })
@@ -171,10 +167,7 @@ function appFor(f: ParityFixture) {
       saves.push(patch)
       return answer('Settings.Save', { saved: true, reclustered: false })
     },
-    retry: () => answer<void>('Models.Retry', undefined as unknown as void),
     settings,
-    models,
-    quality,
     router,
     toast: (t) => {
       toasts.push(t)
@@ -183,8 +176,8 @@ function appFor(f: ParityFixture) {
   })
   const reveal = f.ui?.['settings.reveal'] as SettingsProps['reveal']
   if (reveal !== undefined) ctl.reveal(reveal)
-  const stops = [settings.start(), models.start(), quality.start(), ctl.start()]
-  return { ctl, bus, models, quality, router, toasts, saves, stop: () => stops.forEach((s) => s()) }
+  const stops = [settings.start(), quality.start(), ctl.start()]
+  return { ctl, bus, quality, router, toasts, saves, stop: () => stops.forEach((s) => s()) }
 }
 
 describe("the app's controller and stores, fed the fixture, give the screen the scenario's props", () => {
@@ -194,7 +187,6 @@ describe("the app's controller and stores, fed the fixture, give the screen the 
       const f: ParityFixture = SETTINGS[n]!
       const s = SETTINGS_STEPS[n] ?? {}
       const app = appFor(f)
-      // Models.Retry answers at once unless the fixture keeps it in flight.
       await flush()
       for (const ev of f.events ?? []) app.bus.emit(ev.name as keyof AppEvents, ev.data)
       // The screen's opening scroll, when a field is revealed: the pane at its bottom reports the last section.
@@ -208,7 +200,6 @@ describe("the app's controller and stores, fed the fixture, give the screen the 
       if (s.section !== undefined) app.ctl.section(s.section, 'nav')
       if (s.save) void app.ctl.save()
       if (s.back) app.ctl.back()
-      if (s.retry) void app.ctl.retry('quality')
       await flush()
 
       const st = app.ctl.state()
@@ -219,9 +210,7 @@ describe("the app's controller and stores, fed the fixture, give the screen the 
         errors: st.errors,
         activeSection: st.activeSection,
         saving: st.saving,
-        retrying: st.retrying,
         leavePrompt: st.leavePrompt,
-        models: app.models.get().value ?? [],
         quality: app.quality.get().value ?? null,
       }).toEqual({
         saved: p.saved,
@@ -230,9 +219,7 @@ describe("the app's controller and stores, fed the fixture, give the screen the 
         errors: p.errors,
         activeSection: p.activeSection,
         saving: p.saving,
-        retrying: p.retrying,
         leavePrompt: p.leavePrompt,
-        models: p.models,
         quality: p.quality,
       })
       // The steps leave no toast of the app's own (512's is the fixture's).

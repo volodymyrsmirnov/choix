@@ -32,14 +32,14 @@ func TestCoalescer_KeysAreIndependent(t *testing.T) {
 	c.Emit(ScanProgress, "f1", "a1")
 	c.Emit(ScanProgress, "f2", "b1")
 	c.Emit(ScanProgress, "f1", "a2")
-	c.Emit(ModelsProgress, "f1", "m1") // same key, other name
+	c.Emit(QualityStatus, "f1", "q1") // same key, other name
 	c.Flush()
 
 	if got := r.Events(ScanProgress); !reflect.DeepEqual(got, []any{"a2", "b1"}) {
 		t.Errorf("scan events = %v, want [a2 b1]", got)
 	}
-	if got := r.Events(ModelsProgress); !reflect.DeepEqual(got, []any{"m1"}) {
-		t.Errorf("model events = %v, want [m1]", got)
+	if got := r.Events(QualityStatus); !reflect.DeepEqual(got, []any{"q1"}) {
+		t.Errorf("quality events = %v, want [q1]", got)
 	}
 }
 

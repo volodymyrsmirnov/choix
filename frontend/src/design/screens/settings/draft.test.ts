@@ -7,8 +7,6 @@ const q = (s: Partial<QualityStatus>): QualityStatus => ({
   enabled: true,
   state: 'idle',
   active: false,
-  received: 0,
-  size: 0,
   done: 0,
   total: 0,
   rated: 0,
@@ -19,7 +17,7 @@ describe('defaults and drafts', () => {
   test('defaults match config.Defaults() and the 2.0 visual_grouping', () => {
     expect(DEFAULTS).toEqual({
       bucket_size: 600,
-      similarity: 0.92,
+      similarity: 0.9,
       picks_dir: 'picks',
       advance_on_action: false,
       hide_rejected_photos: false,
@@ -57,7 +55,7 @@ describe('dirty sections', () => {
     const d = draftOf(saved)
     expect(dirtySections(saved, { ...d, visual_grouping: false })).toEqual({ grouping: true, behaviour: false, output: false })
     expect(dirtySections(saved, { ...d, cross_device_merging: true }).grouping).toBe(true)
-    expect(dirtySections(saved, { ...d, similarity: 0.9 }).grouping).toBe(true)
+    expect(dirtySections(saved, { ...d, similarity: 0.85 }).grouping).toBe(true)
     expect(dirtySections(saved, { ...d, advance_on_action: true }).behaviour).toBe(true)
     expect(dirtySections(saved, { ...d, hide_rejected_photos: true }).behaviour).toBe(true)
     expect(dirtySections(saved, { ...d, quality_rating: false }).behaviour).toBe(true)
@@ -86,19 +84,20 @@ describe('save note', () => {
 })
 
 describe('quality status line', () => {
-  test('the states the model row does not show (v1 copy)', () => {
+  test('one line per state the worker reports', () => {
     expect(qualityStatusText(null)).toBe('')
-    expect(qualityStatusText(q({ enabled: false, state: 'disabled' }))).toBe('Off: no model download, no ratings.')
+    expect(qualityStatusText(q({ enabled: false, state: 'disabled' }))).toBe('Off: no ratings.')
     expect(qualityStatusText(q({ state: 'waiting' }))).toBe('Waiting for the scan to finish before rating photos.')
     expect(qualityStatusText(q({ state: 'scoring', done: 1234, total: 5218 }))).toBe('Rating photos: 1,234 of 5,218.')
-    expect(qualityStatusText(q({ state: 'error', error: 'the model could not be loaded' }))).toBe(
-      'Rating stopped: the model could not be loaded. Restart Choix to try again.',
-    )
     expect(qualityStatusText(q({ state: 'idle' }))).toBe('Ratings are up to date.')
   })
 
-  test('the download states are left to the model row', () => {
-    expect(qualityStatusText(q({ state: 'downloading', received: 1, size: 2 }))).toBe('')
-    expect(qualityStatusText(q({ state: 'download_failed', error: 'x' }))).toBe('')
+  test('no download or error text: a state the worker no longer reports says nothing', () => {
+    // What the worker reported while it downloaded a model. Go no longer
+    // sends these states and QualityState no longer names them; a stale
+    // value must still say nothing.
+    for (const state of ['downloading', 'download_failed', 'error'] as unknown as QualityStatus['state'][]) {
+      expect(qualityStatusText(q({ state })), state).toBe('')
+    }
   })
 })

@@ -174,35 +174,37 @@ func (r *FilesRepo) UpdateStatus(id int64, status, errMsg string) error {
 	return err
 }
 
-// BumpAnalyzedMissingEmbedding rewinds every 'analyzed' file row that
-// lacks a CLIP embedding back to 'thumbed' (the analyze stage's input
-// status). The first-run wizard calls this after installing the CLIP
-// model so files that were analyzed without one get re-processed on the
-// next pipeline run.
-func (r *FilesRepo) BumpAnalyzedMissingEmbedding() (int64, error) {
+// missingPrint selects the 'analyzed' files that are pending for a print
+// id (the single parameter): no ai_signals row, or a row whose
+// vision_print_id is NULL or another id. A row stamped with the id but no
+// print (Vision could not make one) is not pending.
+const missingPrint = `scan_status = 'analyzed'
+		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE vision_print_id = ?)`
+
+// BumpAnalyzedMissingPrint rewinds every 'analyzed' file pending for
+// printID back to 'thumbed' (the analyze stage's input status) and clears
+// its error, so the next pipeline pass makes its print. Returns the number
+// of rows rewound.
+func (r *FilesRepo) BumpAnalyzedMissingPrint(printID string) (int64, error) {
 	res, err := r.db.ExecContext(context.Background(), `
 		UPDATE files
 		   SET scan_status = 'thumbed', error = NULL
-		 WHERE scan_status = 'analyzed'
-		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL)`)
+		 WHERE `+missingPrint, printID)
 	if err != nil {
-		return 0, fmt.Errorf("BumpAnalyzedMissingEmbedding: %w", err)
+		return 0, fmt.Errorf("BumpAnalyzedMissingPrint: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
 }
 
-// CountAnalyzedMissingEmbedding returns how many 'analyzed' files have no
-// CLIP embedding — exactly the rows BumpAnalyzedMissingEmbedding would
-// rewind.
-func (r *FilesRepo) CountAnalyzedMissingEmbedding() (int, error) {
+// CountAnalyzedMissingPrint returns how many 'analyzed' files are pending
+// for printID: exactly the rows BumpAnalyzedMissingPrint would rewind.
+func (r *FilesRepo) CountAnalyzedMissingPrint(printID string) (int, error) {
 	var n int
-	err := r.db.QueryRowContext(context.Background(), `
-		SELECT COUNT(*) FROM files
-		 WHERE scan_status = 'analyzed'
-		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL)`).Scan(&n)
+	err := r.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM files WHERE `+missingPrint, printID).Scan(&n)
 	if err != nil {
-		return 0, fmt.Errorf("CountAnalyzedMissingEmbedding: %w", err)
+		return 0, fmt.Errorf("CountAnalyzedMissingPrint: %w", err)
 	}
 	return n, nil
 }
@@ -399,15 +401,41 @@ func (r *FilesRepo) UpsertOnRescan(f File, run int64) (id int64, inserted bool, 
 		}
 		return existing.ID, false, nil
 	}
-	// Modified — reset scan_status, refresh metadata fields.
-	_, err = r.db.ExecContext(context.Background(),
-		`UPDATE files SET size=?, mtime=?, content_hash=?, kind=?, format=?, scan_status='discovered', error=NULL,
-		        quality_raw=NULL, quality_model=NULL, seen_run=? WHERE id=?`,
-		f.Size, f.Mtime, f.ContentHash, f.Kind, f.Format, run, existing.ID)
-	if err != nil {
+	// Modified — reset scan_status, refresh metadata fields, and drop what
+	// was derived from the old bytes: the quality rating and the feature
+	// print. Both updates commit together or not at all.
+	if err := r.resetChanged(f, run, existing.ID); err != nil {
 		return 0, false, fmt.Errorf("UpsertOnRescan: update %s: %w", f.Path, err)
 	}
 	return existing.ID, false, nil
+}
+
+// resetChanged rewrites the row id of a file whose content changed and
+// clears its rating and its stored print, in one transaction. When the
+// content hash changed, migration 007's trigger has already cleared the
+// print with the first update; the second one also covers a change of size
+// or mtime under the same content hash, which covers only the file's ends.
+func (r *FilesRepo) resetChanged(f File, run, id int64) error {
+	ctx := context.Background()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE files SET size=?, mtime=?, content_hash=?, kind=?, format=?, scan_status='discovered', error=NULL,
+		        quality_raw=NULL, quality_model=NULL, seen_run=? WHERE id=?`,
+		f.Size, f.Mtime, f.ContentHash, f.Kind, f.Format, run, id); err != nil {
+		return fmt.Errorf("reset file: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE ai_signals SET vision_print = NULL, vision_print_id = NULL WHERE file_id = ?`, id); err != nil {
+		return fmt.Errorf("clear print: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // RecordDiscoveryFailure records that the walk of generation run found the
@@ -530,79 +558,6 @@ func (r *FilesRepo) ListAllAnalyzed() ([]File, error) {
 			return nil, err
 		}
 		out = append(out, f)
-	}
-	return out, rows.Err()
-}
-
-// ListAnalyzedInBucket returns analyzed files whose (device_key, floor(captured_at/bucketSec)*bucketSec)
-// matches the supplied bucket. timeBucket.Valid==false selects rows with NULL captured_at.
-func (r *FilesRepo) ListAnalyzedInBucket(deviceKey string, timeBucket sql.NullInt64, bucketSec int64) ([]File, error) {
-	ctx := context.Background()
-	var rows *sql.Rows
-	var err error
-	if timeBucket.Valid {
-		rows, err = r.db.QueryContext(ctx,
-			filesSelect+` WHERE scan_status = 'analyzed' AND device_key = ?
-			              AND captured_at IS NOT NULL
-			              AND (captured_at / ?) * ? = ?`,
-			deviceKey, bucketSec, bucketSec, timeBucket.Int64)
-	} else {
-		rows, err = r.db.QueryContext(ctx,
-			filesSelect+` WHERE scan_status = 'analyzed' AND device_key = ? AND captured_at IS NULL`,
-			deviceKey)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []File
-	for rows.Next() {
-		f, err := scanFile(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
-}
-
-// ListAnalyzedDistinctBuckets returns every distinct (device_key, time_bucket) pair
-// over rows with scan_status='analyzed'. time_bucket is the floored bucket-start in
-// unix seconds, computed using bucketSec; null captured_at yields a NULL TimeBucket.
-// Returns the bucket keys ordered by (device_key, time_bucket nulls last).
-func (r *FilesRepo) ListAnalyzedDistinctBuckets(bucketSec int64) ([]struct {
-	DeviceKey  string
-	TimeBucket sql.NullInt64
-}, error) {
-	ctx := context.Background()
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT DISTINCT
-		    COALESCE(device_key, 'Unknown') AS dk,
-		    CASE WHEN captured_at IS NULL THEN NULL
-		         ELSE (captured_at / ?) * ? END AS tb
-		FROM files
-		WHERE scan_status = 'analyzed'
-		ORDER BY dk, tb IS NULL, tb`,
-		bucketSec, bucketSec)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []struct {
-		DeviceKey  string
-		TimeBucket sql.NullInt64
-	}
-	for rows.Next() {
-		var rec struct {
-			DeviceKey  string
-			TimeBucket sql.NullInt64
-		}
-		if err := rows.Scan(&rec.DeviceKey, &rec.TimeBucket); err != nil {
-			return nil, err
-		}
-		out = append(out, rec)
 	}
 	return out, rows.Err()
 }

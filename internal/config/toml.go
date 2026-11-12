@@ -12,14 +12,16 @@ import (
 // can distinguish "key absent" from "key set to zero value" — the latter is
 // meaningful for bools.
 type fileSchema struct {
-	BucketSizeSec          *int     `toml:"bucket_size_sec"`
-	VisualClusterThreshold *float64 `toml:"visual_cluster_threshold"`
-	PicksDir               *string  `toml:"picks_dir"`
-	AdvanceOnAction        *bool    `toml:"advance_on_action"`
-	HideRejectedPhotos     *bool    `toml:"hide_rejected_photos"`
-	CrossDeviceMerging     *bool    `toml:"cross_device_merging"`
-	VisualGrouping         *bool    `toml:"visual_grouping"`
-	QualityRating          *bool    `toml:"quality_rating"`
+	BucketSizeSec *int `toml:"bucket_size_sec"`
+	// VisualSimilarity replaced visual_cluster_threshold, a similarity on
+	// another scale: that key is ignored and no longer written.
+	VisualSimilarity   *float64 `toml:"visual_similarity"`
+	PicksDir           *string  `toml:"picks_dir"`
+	AdvanceOnAction    *bool    `toml:"advance_on_action"`
+	HideRejectedPhotos *bool    `toml:"hide_rejected_photos"`
+	CrossDeviceMerging *bool    `toml:"cross_device_merging"`
+	VisualGrouping     *bool    `toml:"visual_grouping"`
+	QualityRating      *bool    `toml:"quality_rating"`
 }
 
 // LoadFile reads a config TOML file at path and returns the raw schema with
@@ -46,8 +48,8 @@ func ApplyTOML(dst *Config, src *fileSchema) {
 	if src.BucketSizeSec != nil {
 		dst.BucketSizeSec = *src.BucketSizeSec
 	}
-	if src.VisualClusterThreshold != nil {
-		dst.VisualClusterThreshold = *src.VisualClusterThreshold
+	if src.VisualSimilarity != nil {
+		dst.VisualSimilarity = *src.VisualSimilarity
 	}
 	if src.PicksDir != nil {
 		dst.PicksDir = *src.PicksDir

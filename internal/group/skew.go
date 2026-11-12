@@ -1,6 +1,7 @@
 package group
 
 import (
+	"context"
 	"sort"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -10,11 +11,13 @@ import (
 // load-bearing for "did these two cameras shoot the same scene", and the
 // user toggle gates the whole feature anyway.
 const (
-	// anchorSimilarity is the cosine threshold for accepting a (refFile,
-	// otherFile) pair as evidence of "same scene from two cameras". Set
-	// well above the default cluster threshold (0.92) so we only rely on
-	// near-identical frames when estimating skew.
-	anchorSimilarity = 0.95
+	// anchorSimilarity is the feature-print similarity at or above which a
+	// (refFile, otherFile) pair is accepted as evidence of "same scene from
+	// two cameras". Set above the default cluster similarity (0.90): on a
+	// labelled folder every pair at or above 0.91 was a true pair, so only
+	// near-identical frames anchor the estimate. Untested on real
+	// two-camera data.
+	anchorSimilarity = 0.93
 
 	// maxSkewSec bounds the search window: only pairs whose raw EXIF
 	// timestamps differ by at most this much are considered. Cameras
@@ -37,16 +40,18 @@ type skewEntry struct {
 // device. Subtract offset[device_key] from each file's captured_at to align
 // every device onto a single canonical timeline.
 //
-// Reference device: the one with the most embedded files; ties broken
+// Reference device: the one with the most printed files; ties broken
 // alphabetically. The reference's offset is always 0. Each non-reference
 // device D's offset is the median of (d.captured_at - r.captured_at) over
-// pairs where cosine(emb_d, emb_r) >= anchorSimilarity and the raw time
+// pairs where similarity(print_d, print_r) >= anchorSimilarity and the raw time
 // difference is within ±maxSkewSec. Devices with fewer than minAnchors
 // qualifying pairs get offset 0 (untouched).
 //
 // Returns an empty map if there are zero or one devices with usable
-// embedded files — there's nothing to align.
-func EstimateSkew(files []store.File, embeds map[int64][]float32) map[string]int64 {
+// printed files — there's nothing to align. The pair search checks ctx once
+// per reference file and every pairCheckStride comparisons, and returns
+// ctx's error when it is cancelled.
+func EstimateSkew(ctx context.Context, files []store.File, embeds map[int64][]float32) (map[string]int64, error) {
 	byDevice := map[string][]skewEntry{}
 	for _, f := range files {
 		if !f.DeviceKey.Valid || f.DeviceKey.String == "" {
@@ -62,7 +67,7 @@ func EstimateSkew(files []store.File, embeds map[int64][]float32) map[string]int
 		byDevice[dev] = append(byDevice[dev], skewEntry{ID: f.ID, CapturedAt: f.CapturedAt.Int64})
 	}
 	if len(byDevice) < 2 {
-		return map[string]int64{}
+		return map[string]int64{}, nil
 	}
 
 	for _, list := range byDevice {
@@ -86,54 +91,95 @@ func EstimateSkew(files []store.File, embeds map[int64][]float32) map[string]int
 		if d == ref {
 			continue
 		}
-		deltas := pairDeltas(byDevice[ref], byDevice[d], embeds)
-		if len(deltas) < minAnchors {
+		deltas, err := pairDeltas(ctx, byDevice[ref], byDevice[d], embeds)
+		if err != nil {
+			return nil, err
+		}
+		if deltas.n < minAnchors {
 			result[d] = 0
 			continue
 		}
-		result[d] = medianInt64(deltas)
+		result[d] = deltas.median()
 	}
-	return result
+	return result, nil
 }
 
-// pairDeltas returns (other.CapturedAt - ref.CapturedAt) for every pair
-// whose cosine similarity is >= anchorSimilarity and whose raw time
+// pairCheckStride is how many pair comparisons pairDeltas makes between two
+// checks of its context: a few milliseconds of dot products.
+const pairCheckStride = 1024
+
+// pairDeltas returns the histogram of (other.CapturedAt - ref.CapturedAt)
+// over every pair whose similarity is >= anchorSimilarity and whose raw time
 // difference is within ±maxSkewSec. Both inputs must be sorted ascending
 // by CapturedAt; the implementation slides a forward-only window over
-// `other` as it walks `ref`.
-func pairDeltas(ref, other []skewEntry, embeds map[int64][]float32) []int64 {
-	var deltas []int64
-	lo := 0
+// `other` as it walks `ref`, checking ctx once per ref entry and every
+// pairCheckStride comparisons. It allocates nothing per pair.
+func pairDeltas(ctx context.Context, ref, other []skewEntry, embeds map[int64][]float32) (*deltaHistogram, error) {
+	deltas := &deltaHistogram{}
+	lo, compared := 0, 0
 	for _, r := range ref {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for lo < len(other) && other[lo].CapturedAt < r.CapturedAt-maxSkewSec {
 			lo++
+		}
+		er, ok := embeds[r.ID]
+		if !ok {
+			continue
 		}
 		for j := lo; j < len(other); j++ {
 			o := other[j]
 			if o.CapturedAt > r.CapturedAt+maxSkewSec {
 				break
 			}
-			er, ok1 := embeds[r.ID]
-			eo, ok2 := embeds[o.ID]
-			if !ok1 || !ok2 {
+			eo, ok := embeds[o.ID]
+			if !ok {
 				continue
 			}
-			if cosine(er, eo) < anchorSimilarity {
+			if compared++; compared%pairCheckStride == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			if similarity(er, eo) < anchorSimilarity {
 				continue
 			}
-			deltas = append(deltas, o.CapturedAt-r.CapturedAt)
+			deltas.add(o.CapturedAt - r.CapturedAt)
 		}
 	}
-	return deltas
+	return deltas, nil
 }
 
-// medianInt64 returns the median of xs (xs is mutated by sorting). Caller
-// must guarantee len(xs) > 0.
-func medianInt64(xs []int64) int64 {
-	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
-	n := len(xs)
-	if n%2 == 1 {
-		return xs[n/2]
+// deltaHistogram counts whole-second deltas within ±maxSkewSec: bounded
+// memory, however many pairs qualify, and the same median a sort gives.
+type deltaHistogram struct {
+	counts [2*maxSkewSec + 1]int
+	n      int
+}
+
+// add counts d, which must be within ±maxSkewSec.
+func (h *deltaHistogram) add(d int64) {
+	h.counts[d+maxSkewSec]++
+	h.n++
+}
+
+// median returns the median of the counted deltas: the middle one, or the
+// mean of the two middle ones truncated toward zero. It needs n > 0.
+func (h *deltaHistogram) median() int64 {
+	if h.n%2 == 1 {
+		return h.nth(h.n / 2)
 	}
-	return (xs[n/2-1] + xs[n/2]) / 2
+	return (h.nth(h.n/2-1) + h.nth(h.n/2)) / 2
+}
+
+// nth returns the k-th smallest counted delta (from 0).
+func (h *deltaHistogram) nth(k int) int64 {
+	for i, c := range h.counts {
+		if k < c {
+			return int64(i) - maxSkewSec
+		}
+		k -= c
+	}
+	return maxSkewSec
 }

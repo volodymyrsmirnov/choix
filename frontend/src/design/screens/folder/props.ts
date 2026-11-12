@@ -11,14 +11,6 @@ export const FOLDER_OVERLAYS = {
 export type FolderMenu = 'device' | 'sort'
 
 /**
- * How the folder's clusters were formed: by look (`visual`), or by capture
- * time only because the CLIP model is still downloading, its download
- * failed, or visual grouping is off in Settings. The first two have a
- * notice; `time-off` has none: it is the user's own choice.
- */
-export type FolderGrouping = 'visual' | 'time-downloading' | 'time-failed' | 'time-off'
-
-/**
  * The Folder page (spec §4.3): v1's Library cluster grid inside one folder,
  * under a title bar with Back, the folder's name and counts, the scan
  * indicator and Open Picks.
@@ -39,7 +31,6 @@ export interface FolderProps {
   /** The active cluster (v1's keyboard cursor); null when there is none. */
   selectedClusterId: number | null
   settings: Pick<SettingsBody, 'hide_rejected_photos' | 'quality_rating'>
-  grouping: FolderGrouping
   /**
    * The quality worker: shown in the title bar when no scan is (v1 AppBar),
    * and only this folder's work: a rating pass whose folder_id is another

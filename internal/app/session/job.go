@@ -1,6 +1,6 @@
 // The folder job: everything one folder needs, run by the Queue — a few
 // folders at a time, never one folder twice at once — the pipeline pass, the
-// CLIP backfill, the refresh of the folder's cached stats and previews once
+// feature-print backfill, the refresh of the folder's cached stats and previews once
 // its clusters are final, and the quality-rating pass.
 
 package session
@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/config"
@@ -21,12 +21,6 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
-
-// ModelState reports whether a model can be used: its setting is on and its
-// file is installed. *models.Manager implements it.
-type ModelState interface {
-	Ready(kind local.ModelKind) bool
-}
 
 // QualityRun tracks the quality-rating passes of the jobs. Begin is called
 // when a pass of the folder folderID starts; the pass runs under passCtx, which the tracker cancels
@@ -45,8 +39,6 @@ type JobOptions struct {
 	// Settings returns the live settings; each step reads them when it
 	// runs. nil: the built-in defaults.
 	Settings func() config.Config
-	// Models says which models are ready. nil: none is.
-	Models ModelState
 	// Quality tracks the rating pass. nil: the pass runs untracked.
 	Quality QualityRun
 	// Emit receives folder:changed. nil: no events.
@@ -57,6 +49,10 @@ type JobOptions struct {
 	// session's context, so its native calls are counted in the session's
 	// Inflight. nil: nothing.
 	AfterJob func(ctx context.Context, s *Session)
+	// BeforeScore runs before each photo of a rating pass is scored, after
+	// the job's own checks. Tests use it to hold a photo in flight. nil:
+	// nothing.
+	BeforeScore func()
 }
 
 // Reasons of the folder:changed events a job emits.
@@ -79,16 +75,16 @@ var errJobFolderGone = errors.New("session: the folder's directory is gone")
 //  2. The pipeline: a full job walks the folder and processes every file
 //     (discover → cluster, resuming from each file's status); a backfill
 //     only resumes, and only when files are pending.
-//  3. CLIP backfill: while visual grouping is on and the CLIP model is
-//     ready, files analyzed without an embedding are rewound and analyzed
-//     again, which reclusters.
+//  3. Print backfill: while visual grouping is on, files analyzed without a
+//     feature print stamped analyze.PrintID are rewound and analyzed again,
+//     which reclusters.
 //  4. EnsureClustered, for a setting changed after the cluster stage.
 //  5. The clusters are final: AfterJob, then folder:changed "clusters", so
 //     the open folder shows its grid and the Library row its counts and
 //     previews while the ratings are computed. Without a quality pass to
 //     come, this is the job's last step.
-//  6. The quality-rating pass, while quality_rating is on and its model is
-//     ready. It writes only ratings: its photos are announced by
+//  6. The quality-rating pass, while quality_rating is on. It writes only
+//     ratings: its photos are announced by
 //     folder:changed "ratings", the last one as the pass ends, and nothing
 //     published in step 5 is refreshed or announced again.
 //
@@ -98,9 +94,6 @@ type Job struct {
 	o JobOptions
 	// now is the clock that throttles the ratings events.
 	now func() time.Time
-	// scoreHook, when set by a test, runs before each photo is scored, after
-	// the job's own checks.
-	scoreHook func()
 }
 
 var _ Runner = (*Job)(nil)
@@ -171,8 +164,8 @@ func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(eve
 		return err
 	}
 
-	// 3. CLIP backfill.
-	if err := j.backfillEmbeddings(sctx, s, p); err != nil {
+	// 3. Print backfill.
+	if err := j.backfillPrints(sctx, s, p); err != nil {
 		return err
 	}
 	if err := jobBetween(ctx, s); err != nil {
@@ -214,32 +207,34 @@ func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(eve
 	return jobBetween(ctx, s)
 }
 
-// backfillEmbeddings rewinds the files analyzed without a CLIP embedding and
+// backfillPrints rewinds the files analyzed without a feature print stamped
+// analyze.PrintID (grouping was off, or an earlier build made them) and
 // analyzes them again (which reclusters), when visual grouping is on, the
-// CLIP model is ready and such files exist.
-func (j *Job) backfillEmbeddings(ctx context.Context, s *Session, p *pipeline.Pipeline) error {
-	if !j.o.Settings().VisualGrouping || !j.ready(local.ModelCLIP) {
+// session can make prints and such files exist. A file Vision cannot read
+// is stamped, so it is not rewound again; one whose print failed for another
+// reason stays pending and is tried again by the next job.
+func (j *Job) backfillPrints(ctx context.Context, s *Session, p *pipeline.Pipeline) error {
+	if !j.o.Settings().VisualGrouping || s.deps.Vision == nil {
 		return nil
 	}
 	files := s.Store.Files()
-	n, err := files.CountAnalyzedMissingEmbedding()
+	n, err := files.CountAnalyzedMissingPrint(analyze.PrintID)
 	if err != nil {
-		return fmt.Errorf("session: clip backfill: %w", err)
+		return fmt.Errorf("session: print backfill: %w", err)
 	}
 	if n == 0 {
 		return nil
 	}
-	if _, err := files.BumpAnalyzedMissingEmbedding(); err != nil {
-		return fmt.Errorf("session: clip backfill: %w", err)
+	if _, err := files.BumpAnalyzedMissingPrint(analyze.PrintID); err != nil {
+		return fmt.Errorf("session: print backfill: %w", err)
 	}
 	if err := p.Resume(ctx); err != nil {
-		return fmt.Errorf("session: clip backfill: %w", err)
+		return fmt.Errorf("session: print backfill: %w", err)
 	}
 	return nil
 }
 
-// rate runs the quality-rating pass when quality_rating is on and its model
-// is ready. The rating is advisory: the pass's errors are handed to the
+// rate runs the quality-rating pass when quality_rating is on. The rating is advisory: the pass's errors are handed to the
 // tracker and logged, not returned. The pass also stops at the next photo
 // once the setting reads off, whether or not a tracker cancelled it, and as
 // soon as the folder is found unreachable — before a photo, or by the
@@ -276,13 +271,9 @@ func (j *Job) rate(ctx context.Context, s *Session) error {
 		root:    s.Root,
 		stop:    cancel,
 		rated:   notify,
-		hook:    j.scoreHook,
+		hook:    j.o.BeforeScore,
 	}
-	pass := &quality.Pass{
-		Scorer:        sc,
-		IsUnavailable: func(err error) bool { return errors.Is(err, local.ErrQualityUnavailable) },
-		OnProgress:    progress,
-	}
+	pass := &quality.Pass{Scorer: sc, OnProgress: progress}
 	rated, err := pass.Run(s.Context(passCtx))
 	end(rated, err)
 	cause := context.Cause(passCtx)
@@ -309,7 +300,7 @@ var errJobQualityOff = errors.New("session: the quality rating was switched off"
 // photo dealt with, and stops the pass — cancelling it with the reason as
 // its cause — instead of scoring once the setting reads off or the folder is
 // unreachable, and when the scorer found the folder unreachable while
-// reading a preview. Each photo is scored holding the inference turn.
+// reading a preview.
 type jobScorer struct {
 	quality.Scorer
 	enabled func() bool
@@ -328,16 +319,10 @@ func (sc *jobScorer) Score(ctx context.Context, item store.QualityItem) error {
 		sc.stop(fmt.Errorf("%w: %s", errJobFolderGone, sc.root))
 		return context.Canceled
 	}
-	// One photo at a time across the jobs; the wait ends with ctx.
-	release, err := acquireInference(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
 	if sc.hook != nil {
 		sc.hook()
 	}
-	err = sc.Scorer.Score(ctx, item)
+	err := sc.Scorer.Score(ctx, item)
 	switch {
 	case errors.Is(err, pipeline.ErrFolderUnavailable):
 		sc.stop(err)
@@ -377,15 +362,9 @@ func (j *Job) ratingsNotifier(folderID string) (rated, flush func()) {
 	return rated, flush
 }
 
-// rating reports whether a quality-rating pass is due: quality_rating is on
-// and its model is ready.
+// rating reports whether a quality-rating pass is due: quality_rating is on.
 func (j *Job) rating() bool {
-	return j.o.Settings().QualityRating && j.ready(local.ModelQuality)
-}
-
-// ready reports whether the model of kind is ready.
-func (j *Job) ready(kind local.ModelKind) bool {
-	return j.o.Models != nil && j.o.Models.Ready(kind)
+	return j.o.Settings().QualityRating
 }
 
 // emit sends folder:changed for the folder at once. Each reason has its own
