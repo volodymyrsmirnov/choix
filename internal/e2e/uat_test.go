@@ -390,7 +390,7 @@ func (r *recorder) progressCount(id string) int {
 // timing is one folder job's wall times.
 type timing struct {
 	stages map[string]time.Duration // per pipeline stage; absent: not observed
-	after  time.Duration            // from the pipeline's end to ready: CLIP backfill, rating, preview strip
+	after  time.Duration            // from the pipeline's end to ready: print backfill, rating, preview strip
 	job    time.Duration            // from scanning to ready
 }
 

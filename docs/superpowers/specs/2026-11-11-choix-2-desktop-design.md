@@ -4,12 +4,15 @@ Status: **Library layout A approved by the owner on 2026-11-11.** Every
 screen state is approved individually through the design gate (§15) before
 its app code is written.
 Date: 2026-11-11. Supersedes the v1 "single binary + localhost web UI" shape.
+Amended by `2026-11-12-builtin-grouping-and-quality-design.md` (visual grouping by Apple's Vision
+feature print, a built-in quality rating, no network access): where they differ,
+that spec wins, and the sections below have been updated to match.
 
 ## 1. Intent
 
 Choix 1.x is a CLI that scans one folder and serves a web UI on localhost.
 Choix 2.0 is a native-feeling macOS app: open it, see every shoot you have
-added, click one, cull it. The engine (scan → metadata → thumbnails → CLIP →
+added, click one, cull it. The engine (scan → metadata → thumbnails → analysis →
 clusters, picks copied to `picks/`) stays. What changes is the shell around
 it, and everything the Mac App Store sandbox forces.
 
@@ -50,8 +53,8 @@ browser tab talking to a local port.
 - A lost pick.
 - Private Apple APIs (the Wails `private_mac_apis` build tag) — App Review
   rejects them.
-- Bundling or redistributing the quality model (CC BY-NC-SA).
-- Silent network access beyond the two pinned model downloads.
+- Any network request, and any downloaded or bundled model (amended by
+  `2026-11-12-builtin-grouping-and-quality-design.md`).
 
 ## 3. Decisions made by the owner (2026-11-11)
 
@@ -61,7 +64,7 @@ browser tab talking to a local port.
 | Platform | macOS, arm64 only |
 | Distribution | Mac App Store (sandbox) + Homebrew cask of the same `.app` |
 | exiftool / ffmpeg | Replaced by Apple frameworks (ImageIO + AVFoundation) |
-| Models | Both downloaded on first launch; nothing bundled |
+| Visual grouping and quality | Built into the app, nothing downloaded (owner, 2026-11-12; `2026-11-12-builtin-grouping-and-quality-design.md`) |
 | App Store price | Free, so the quality rating ships there too |
 | Transport | Bindings + Wails events; no HTTP server, no SSE |
 | Per-folder state | Unchanged: `<folder>/.choix/` and `<folder>/picks/` |
@@ -114,23 +117,23 @@ marked **[call]** where it matters.
   folder twice at once [call; owner, round 1: one at a time left every
   other folder "Waiting to scan" through a long quality pass].** A job is
   everything one folder needs: the pipeline pass (discover → cluster,
-  resuming from each file's status), then CLIP backfill for files without
-  embeddings (plus a re-cluster if any were added), then the refresh of
+  resuming from each file's status), then, while visual grouping is on, the
+  print backfill for files without a current feature print (they are
+  analyzed again, which re-clusters), then the refresh of
   the folder's cached stats and preview strip and the `folder:changed`
   "clusters" announcement (so the folder can be reviewed while it is
   rated), then quality rating when that setting is on, announced by
   `folder:changed` "ratings". A job is queued when a folder is added, opened
-  or rescanned, and for every reachable folder when the CLIP model finishes
-  downloading. FIFO, up to `session.DefaultSlots` (2) jobs at once, each on
+  or rescanned, and for every reachable folder when visual grouping or the
+  quality rating is switched on. FIFO, up to `session.DefaultSlots` (2) jobs at once, each on
   a different folder, so each folder's `state.db` keeps a single writer.
   The open folder's job jumps the queue and starts in the next free slot.
   When both slots are busy and neither job is winding down, it preempts
   the running job with the lowest priority: one no open made before one an
   earlier open made, and among equals the one started last. The preempted
-  job is re-queued directly behind it. Inference stays serialised: the jobs
-  take a cancellable, process-wide turn per file or photo before they call
-  the shared engine, so two quality passes interleave. Native calls stay
-  capped by the process-wide slots, whatever the number of jobs.
+  job is re-queued directly behind it. Nothing else is serialised across
+  jobs: feature prints are native calls, capped by the process-wide slots
+  whatever the number of jobs, and the quality rating is pure Go.
 - On launch only folders whose last job did not finish are re-queued (a
   flag in `library.db`). Finished folders are not re-walked until they are
   opened or rescanned **[call]** — a 5 000-file folder on a slow disk
@@ -138,23 +141,14 @@ marked **[call]** where it matters.
 - Security-scoped access to a folder is held for the length of its job and
   while it is open, and released otherwise.
 
-### 4.2 First launch and models
+### 4.2 First launch
 
-- No wizard. The Library shows a welcome panel with two download rows:
-  CLIP (352 MB, required for visual grouping) and the quality model
-  (177 MB, optional, has its on/off switch).
-- Downloads start automatically, are resumable, pinned to a URL and
-  SHA-256, and show progress. Failure shows Retry on that row.
-- Both are opt-out, which keeps hard rule 6 whole: the quality model through
-  the existing `quality_rating` setting, CLIP through a new
-  `visual_grouping` setting (default on) **[call]**. With it off, CLIP is
-  never downloaded and folders cluster by time only. Each row's switch in
-  the welcome panel is that setting; both also live in Settings.
-- Adding folders is never blocked. A folder scanned before CLIP is present
-  gets time-only clusters; when CLIP arrives the app runs the analyze stage
-  for files without embeddings and re-clusters.
-- After both models are present the panel is replaced by the empty-library
-  drop zone or the folder list.
+- No wizard and nothing to download. With no folder added, the Library
+  shows its empty state (the drop zone).
+- Visual grouping (`visual_grouping`, default on) and the quality rating
+  (`quality_rating`, default on) are switches in Settings. With visual
+  grouping off, folders cluster by time only. Both run inside the app
+  (§8).
 
 ### 4.3 Inside a folder
 
@@ -216,10 +210,9 @@ cmd/choix (main.go: Wails app, window, menu, service registration)
   └─ internal/app/…            one package per service, Wails-facing
        library   folders: add / remove / list / presence / previews
        session   one folder's store + pipeline; the folder-job queue
-       inference app-level ONNX runtime, CLIP + quality sessions
-       catalog   clusters, focus payloads, picks, undo, recluster
+       catalog   clusters, focus payloads, picks, undo, recluster,
+                 quality-rating status
        settings  machine-wide settings
-       models    model downloads and status
        system    Finder integration, app info
        menu      builds the native menu from frontend/src/design/menus.json
        dialogs   native alerts and the folder picker
@@ -232,8 +225,9 @@ cmd/choix (main.go: Wails app, window, menu, service registration)
        imageio   metadata + thumbnails for stills
        avmedia   metadata + frames for video
        volumes   mount state, trash detection
-  └─ engine (kept): store, scanner, pipeline, group, picks, quality,
-       ai/local, config, thumb (rewritten on top of platform/darwin),
+       vision    Vision image feature print
+  └─ engine (kept): store, scanner, pipeline, analyze, group, picks,
+       quality, config, thumb (rewritten on top of platform/darwin),
        meta (parser kept for old rows; extractor rewritten)
 ```
 
@@ -249,7 +243,7 @@ Rules:
   tests that run against `testdata/` fixtures.
 - **Events** (typed, registered with `application.RegisterEvent`):
   `library:changed`, `scan:progress` (folder id, stage, done, total, failed,
-  phase), `scan:state`, `models:progress`, `quality:status`,
+  phase), `scan:state`, `quality:status`,
   `menu:<action>`, `folder:changed`. Progress events are coalesced to at
   most ~10 per second per folder. The frontend fetches current state through
   a binding when it mounts, then applies events, so a missed event cannot
@@ -264,14 +258,14 @@ Rules:
 - A `session` is one folder's SQLite store plus its pipeline. The open
   folder has one; the job queue may hold a second, headless one for the
   folder it is working on (the same session when they are the same folder).
-- ONNX Runtime, the CLIP session and the quality scorer are **app-level**,
-  owned by one `inference` component, created lazily, shared by every
-  session and serialised (one inference at a time, as today). They are
-  closed once, at quit.
+- Feature prints are made through `platform.Vision`, a native call run
+  detached like an ImageIO call; the quality rating is pure Go. Neither
+  holds app-level state, so sessions share nothing but the native-call
+  slots.
 - Teardown order per session is v1's: quality pass → pipeline stop → wait
-  for the in-flight inference → close store. At quit: stop the queue, tear
-  down sessions, then close the ONNX sessions. Quit waits for it (bounded
-  by the existing "one inference cannot be interrupted" exception).
+  for the session's detached native calls → close store. At quit: stop the
+  queue, tear down sessions, then close `library.db`, within the quit
+  deadline.
 - The idle-shutdown timer, the `X-Choix-Background` header, the port picker
   and browser auto-open are deleted with the server.
 
@@ -280,7 +274,9 @@ Rules:
 - Entitlements (both builds): `com.apple.security.app-sandbox`,
   `com.apple.security.files.user-selected.read-write`,
   `com.apple.security.files.bookmarks.app-scope`,
-  `com.apple.security.network.client` (model downloads only).
+  `com.apple.security.network.client` (unused, since the app makes no
+  network request; removal pending the owner's check of the packaged app,
+  `docs/release/sandbox-smoke.md`).
 - When the user picks or drops a folder, the app creates an **app-scoped
   security-scoped bookmark** and stores it in the library database. Wails
   has no API for this; `internal/platform/darwin/bookmark` implements
@@ -307,7 +303,7 @@ Rules:
 - **RAW stills use the embedded JPEG, never a RAW decode, as in v1.** v1
   measured ~60 s per X-T5 RAF for a full ImageIO decode against ~0.5 s for
   the embedded JPEG, and the embedded JPEG carries the in-camera look that
-  CLIP and the quality score were computed on. For RAF the embedded JPEG is
+  the feature print and the quality score are computed from. For RAF the embedded JPEG is
   read straight from the container (a fixed header gives its offset and
   length; a few lines of Go, read-only), then downscaled through ImageIO.
   For DNG the largest embedded preview is used. A full Apple RAW decode is
@@ -344,22 +340,20 @@ Rules:
 - `internal/deps` (tool resolution) and the `sips`/`ffmpeg`/`exiftool`
   fallback chain are deleted.
 
-## 8. Models and ONNX Runtime
+## 8. Visual grouping and quality rating
 
-- Model registry, pinned URLs, hashes and the resumable downloader are
-  kept. CLIP joins the quality model as an automatic first-launch download
-  (owner's decision, 2026-11-11; this amends hard rule 6).
-- Models live in `<Application Support>/Choix/models/`.
-- `libonnxruntime.dylib` is bundled in `Contents/Frameworks/`. The Homebrew
-  build of that library links against other brew libraries, so the build
-  uses Microsoft's official self-contained `onnxruntime-osx-arm64` release
-  (MIT), fetched by a Taskfile task from a pinned URL and verified by
-  SHA-256. The pin is the ONNX Runtime version the `onnxruntime_go` release
-  in `go.mod` is built against (its API version, stated in that module's
-  README — *not* the Go module's own version number), and its minimum macOS
-  must not exceed the app's deployment target. It is not committed to git. `ai/local/ort.go` looks in the bundle first; the brew
-  paths remain as the dev fallback.
-- The quality model is never bundled.
+Specified in `2026-11-12-builtin-grouping-and-quality-design.md`; in short:
+
+- **Visual grouping** uses Apple's Vision image feature print (revision 2,
+  scale fill, 768 values) of each file's preview tier, made by the analyze
+  stage and stored in `ai_signals.vision_print`, and sub-clusters each time
+  bucket by complete-link at the `visual_similarity` setting (default
+  0.90). Off, folders cluster by time only.
+- **The quality rating** is a sharpness, noise and exposure formula in pure
+  Go on the preview tier, shown as the 0–10 badge. It tells a damaged frame
+  from a good one of the same scene; it does not rank different scenes.
+- Nothing is downloaded or bundled for either, and the app makes no network
+  request.
 
 ## 9. Where data lives
 
@@ -367,7 +361,6 @@ Rules:
 |---|---|
 | Settings (`config.toml`) | `~/Library/Application Support/Choix/` — inside `~/Library/Containers/<bundle-id>/Data/…` when sandboxed |
 | Library (folders, bookmarks, cached stats, preview strips) | same directory: `library.db` + `previews/<folder-id>/<n>.jpg` |
-| Models | same directory: `models/` |
 | Logs | `~/Library/Logs/Choix/` (container-relative when sandboxed) |
 | Per-folder state | `<folder>/.choix/state.db`, `.choix/thumbs/` (unchanged schema; v1 folders open without a rescan) |
 | Picks | `<folder>/picks/` |
@@ -391,12 +384,11 @@ Rules:
   build entry (§15).
 - Bundle identifier: placeholder `com.github.volodymyrsmirnov.choix`
   **[call]**, to be confirmed in the signing conversation. Product name
-  `Choix`. Deployment target macOS 14 (spike S6: the official ONNX Runtime
-  1.25.0 arm64 library is built for macOS 14.0 and later; the first choice
-  was macOS 13).
+  `Choix`. Deployment target macOS 14 (the Vision feature print revision the
+  app pins, revision 2, needs it; the first choice was macOS 13).
 - `Taskfile.yml` replaces the Makefile: `dev`, `build`, `package` (the
   `.app`, arm64), `test`, `test:e2e`, `lint`, `fmt`, `bindings`, `icons`,
-  `deps:onnxruntime`, `sign:dev`, `sign:developer-id`, `notarize`, `dmg`,
+  `sign:dev`, `sign:developer-id`, `notarize`, `dmg`,
   `package:mas` (`.pkg` with provisioning profile), `clean`. Signing tasks
   read identities and profiles from environment variables and fail with a
   clear message when they are missing; none are needed for `build`/`test`.
@@ -425,8 +417,8 @@ Rules:
      be automated), scan to completion, open, pick/unpick, undo, recluster,
      settings, remove.
   2. A smoke of the real `.app`, **sandboxed** (ad-hoc signed with the
-     release entitlements, so the sandbox, bookmarks, the bundled dylib and
-     CoreML are all exercised). A sandboxed app only gets folder access
+     release entitlements, so the sandbox, bookmarks and Vision are all
+     exercised). A sandboxed app only gets folder access
      through the picker or a drop, so this layer is driven through the real
      UI (the open panel, by UI scripting) and is also written down as a
      checklist in `docs/`: launch, add a copy of a folder from the owner's photo folder (`$CHOIX_UAT_ROOT`), scan,
@@ -444,8 +436,8 @@ Rules:
 | S2 | Can single-key shortcuts be shown in the menu without stealing typing? | Listed in the shortcut sheet only | **Not run** — needs key presses by hand (runbook left for the owner). Single-key accelerators do become native key equivalents; until the presses are made the fallback is the default: single keys stay with the webview and are listed in the shortcut sheet |
 | S3 | Does `<video>` play and seek over `wails://` with Range? | Poster + keyframes, "Open in QuickTime" | **Pass.** In-app video stays; the media route sets `Content-Type` itself |
 | S4 | Does ImageIO expose the Fuji body serial exiftool reports? | Read the maker note directly, or normalise `device_key` with a backfill | **Pass** for the bodies tested (`{Exif}.BodySerialNumber`); no fallback. iPhone and DNG files were not available to test |
-| S5 | Does ONNX Runtime's CoreML provider work in the sandbox (model cache location)? | CPU provider in sandbox | **CLIP: fallback applies** — CoreML takes almost none of the graph and is slower than CPU, so CLIP runs on the CPU provider when sandboxed. **Quality model: pass**, CoreML kept. No sandbox denial for either |
-| S6 | Does a hardened, sandboxed build load the bundled dylib? | Sign it with the app identity (expected to be enough) | **Sandboxed: pass. Hardened: only with a real identity** — under ad-hoc signing library validation rejects the dylib (different Team IDs), so development builds are signed without the hardened runtime and the hardened build is verified in the signing conversation. The library's minimum macOS is 14.0, which raises the deployment target (§10) |
+| S5 | Retired: it measured how the models the app used to download ran in the sandbox | | **No longer applies:** the app runs no model (§8). The measured answer is in the spike results |
+| S6 | Does a hardened, sandboxed build load the bundled dylib? | Sign it with the app identity (expected to be enough) | **Sandboxed: pass. Hardened: only with a real identity** — under ad-hoc signing library validation rejects the dylib (different Team IDs), so development builds were signed without the hardened runtime and the hardened build is verified in the signing conversation. **No longer applies:** the app bundles no library (§8); development builds are still signed without the hardened runtime, and turning it on is a follow-up |
 | S7 | How fast is the embedded-JPEG path for RAF and DNG, and does DNG always carry a usable preview? | RAW decode for the files that do not, with the cost shown in scan progress | **RAF: pass** (well under 0.5 s). DNG could not be measured (no sample); both DNG paths are built as planned |
 
 Measured results are in `2026-11-11-choix-2-spike-results.md`.
@@ -467,15 +459,13 @@ the dependent work starts.
 1. Originals are sacred — unchanged.
 2. Never lose a pick — unchanged.
 3. Per-file failures are isolated — unchanged.
-4. Cancellation within ~1 s — unchanged, same ONNX exception. With two
-   folder jobs at once it still means the job's own inference only: a job
-   waits for the other's inference in a cancellable turn, never in the
-   engine.
-5. **macOS on Apple Silicon only.** No universal binary.
-6. **Downloads are pinned, visible, opt-out, and only for models.** Both
-   models now download automatically on first launch. No executables are
-   ever fetched at run time (the ONNX Runtime library is fetched at *build*
-   time and shipped inside the signed bundle).
+4. Cancellation within ~1 s — unchanged, with no exception: a Vision
+   feature-print request is a native call like an ImageIO call, run
+   detached and holding a native slot until it really returns.
+5. **macOS on Apple Silicon only.** No universal binary. Deployment target
+   macOS 14 (the Vision feature print revision the app pins needs it).
+6. **The app makes no network request.** Nothing is downloaded at run time
+   or fetched at build time for the app's own function.
 7. No duplicate files at the schema level — unchanged.
 8. **New: the app never reaches outside the sandbox.** No private APIs, no
    temporary-exception entitlements, no helper executables.

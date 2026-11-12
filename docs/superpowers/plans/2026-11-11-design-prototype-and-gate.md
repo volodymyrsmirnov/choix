@@ -1,5 +1,7 @@
 # Choix 2.0 Design Prototype and Approval Gate — Implementation Plan
 
+Superseded in part by `2026-11-12-builtin-grouping-and-quality-design.md`: the models, ONNX Runtime and the download are gone.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Status:** revision 5, after three review rounds by Fable and Codex gpt-6-astra (all findings folded in). Waiting for the owner's OK. No code is written before it.

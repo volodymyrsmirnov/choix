@@ -13,7 +13,7 @@ import (
 // meaningful for bools.
 type fileSchema struct {
 	BucketSizeSec *int `toml:"bucket_size_sec"`
-	// VisualSimilarity replaced visual_cluster_threshold, a CLIP cosine on
+	// VisualSimilarity replaced visual_cluster_threshold, a similarity on
 	// another scale: that key is ignored and no longer written.
 	VisualSimilarity   *float64 `toml:"visual_similarity"`
 	PicksDir           *string  `toml:"picks_dir"`

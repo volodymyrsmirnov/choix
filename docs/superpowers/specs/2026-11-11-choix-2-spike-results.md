@@ -1,5 +1,7 @@
 # Choix 2.0 — spike results
 
+Superseded in part by `2026-11-12-builtin-grouping-and-quality-design.md`: the models, ONNX Runtime and the download are gone.
+
 Measured answers to the questions in §12 of `2026-11-11-choix-2-desktop-design.md`, one section per spike (question, what was run, raw output, PASS/FAIL, consequence). The spike code is throwaway and lives outside the repository. Nothing here identifies the private photo archive the measurements were taken on: folders are `folder-N`, cameras are named by make and model only, and no file name, serial number, date, location or archive count appears.
 
 Machine: Apple Silicon (arm64), macOS 27.2, Xcode 27.2, Go 1.26.5, Wails v3.1.0.

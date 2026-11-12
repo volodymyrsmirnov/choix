@@ -49,7 +49,7 @@ key or token.
    If a job fails, its log and the run summary say why; nothing after it runs.
    A failed `homebrew` job can be re-run alone once the release exists.
 3. Download the disk image from the release, open it on a Mac with Apple
-   Silicon, drag Choix to Applications and launch it once: the welcome panel
+   Silicon, drag Choix to Applications and launch it once: the empty Library
    shows, a folder can be added and scanned.
 4. `brew update && brew install --cask volodymyrsmirnov/tap/choix` (or
    `brew upgrade --cask choix`) installs the new version.

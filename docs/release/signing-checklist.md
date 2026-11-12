@@ -42,10 +42,10 @@ The same tasks run locally and in the release workflow; with the two variables a
 sign:developer-id notarize dmg notarize:dmg verify:release VERSION=X.Y.Z` is the whole release minus the upload. In
 order:
 
-1. `task package` — builds `bin/Choix`, assembles `bin/Choix.app` (with `Contents/Frameworks/libonnxruntime.dylib`)
-   and signs it ad hoc. Needs no variable.
-2. `task sign:developer-id` — re-signs the ONNX Runtime library, then the app, with `CHOIX_SIGN_IDENTITY`,
-   `--options runtime --timestamp` and `build/darwin/entitlements.plist` (the four sandbox entitlements).
+1. `task package` — builds `bin/Choix`, assembles `bin/Choix.app` (no bundled library) and signs it ad hoc. Needs no
+   variable.
+2. `task sign:developer-id` — re-signs the app with `CHOIX_SIGN_IDENTITY`, `--options runtime --timestamp` and
+   `build/darwin/entitlements.plist` (the four sandbox entitlements).
 3. `task notarize` — zips the app, submits it with `xcrun notarytool submit --wait --keychain-profile
    "$CHOIX_NOTARY_PROFILE"`, fails unless Apple answers `Accepted` (printing the notary log when it does not), and
    staples the ticket to `bin/Choix.app`.
@@ -64,15 +64,13 @@ order:
 `VERSION` is the version without the tag's `v` (`2.1.0`); the release workflow passes the tag's. Without it the
 Taskfile uses `git describe`, which is fine for a rehearsal.
 
-### Why `sign:dev` has no hardened runtime
+### The hardened runtime
 
-Signed ad hoc, the hardened runtime's library validation refuses the bundled ONNX Runtime library ("mapping process
-and mapped file (non-platform) have different Team IDs", spike S6), so `sign:dev` signs without `--options runtime`,
-while `sign:developer-id` uses `--options runtime --timestamp` with a real identity, under which the library and the
-app share a Team ID. The release workflow has built, notarized and published the hardened, Developer ID–signed
-build since 2.0.0, and `verify:release` checks its signature and tickets. The workflow does not launch it, so after a
-release check that `CHOIX_SELFCHECK=1 /Applications/Choix.app/Contents/MacOS/Choix` reports `"sandboxed":true` and
-`"onnxRuntime":"1.25.0"` on the installed app. In both tasks the library is signed before the app that seals it.
+`sign:developer-id` signs with `--options runtime --timestamp`; `sign:dev` signs ad hoc without `--options runtime`.
+Turning the hardened runtime on for ad hoc builds is a pending follow-up. The release workflow builds, notarizes and
+publishes the hardened, Developer ID–signed build, and `verify:release` checks its signature and tickets. The
+workflow does not launch it, so after a release check that `CHOIX_SELFCHECK=1 /Applications/Choix.app/Contents/MacOS/Choix`
+reports `"sandboxed":true`, `"featurePrint":"ok"` and `"quality":"ok"` on the installed app.
 
 ## Release workflow (CI)
 
@@ -120,7 +118,8 @@ CI: `task package:mas` runs locally with the variables above.
    id>` (the same API key as the secrets; it checks the credentials with Apple).
 2. `export CHOIX_SIGN_IDENTITY=<SHA-1 from security find-identity -v -p codesigning> CHOIX_NOTARY_PROFILE=choix-notary`
 3. `task package sign:developer-id notarize dmg notarize:dmg verify:release VERSION=2.0.0`
-4. `CHOIX_SELFCHECK=1 bin/Choix.app/Contents/MacOS/Choix` reports `"sandboxed":true` and `"onnxRuntime":"1.25.0"`;
+4. `CHOIX_SELFCHECK=1 bin/Choix.app/Contents/MacOS/Choix` reports `"sandboxed":true`, `"featurePrint":"ok"` and
+   `"quality":"ok"`;
    open `bin/Choix-2.0.0-arm64.dmg`, drag the app to Applications and launch it once.
 5. Then a dry run of the workflow (Actions → Release → Run workflow) proves the secrets: its `Choix-dmg` artifact is
    the notarized image. Nothing is published by either.
@@ -129,7 +128,7 @@ CI: `task package:mas` runs locally with the variables above.
 
 1. `task package:mas` — builds, assembles `bin/Choix.app`, copies `CHOIX_MAS_PROFILE` to
    `Contents/embedded.provisionprofile`, renders `build/darwin/entitlements.mas.plist.tmpl` with `CHOIX_TEAM_ID`
-   (the four sandbox entitlements plus the application and team identifiers), signs the library and then the app with
+   (the four sandbox entitlements plus the application and team identifiers), signs the app with
    `CHOIX_MAS_APP_IDENTITY`, and writes `bin/Choix-<version>.pkg` with `productbuild --component bin/Choix.app
    /Applications --sign "$CHOIX_MAS_INSTALLER_IDENTITY"`.
 2. Upload the `.pkg` to App Store Connect with Apple's Transporter app, then submit the build for review there.
@@ -145,4 +144,5 @@ again for a local build.
 - Never add a temporary-exception entitlement or `com.apple.security.cs.disable-library-validation`: the entitlements
   are exactly the four in `build/darwin/entitlements.plist` (development and Developer ID builds), and for the Mac App
   Store those four plus the application and team identifiers in `build/darwin/entitlements.mas.plist.tmpl`.
-- Never sign with `--deep`: the library and the app are signed one by one, library first.
+- Never sign with `--deep`. The bundle holds no nested code to sign; if one is ever added, sign it on its own, before
+  the app that seals it.

@@ -125,8 +125,8 @@ func TestRebuildBucketCreatesClusters(t *testing.T) {
 }
 
 // insertAnalyzedNoEmbedding inserts an analyzed file with no AI signals row
-// (the state that exists when no CLIP model is installed and the analyzer
-// produced no embedding for this file).
+// (the state that exists when the file was analyzed while visual grouping
+// was off, so no feature print was made for it).
 func insertAnalyzedNoEmbedding(t *testing.T, s *store.Store, path, dev string, captured int64) int64 {
 	t.Helper()
 	id, err := s.Files().Insert(store.File{
@@ -154,8 +154,8 @@ func insertAnalyzedNoEmbedding(t *testing.T, s *store.Store, path, dev string, c
 	return id
 }
 
-// When no embeddings exist for a bucket — the realistic state when the CLIP
-// model isn't installed — the bucket should produce one cluster, not N
+// When no prints exist for a bucket — the realistic state when the files
+// were analyzed with visual grouping off — the bucket should produce one cluster, not N
 // singletons. Time proximity already does the grouping work; without a
 // visual signal saying these are different scenes we trust the bucket.
 func TestRebuildBucketGroupsEmbeddinglessFilesAsOne(t *testing.T) {

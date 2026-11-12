@@ -1,7 +1,7 @@
 # UAT on a real corpus
 
 `TestUAT` (`internal/e2e/uat_test.go`, build tags `uat` and `darwin`) runs the whole headless runtime — the real
-platform packages (ImageIO, AVFoundation, bookmarks, volumes) and the real inference engine — over clones of the
+platform packages (ImageIO, AVFoundation, Vision, bookmarks, volumes) and the quality formula — over clones of the
 owner's photo archive, and checks what a user relies on. It is the last check before a release; a failure is a bug to
 fix, or, for a single unreadable source file, an entry in this document with the file's format and error.
 
@@ -36,11 +36,9 @@ verdicts and archive-independent measurements only.
    count, and records each one's manifest (relative path, size, modification time; Finder's `.DS_Store` left out).
 2. Clones each folder with `cp -cR` (APFS clones, no extra space) into a temporary directory; with a limit, only the
    first N media files, with `cp -c`. The archive is only read.
-3. Points `CHOIX_DATA_DIR` at a temporary directory, links the models in from `CHOIX_MODELS_DIR` (default: the app's
-   own models directory) and starts a runtime whose model downloader only reports what is on disk — nothing is ever
-   downloaded. A model that is absent, or an ONNX Runtime that cannot load, is logged (`clip: absent`,
-   `quality: absent`, `onnxruntime: unavailable`), its setting is switched off, and only the checks that need it are
-   skipped.
+3. Points `CHOIX_DATA_DIR` at a temporary directory, writes a `config.toml` with visual grouping and the quality
+   rating both on, and starts a runtime on the real platform (Vision's feature print included). Nothing needs to be
+   downloaded or installed first.
 4. For each folder in turn: adds the clone, waits for `Idle()`, then checks
    - every file is `analyzed` or `failed`, at most 0.5 % failed, each failure logged with its error;
    - photos + videos equals the media files the test counts by extension in the clone, outside what the scanner
@@ -52,7 +50,8 @@ verdicts and archive-independent measurements only.
      `min(limit, displayed width of the embedded JPEG)` — the candidate the engine uses, read through the same ImageIO
      reader, its orientation applied — so neither a missing downscale nor an upscale passes. Other stills: long side
      `min(limit, the source's long side)`. Limits 256 and 1600. Every video has five keyframes;
-   - the folder has clusters; with CLIP, at least 99 % of non-failed files have an embedding;
+   - the folder has clusters, and at least 99 % of non-failed files have a feature print (768 values, stamped
+     `analyze.PrintID`);
    - no camera is split into two devices: a model never has a serial-less key beside exactly one serial'd key, and
      one serial never appears under two spellings of make and model; two bodies of one model (two serials) are two
      devices by design and are only logged; no DNG has device key `Unknown` or a capture time equal to its file time;
@@ -72,7 +71,7 @@ verdicts and archive-independent measurements only.
    it. (An original that already held them from earlier v1 runs is checked to be unchanged; the test logs how many.)
 
 The report — per folder: files by format, failed, clusters, wall time per stage (from each stage's `starting` to its
-`done` progress event), the time after the pipeline (CLIP backfill, preview strip, quality rating), the whole job
+`done` progress event), the time after the pipeline (print backfill, preview strip, quality rating), the whole job
 (`scanning` to `ready`), files per second, and the process's peak RSS so far — is printed to stdout and written to
 `$TMPDIR/choix-uat/report.md`. That is the only file the test writes outside its temporary directories, and it is
 written safely: the temporary directory is resolved first, a `choix-uat` that is a symbolic link (or lies inside the
@@ -92,44 +91,21 @@ CHOIX_UAT_ROOT=<archive> task uat
 CHOIX_UAT_ROOT=<archive> task uat -- -folder K
 ```
 
-`CHOIX_MODELS_DIR` pointing at a directory that holds only the CLIP model leaves the quality pass off.
-
-`CHOIX_UAT_ROOT` has no default; without it the test skips. `task uat` uses the ONNX Runtime library fetched by
-`task deps:onnxruntime` when it is there, as `task test` does; otherwise the development lookup (Homebrew) applies.
-The other CPU-heavy work on the machine makes the timings slower; only the 2 s preemption start and the quit
+`CHOIX_UAT_ROOT` has no default; without it the test skips. The other CPU-heavy work on the machine makes the timings slower; only the 2 s preemption start and the quit
 deadline are asserted.
 
 ## Results
 
-Full run (`task uat`).
+No full run of the current engine is recorded yet. Record each full run (`task uat`) here before a release:
 
-- Date of the test run: 2026-11-12.
-- Commit: `95cdaa7` (test and engine). The device-key assertion was corrected afterwards (see below) and re-run on the
-  largest folder.
-- Scope: every media file of every immediate sub-folder of the corpus root, on APFS clones; CLIP and quality models
-  present.
-- The two DNG checks were not exercised by this run.
+- the date of the run and the commit tested;
+- the scope (every media file of every immediate sub-folder of the corpus root, on APFS clones, or the limit used),
+  and any check the run could not exercise (for example the DNG checks, when the archive has no DNG);
+- a verdict for each check of steps 4 to 8, with the archive-independent measurements: the preemption start time,
+  the `Shutdown` time, the native-call high-water mark against `platform.NativeSlots`, and how many texts were
+  withheld.
 
-Verdicts:
-
-- Every file reached `analyzed` (0 failed files).
-- Media counts equal the test's own count.
-- Thumbnails and previews are present, and the sizing rule is satisfied.
-- Five keyframes per video.
-- Clusters were built in every folder.
-- At least 99 % of non-failed files have an embedding.
-- Picks were copied byte-identical and removed by unpick.
-- Preemption: the opened folder's job started 0.002 s after it was opened while the largest folder was scanning
-  (limit 2 s).
-- `Shutdown` during a scan returned in 0.070 s (limit `QuitDeadline` + 1 s).
-- Native calls at once: high-water 11 of 14 slots.
-- Originals: every manifest identical before and after; nothing new written into the originals.
-- Redaction: 0 texts withheld.
-
-The one check that failed in that run, "a camera model under more than one device key", was a defect of the
-assertion, not of the engine. A model that appears with more than one serial is two devices by design; the check
-flags only a splittable case: a serial-less key next to exactly one serial'd key, or one serial under two spellings.
-Re-run on the largest folder with the corrected assertion: pass.
+A failed check is a bug to fix, or a defect of the assertion to correct and re-run; say which.
 
 The per-folder table the test prints (`$TMPDIR/choix-uat/report.md`) is deliberately not recorded in the repository:
 its counts describe the archive.

@@ -39,10 +39,10 @@ CHOIX_UAT_ROOT=<your photo folder> task smoke:sandbox    # steps 1–7
   Library and delete the smoke directories (`$TMPDIR/choix-smoke.*`).
 - A static check whose tool (`codesign`, `otool`, `go version -m`, `strings`) fails or prints nothing fails.
 
-What `bin/Choix.app` is: built with `-tags production`, arm64, minimum macOS 14.0, the ONNX Runtime 1.25.0 library in
-`Contents/Frameworks`, signed ad hoc by `sign:dev` **without** the hardened runtime (ad hoc plus the hardened runtime's
-library validation refuses the bundled library; see `docs/release/signing-checklist.md`), with exactly the four
-entitlements of `build/darwin/entitlements.plist`.
+What `bin/Choix.app` is: built with `-tags production`, arm64, minimum macOS 14.0, no bundled library (no
+`Contents/Frameworks`), signed ad hoc by `sign:dev` **without** the hardened runtime (turning it on for ad hoc builds
+is a pending follow-up; the Developer ID build has it), with exactly the four entitlements of
+`build/darwin/entitlements.plist`.
 
 ### What the script checks
 
@@ -50,7 +50,7 @@ entitlements of `build/darwin/entitlements.plist`.
 |---|---|---|
 | 1 | `task package` | it succeeds |
 | 2 | Static checks on `bin/Choix.app` | `codesign -d --entitlements -` lists exactly the four entitlements, each true; `otool -L` on the executable names nothing outside `/usr/lib`, `/System`, `@rpath`, `@executable_path`; `go version -m` shows `-tags=production` without `private_mac_apis` or `server`; `strings` finds none of `setGroupIdentifier:`, `setGroupSpacing:`, `developerExtrasEnabled` (the selectors of Wails' `mac_private_api_darwin.go`) |
-| 3 | `CHOIX_SELFCHECK=1` run of the executable (sandboxed, in the app's container) | the report has `"sandboxed":true`, `"onnxRuntime":"1.25.0"`, `"bookmarkRoundTrip":true`, `"trashCheck":true`, and neither provider is an `error` (`skipped: model missing` is fine) |
+| 3 | `CHOIX_SELFCHECK=1` run of the executable (sandboxed, in the app's container) | the report has `"sandboxed":true`, a `vision` object with `"featurePrint":"ok"`, `"length":768` and `"revision":2`, `"quality":"ok"`, `"bookmarkRoundTrip":true` and `"trashCheck":true`, and the self-check exits 0 |
 | 4 | Manifest of the original, `cp -cR` clone | the clone exists |
 | 5 | Launch, add the clone through the open panel | `folder-1` appears in `library.db` |
 | 6 | Wait for the scan | `job_pending` is 0; photos + videos > 0 and clusters > 0; no job error; `<clone>/.choix/state.db` exists; the original's manifest is unchanged; `pgrep -P` never found a child of Choix |
@@ -106,3 +106,24 @@ One row per run: the date, the build (`git describe` of the commit packaged), th
 | Date | Build | macOS | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | | | | | | | | | | | | | | | | | | | |
+
+## Removing the network entitlement
+
+Choix makes no network request (hard rule 6), but `com.apple.security.network.client` is still one of the four
+entitlements: removing it changes the sandbox the webview runs in, and only the packaged, sandboxed app shows whether
+the window still loads. This runbook is the owner's; do it once, on a Mac with Apple Silicon.
+
+1. Delete the `com.apple.security.network.client` key and its `<true/>` from `build/darwin/entitlements.plist` and
+   from `build/darwin/entitlements.mas.plist.tmpl`.
+2. Delete it from `want_entitlements` in `build/smoke/sandbox-smoke.sh` (and its "four" wording) and from the expected
+   list in `build/darwin/bundle_test.sh`. The entitlement cases of `build/smoke/sandbox-smoke_test.sh` use that key
+   as their anchor for the "five" and "three" mutations: anchor them on another key. Run both tests with `sh <file>`.
+3. `task package`, then quit every running Choix and open `bin/Choix.app`.
+4. Confirm that the window renders the Library (not a blank or white window), that a folder added with ⌘O scans to the
+   end with thumbnails and clusters, that a photo opens in Focus and a video plays, and that
+   `log show --last 10m --predicate 'process == "sandboxd"'` prints no `deny` line for Choix.
+5. Run `task smoke:sandbox` (with `CHOIX_UAT_ROOT` set) and its manual checks.
+6. If everything passes, update hard rule 8 in `CLAUDE.md` (three entitlements; drop its note on `network.client`),
+   the entitlement lists in `docs/superpowers/specs/2026-11-11-choix-2-desktop-design.md` (§6) and in
+   `docs/release/signing-checklist.md` ("Never"), the item in `v2.md`, and this section, and commit them together.
+   If the window does not render, restore the key and record what was seen here.
