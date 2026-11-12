@@ -33,14 +33,13 @@ import { LibraryRoute } from '../library'
 import { createLibraryStore } from '../library/libraryStore'
 import { SettingsRoute } from '../settings'
 import { bindMenuContext, createActions } from './actions'
-import { Catalog, Library, Models, Settings, System } from './api'
+import { Catalog, Library, Settings, System } from './api'
 import { FallbackToaster, ShellContext, type Flag, type Shell } from './context'
 import { installErrorReports, reportRenderError } from './clientErrors'
 import { appError, errorText } from './errors'
 import { on } from './events'
 import { createFolderSession } from './folderSession'
 import { installKeys } from './keys'
-import { createModelsStore } from './modelsStore'
 import { seedParityToasts, subscribeParityUi, uiOverride } from './parityUi'
 import { createQualityStore } from './qualityStore'
 import { AppErrorScreen, copyText, reloadToLibrary, renderErrorDetails } from './renderError'
@@ -105,8 +104,7 @@ export function createShell(): Shell {
   })
 
   const scan = createScanStore({ list: () => Library.List(), on })
-  const models = createModelsStore({ status: () => Models.Status(), on })
-  const quality = createQualityStore({ quality: () => Models.Quality(), on })
+  const quality = createQualityStore({ qualityStatus: () => Catalog.QualityStatus(), on })
   const settings = createSettingsStore({ get: () => Settings.Get() })
   // The Library's list lives as long as the shell (its `gone` toast shows on any route).
   const library = createLibraryStore({
@@ -124,7 +122,6 @@ export function createShell(): Shell {
     actions,
     toasts,
     scan,
-    models,
     quality,
     settings,
     library,
@@ -162,7 +159,6 @@ export function createShell(): Shell {
         session.start(),
         actions.listen(on),
         scan.start(),
-        models.start(),
         quality.start(),
         settings.start(),
         library.start(),

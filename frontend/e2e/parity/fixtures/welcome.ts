@@ -4,7 +4,7 @@
 //
 // 30, 33–36: the scanning folder is a Library.List row with its run's
 // progress, as Go lists a folder being scanned. 31: the quality worker's
-// snapshot (Models.Quality, Catalog.QualityStatus); 37: two passes.
+// snapshot (Catalog.QualityStatus); 37: two passes.
 // 32: a run that stopped. Go lists only a scanning row's progress, so the
 // fixture lists the folder scanning, at the stopped run's last numbers; the
 // case then sends what Go sends when the job fails (scan:progress with

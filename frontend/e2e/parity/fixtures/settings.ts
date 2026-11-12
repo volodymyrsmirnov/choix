@@ -5,8 +5,7 @@
 // prototype shows. The fixture hands the app the same data the way Go would:
 //   - Settings.Get: the saved values; never answering while the state is
 //     still loading (510); refused with the state's message (511, `calls`);
-//   - Models.Quality and Catalog.QualityStatus: the quality worker, as the
-//     state shows it, except where the state's value reaches the page as
+//   - Catalog.QualityStatus: the quality worker, as the state shows it, except where the state's value reaches the page as
 //     Go's event (SETTINGS_EVENTS): there the bindings answer what Go
 //     reported before, and `events` holds the event, which the case emits
 //     once the page shows that earlier value;

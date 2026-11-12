@@ -10,7 +10,7 @@
 //     `scanning` with the run's progress when the state shows a scan;
 //   - Settings.Get: what makes the page group by time only (visual grouping
 //     off: GROUPING_SOURCE), hide rejected photos or leave out the badges;
-//   - Models.Quality when the title bar shows the quality worker (229);
+//   - Catalog.QualityStatus when the title bar shows the quality worker (229);
 //   - the toasts of 222 and 223, seeded (the app's own re-cluster toasts
 //     leave after 4 s, which a comparison could outlast;
 //     ../folderCases.test.ts holds them to the same copy);
@@ -49,8 +49,8 @@ export function folderScenarioProps(n: number, list: Scenario[] = scenarios): Fo
 
 /**
  * What Go reports for each way the page groups: the visual-grouping setting
- * (Settings.Get), from which the app derives the grouping (folderProps.ts
- * groupingOf).
+ * (Settings.Get). The app passes no grouping (the design reads none), so
+ * this only gives each scenario the settings it implies.
  */
 export const GROUPING_SOURCE: Record<'visual' | 'time-off', { visual_grouping: boolean }> = {
   visual: { visual_grouping: true },

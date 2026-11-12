@@ -24,7 +24,7 @@ export function Open(_folderID: string): CancellablePromise<$models.FolderView> 
   return answer<$models.FolderView>('Catalog.Open', (f) => f.view)
 }
 
-/** The fixture's `quality`, as Models.Quality answers it (wireQuality). */
+/** The fixture's `quality`, as Go sends it (wireQuality). */
 export function QualityStatus(): CancellablePromise<events$0.Quality> {
   return answer<events$0.Quality>('Catalog.QualityStatus', (f) => wireQuality(f.quality))
 }

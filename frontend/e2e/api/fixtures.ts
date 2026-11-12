@@ -59,7 +59,7 @@ export class CallError extends Error {
   }
 }
 
-export type ServiceName = 'Library' | 'Catalog' | 'Settings' | 'Models' | 'System' | 'TestSupport'
+export type ServiceName = 'Library' | 'Catalog' | 'Settings' | 'System' | 'TestSupport'
 
 /** The shapes the specs read from the bindings (a subset of the models). */
 export interface AddResult {

@@ -156,8 +156,6 @@ describe('Add Folder through the picker, in both orders', () => {
     const handlers = createLibraryHandlers({
       library: { AddFolders: () => Promise.resolve([{ id: 'new', name: 'x', existing: false }]) },
       system: { ShowFolderMenu: () => Promise.resolve(), OpenPicksFolder: () => Promise.resolve() },
-      models: { Retry: () => Promise.resolve() },
-      settings: { Save: () => Promise.resolve() },
       toasts: { push: () => '' },
       select: (id) => {
         st.pending = id
@@ -165,7 +163,6 @@ describe('Add Folder through the picker, in both orders', () => {
         settle()
       },
       folderName: () => undefined,
-      onSaved: () => {},
       onError: (e) => {
         throw e
       },

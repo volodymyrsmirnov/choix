@@ -6,9 +6,9 @@
 //     the fixture's `calls`, `events` and `ui` for exactly what the state
 //     shows (a save in flight, a refused load, Go's later value, the opening
 //     scroll to the quality field);
-//   - the app's own controller and stores (createSettingsDraft, the settings,
-//     models and quality stores, the real router), fed each fixture (the
-//     models as Go's shim answers them: both ready), its events and the steps
+//   - the app's own controller and stores (createSettingsDraft, the settings
+//     and quality stores, the real router), fed each fixture (the quality
+//     worker as Catalog.QualityStatus answers it), its events and the steps
 //     the way the screen reports them, give the Settings screen the
 //     scenario's props;
 //   - the toast the app puts up itself when Save fails carries the approved
@@ -18,7 +18,6 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { TOAST_SAVE_FAILED } from '../../prototype/mock/settings'
 import { scenarios as settingsSceneList } from '../../prototype/scenarios/settings'
 import type { AppEvents, On } from '../../src/app/shell/events'
-import { createModelsStore } from '../../src/app/shell/modelsStore'
 import { createQualityStore, type QualityData } from '../../src/app/shell/qualityStore'
 import { createRouter, type HashHost } from '../../src/app/shell/router'
 import { createSettingsStore } from '../../src/app/shell/settingsStore'
@@ -31,7 +30,6 @@ import type { SettingsBody } from '../../src/design/types'
 import { CASES, SETTINGS_STATES, SETTINGS_STEPS, type SettingsSteps, type SettingsSwitchId } from './cases'
 import { SETTINGS, SETTINGS_EVENTS, settingsScenarioProps } from './fixtures/settings'
 import { bindingError, type ParityFixture } from './mock-bindings/control'
-import { shimStatus } from './mock-bindings/models/shim'
 
 const flush = async () => {
   for (let i = 0; i < 6; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -158,9 +156,7 @@ function appFor(f: ParityFixture) {
     return Promise.resolve(structuredClone(value))
   }
   const settings = createSettingsStore({ get: () => answer('Settings.Get', f.settings) })
-  // Models.Status as Go's shim answers it, whatever the fixture (mock-bindings/models).
-  const models = createModelsStore({ status: () => answer('Models.Status', shimStatus()), on: bus.on })
-  const quality = createQualityStore({ quality: () => answer('Models.Quality', f.quality as QualityData | undefined), on: bus.on })
+  const quality = createQualityStore({ qualityStatus: () => answer('Catalog.QualityStatus', f.quality as QualityData | undefined), on: bus.on })
   const router = createRouter(fakeHost())
   router.start()
   router.navigate({ name: 'settings' })
@@ -171,10 +167,7 @@ function appFor(f: ParityFixture) {
       saves.push(patch)
       return answer('Settings.Save', { saved: true, reclustered: false })
     },
-    retry: () => answer<void>('Models.Retry', undefined as unknown as void),
     settings,
-    models,
-    quality,
     router,
     toast: (t) => {
       toasts.push(t)
@@ -183,8 +176,8 @@ function appFor(f: ParityFixture) {
   })
   const reveal = f.ui?.['settings.reveal'] as SettingsProps['reveal']
   if (reveal !== undefined) ctl.reveal(reveal)
-  const stops = [settings.start(), models.start(), quality.start(), ctl.start()]
-  return { ctl, bus, models, quality, router, toasts, saves, stop: () => stops.forEach((s) => s()) }
+  const stops = [settings.start(), quality.start(), ctl.start()]
+  return { ctl, bus, quality, router, toasts, saves, stop: () => stops.forEach((s) => s()) }
 }
 
 describe("the app's controller and stores, fed the fixture, give the screen the scenario's props", () => {

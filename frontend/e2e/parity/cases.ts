@@ -685,8 +685,8 @@ export const FOCUS_CASES: ParityCase[] = [...FOCUS_STATES, ...COMPARE_STATES].ma
 //
 // The fixtures (fixtures/settings.ts) carry each state's data as Go answers
 // it: the saved values (Settings.Get: pending in 510, refused with the
-// state's message in 511), the quality worker (Models.Quality and
-// Catalog.QualityStatus), how Save answers (`calls`: kept in flight in 504),
+// state's message in 511), the quality worker (Catalog.QualityStatus),
+// how Save answers (`calls`: kept in flight in 504),
 // the "Save failed" toast of 512 (seeded), Go's event that brings 509's
 // value, and the quality states' opening
 // scroll (`ui`, the one value with no real path). What the prototype passes

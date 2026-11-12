@@ -35,7 +35,7 @@ export function scenarioProps(list: Scenario[], n: number): LibraryProps {
 /** `value` as JSON data (keys whose value is undefined dropped), as Go's answer would be. */
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-/** The Library route with `p`'s data: Library.List, the quality worker (Models.Quality, Catalog.QualityStatus) and the toasts. */
+/** The Library route with `p`'s data: Library.List, the quality worker (Catalog.QualityStatus) and the toasts. */
 export function libraryFixture(p: LibraryProps, folders: FolderSummary[] | null = p.folders): ParityFixture {
   return plain({
     route: '#/',

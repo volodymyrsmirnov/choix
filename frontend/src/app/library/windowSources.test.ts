@@ -1,37 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { dropSource, keepScroll, onlineSource } from './windowSources'
+import { dropSource, keepScroll } from './windowSources'
 
-describe('onlineSource', () => {
-  test('follows navigator.onLine through the online and offline events', () => {
-    const listeners = new Map<string, Set<() => void>>()
-    const win = {
-      navigator: { onLine: true },
-      addEventListener(type: string, fn: () => void) {
-        const set = listeners.get(type) ?? new Set()
-        set.add(fn)
-        listeners.set(type, set)
-      },
-      removeEventListener(type: string, fn: () => void) {
-        listeners.get(type)?.delete(fn)
-      },
-    }
-    const src = onlineSource(win)
-    let changes = 0
-    const stop = src.subscribe(() => changes++)
-    expect(src.get()).toBe(true)
-
-    win.navigator.onLine = false
-    for (const fn of listeners.get('offline') ?? []) fn()
-    expect(src.get()).toBe(false)
-    win.navigator.onLine = true
-    for (const fn of listeners.get('online') ?? []) fn()
-    expect(src.get()).toBe(true)
-    expect(changes).toBe(2)
-
-    stop()
-    expect(listeners.get('online')?.size).toBe(0)
-    expect(listeners.get('offline')?.size).toBe(0)
-  })
+test('no online source: nothing is downloaded, so the Library does not follow the network', async () => {
+  expect(Object.keys(await import('./windowSources')).sort()).toEqual(['dropSource', 'keepScroll'])
 })
 
 describe('dropSource', () => {

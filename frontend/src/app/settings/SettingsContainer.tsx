@@ -1,14 +1,14 @@
 // Settings: the design's SettingsScreen, fed from the shell. The page logic
-// is settingsDraft.ts; this file binds it to the bindings (Settings.Save,
-// Models.Retry), the shell's stores (settings, models from
-// `models:progress`, quality from `quality:status`), the router and the
-// toasts. Menu and keyboard actions need nothing here: Back (⌘[) is the
-// shell's `back`, which the leave guard holds while edits are unsaved, and
-// the help button runs the shell's `shortcuts`.
+// is settingsDraft.ts; this file binds it to the binding (Settings.Save),
+// the shell's stores (settings, quality from Catalog.QualityStatus and
+// `quality:status`), the router and the toasts. Menu and keyboard actions
+// need nothing here: Back (⌘[) is the shell's `back`, which the leave guard
+// holds while edits are unsaved, and the help button runs the shell's
+// `shortcuts`.
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { SettingsProps } from '../../design/screens/settings/props'
 import { SettingsScreen } from '../../design/screens/settings/SettingsScreen'
-import { Models, Settings } from '../shell/api'
+import { Settings } from '../shell/api'
 import { useShell, useToastProps } from '../shell/context'
 import { uiOverride } from '../shell/parityUi'
 import { useStore } from '../shell/store'
@@ -37,10 +37,7 @@ export function SettingsContainer() {
   const [ctl] = useState(() => {
     const c = createSettingsDraft({
       save: (patch) => Settings.Save(patch),
-      retry: (kind) => Models.Retry(kind),
       settings: shell.settings,
-      models: shell.models,
-      quality: shell.quality,
       router: shell.router,
       toast: (t) => {
         shell.toasts.push(t)
@@ -52,7 +49,6 @@ export function SettingsContainer() {
   useEffect(() => ctl.start(), [ctl])
 
   const st = useSyncExternalStore(ctl.subscribe, ctl.state)
-  const models = useStore(shell.models).value
   const quality = useStore(shell.quality).value
   const from = useSyncExternalStore(shell.router.subscribe, shell.router.settingsFrom)
   const session = useSyncExternalStore(shell.session.subscribe, shell.session.get)
@@ -67,8 +63,6 @@ export function SettingsContainer() {
       activeSection={st.activeSection}
       saving={st.saving}
       quality={quality ?? null}
-      retrying={st.retrying}
-      models={models ?? []}
       leavePrompt={st.leavePrompt}
       toasts={toastProps.toasts}
       onUndoToast={toastProps.onUndoToast}
@@ -81,8 +75,6 @@ export function SettingsContainer() {
       onBack={ctl.back}
       onHelp={() => shell.actions.runAction('shortcuts')}
       onReload={() => void ctl.reload()}
-      onRetryQuality={() => void ctl.retry('quality')}
-      onRetryModel={(kind) => void ctl.retry(kind)}
       onConfirmLeave={ctl.confirmLeave}
     />
   )

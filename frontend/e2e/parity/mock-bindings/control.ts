@@ -19,13 +19,11 @@
 //     forgot shows its loading state and parity reports the difference.
 //     Where the fixture's `calls` names the binding, `calls` decides instead
 //     of the field (as for an acting binding, below): a load that fails with
-//     a given app error (Catalog.Cluster's in state 316). Models.Status
-//     (until phase B) reads no field: it answers both kinds ready, as Go's
-//     shim does (models/service.ts).
-//   - A binding that only acts (SetMenuContext, CheckNow, Rescan, Retry, …)
+//     a given app error (Catalog.Cluster's in state 316).
+//   - A binding that only acts (SetMenuContext, CheckNow, Rescan, …)
 //     answers at once, fixture or not, as Go answers when nothing goes wrong.
 //     Those wired through act() (Catalog.Recluster, Catalog.SetPick,
-//     Settings.Save, Models.Retry) answer as the loaded
+//     Settings.Save) answer as the loaded
 //     fixture's `calls` says instead, where it names them: 'pending' never
 //     answers (the call stays in flight), an app error rejects with it.
 //
@@ -48,7 +46,7 @@ export interface ParityFixture {
   route: string
   /** Library.List (and so the scan store). */
   folders?: FolderSummary[] | 'pending'
-  /** Models.Quality and Catalog.QualityStatus. */
+  /** Catalog.QualityStatus. */
   quality?: QualityStatus
   /** Settings.Get. */
   settings?: SettingsBody | 'pending' | 'error'
@@ -197,7 +195,8 @@ export const act = control.act
 /**
  * The quality snapshot as Go sends it: the fixture's (the design's
  * QualityStatus) with `received` and `size` at 0, the fields Go's
- * events.Quality still carries, unused, until phase B removes them.
+ * events.Quality still carries, unused, until they are deleted and the
+ * bindings regenerated; this goes with them.
  */
 export function wireQuality<Q extends object>(q: Q | undefined): (Q & { received: number; size: number }) | undefined {
   return q === undefined ? undefined : { received: 0, size: 0, ...q }

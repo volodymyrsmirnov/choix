@@ -4,11 +4,11 @@
 //   - the cases cover exactly the registered states of both groups;
 //   - LIBRARY_STEPS (cases.ts, which runs on Node and cannot import the
 //     scenarios) stands for exactly the props the fixture cannot carry;
-//   - the app's own stores, fed each fixture (and state 32's events) and
-//     the mock Models.Status (both kinds ready, as Go's shim answers, from a
-//     fixture with no models field), give the Library screen the scenario's
-//     folders, quality and toasts, and reach the scenario's screen, never a
-//     welcome panel or a loading state the scenario does not show;
+//   - the app's own stores, fed each fixture (and state 32's events), its
+//     quality worker through the mock Catalog.QualityStatus, give the
+//     Library screen the scenario's folders, quality and toasts, and reach
+//     the scenario's screen, never a loading state the scenario does not
+//     show;
 //   - the toasts the app puts up itself carry the approved copy of the
 //     toasts 113–115 seed (the mock bindings cannot answer AddFolders or
 //     OpenPicksFolder with the result that puts them up).
@@ -19,7 +19,7 @@ import { scenarios as welcomeSceneList } from '../../prototype/scenarios/welcome
 import type { Scenario } from '../../prototype/registry'
 import { createLibraryHandlers, createLibraryStore, libraryView, type FolderRowData } from '../../src/app/library/libraryStore'
 import type { AppEvents, On } from '../../src/app/shell/events'
-import { createModelsStore } from '../../src/app/shell/modelsStore'
+import { createQualityStore } from '../../src/app/shell/qualityStore'
 import { createScanStore } from '../../src/app/shell/scanStore'
 import { createToasts } from '../../src/app/shell/toasts'
 import type { LibraryProps } from '../../src/design/screens/library/props'
@@ -29,7 +29,7 @@ import { CASES, ERROR_SCREEN_STATE, LIBRARY_STATES, LIBRARY_STEPS, WELCOME_STATE
 import { LIBRARY, scenarioProps } from './fixtures/library'
 import { WELCOME } from './fixtures/welcome'
 import { bindingError, load, type ParityFixture } from './mock-bindings/control'
-import * as Models from './mock-bindings/models/service'
+import * as Catalog from './mock-bindings/catalog/service'
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
@@ -121,11 +121,10 @@ describe("the app's stores, fed the fixture, show the scenario's data", () => {
       const toasts = createToasts()
       const scan = createScanStore({ list, on: bus.on })
       const library = createLibraryStore({ list, on: bus.on, toasts })
-      // Models.Status as the parity build answers it (the fixture has no models field).
-      expect('models' in fixture).toBe(false)
+      // The quality worker as the parity build answers Catalog.QualityStatus.
       await load(fixture)
-      const models = createModelsStore({ status: () => Models.Status(), on: bus.on })
-      const stops = [scan.start(), library.start(), models.start()]
+      const quality = createQualityStore({ qualityStatus: () => Catalog.QualityStatus(), on: bus.on })
+      const stops = [scan.start(), library.start(), quality.start()]
       await flush()
 
       const stop = LIBRARY_STEPS[n]?.stopRun
@@ -137,35 +136,37 @@ describe("the app's stores, fed the fixture, show the scenario's data", () => {
         await flush()
       }
 
-      const view = libraryView({ list: library.get(), models: models.get(), scan: scan.get().value })
+      const view = libraryView({ list: library.get(), scan: scan.get().value })
       expect(view.folders).toEqual(p.folders)
       // The screen the scenario draws: loading only while the list is (111), the drop zone with no folders.
       expect(view.screen).toBe(p.folders === null ? 'loading' : p.folders.length === 0 ? 'empty' : 'timeline')
       // The title bar draws no scan any more (p.scan is deprecated, not drawn): the rows carry it.
       expect('scan' in view).toBe(false)
       expect(fixture.quality ?? null).toEqual(p.quality)
+      // What the store holds is that snapshot, with the received and size Go
+      // still sends until events.Quality drops them (mock-bindings/control.ts wireQuality).
+      const { received: _r, size: _s, ...held } = quality.get().value ?? { received: 0, size: 0 }
+      expect(quality.get().value === undefined ? null : held).toEqual(p.quality)
       expect(fixture.toasts ?? []).toEqual(p.toasts)
       for (const s of stops) s()
     })
   }
 })
 
-test('a Library fixture with no models field reaches its screen, not the loading state', async () => {
+test('a Library fixture reaches its screen as soon as the list has loaded, not the loading state', async () => {
   for (const [n, screen] of [
     [100, 'empty'],
     [102, 'timeline'],
   ] as const) {
     const fixture = LIBRARY[n]!
     expect('models' in fixture).toBe(false)
-    await load(fixture)
     const bus = fakeBus()
     const list = () => Promise.resolve(structuredClone(fixture.folders) as unknown as FolderRowData[])
     const library = createLibraryStore({ list, on: bus.on, toasts: createToasts() })
-    const models = createModelsStore({ status: () => Models.Status(), on: bus.on })
-    const stops = [library.start(), models.start()]
+    const stop = library.start()
     await flush()
-    expect([n, libraryView({ list: library.get(), models: models.get(), scan: undefined }).screen]).toEqual([n, screen])
-    for (const stop of stops) stop()
+    expect([n, libraryView({ list: library.get(), scan: undefined }).screen]).toEqual([n, screen])
+    stop()
   }
 })
 
@@ -188,12 +189,9 @@ describe('the toasts the app puts up itself carry the approved copy of 113–115
     const h = createLibraryHandlers({
       library: { AddFolders: (over.add ?? (async () => [])) as never },
       system: { ShowFolderMenu: async () => {}, OpenPicksFolder: over.picks ?? (async () => {}) },
-      models: { Retry: async () => {} },
-      settings: { Save: async () => {} },
       toasts,
       select: (id) => selected.push(id),
       folderName: (id) => ({ 'card-a': 'Card A', lisbon: 'Lisbon' })[id],
-      onSaved: () => {},
       onError: (e) => {
         throw e
       },

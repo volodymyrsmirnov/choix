@@ -30,7 +30,6 @@ import { mediaPhoto } from './fixtures'
 import { FOLDER, FOLDER_MEDIA, folderScenarioProps, RECLUSTER_CALLS } from './fixtures/folder'
 import { MEDIA } from './fixtures/table'
 import { bindingError, type AppErrorCause, type ParityFixture } from './mock-bindings/control'
-import { shimStatus } from './mock-bindings/models/shim'
 
 const flush = async () => {
   for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -156,8 +155,6 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
         row: summary.get().value,
         scan: scan.get().value?.[folderId],
         settings,
-        // What Go's Models shim answers (the fixture has no models field).
-        models: shimStatus(),
         quality: (f.quality as QualityStatus | undefined) ?? null,
         filter,
         chosen: s.down ? (visible[s.down]?.id ?? null) : null,
@@ -182,7 +179,6 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
         'openMenu',
         'selectedClusterId',
         'settings',
-        'grouping',
         'quality',
         'reclustering',
         'failedFiles',
@@ -193,6 +189,8 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
       ] as const) {
         expect([key, got[key]]).toEqual([key, p[key]])
       }
+      // The app passes no grouping: the design reads none (227 draws as 210 does).
+      expect('grouping' in got).toBe(false)
       for (const stop of stops) stop()
     })
   }

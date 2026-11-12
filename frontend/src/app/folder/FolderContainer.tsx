@@ -20,7 +20,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { actionTitle } from '../../design/screens/focus/logic'
 import { filterClusters } from '../../design/screens/folder/filter'
 import { FolderScreen } from '../../design/screens/folder/FolderScreen'
-import type { FolderMenu } from '../../design/screens/folder/props'
+import type { FolderMenu, FolderProps } from '../../design/screens/folder/props'
 import type { FolderFilter } from '../../design/types'
 import { Library } from '../shell/api'
 import { useShell, useToastProps } from '../shell/context'
@@ -48,7 +48,6 @@ export function FolderContainer({ folderId }: { folderId: string }) {
   const snap = useSyncExternalStore(store.subscribe, store.get)
   const row = useStore(summaryStore)
   const scanMap = useStore(shell.scan).value
-  const models = useStore(shell.models).value
   const quality = useStore(shell.quality).value
   const settings = useStore(shell.settings).value
   const toasts = useToastProps()
@@ -133,13 +132,13 @@ export function FolderContainer({ folderId }: { folderId: string }) {
 
   return (
     <FolderScreen
-      {...folderScreenProps({
+      // No `grouping`: the design reads none (folderProps.ts FolderScreenProps).
+      {...(folderScreenProps({
         folderId,
         snap,
         row: row.value,
         scan: scanMap?.[folderId],
         settings,
-        models,
         quality,
         filter,
         chosen,
@@ -168,7 +167,7 @@ export function FolderContainer({ folderId }: { folderId: string }) {
           onSettings: () => shell.actions.runAction('settings'),
           onHelp: () => shell.actions.runAction('shortcuts'),
         },
-      })}
+      }) as FolderProps)}
     />
   )
 }

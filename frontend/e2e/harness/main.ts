@@ -8,7 +8,6 @@
 import { Call, Events } from '@wailsio/runtime'
 import { Service as Catalog } from '@bindings/catalog'
 import { Service as Library } from '@bindings/library'
-import { Service as Models } from '@bindings/models'
 import { Service as Settings } from '@bindings/settings'
 import { Service as System } from '@bindings/system'
 import * as EventNames from '../../bindings/events'
@@ -40,7 +39,6 @@ export interface Choix {
   Library: typeof Library
   Catalog: typeof Catalog
   Settings: typeof Settings
-  Models: typeof Models
   System: typeof System
   TestSupport: typeof TestSupport
   events: HarnessEvent[]
@@ -61,4 +59,4 @@ for (const name of Object.values(EventNames)) {
   }
 }
 
-window.choix = { Library, Catalog, Settings, Models, System, TestSupport, events }
+window.choix = { Library, Catalog, Settings, System, TestSupport, events }

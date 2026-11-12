@@ -21,7 +21,7 @@
 //     that renders no screen renders <FallbackToaster /> instead.
 import { createContext, useContext, useSyncExternalStore } from 'react'
 import { Toaster } from '../../design/components'
-import type { ModelStatus, QualityStatus, SettingsBody, ToastItem } from '../../design/types'
+import type { QualityStatus, SettingsBody, ToastItem } from '../../design/types'
 import type { Actions } from './actions'
 import type { FolderSummaryModel } from './api'
 import type { FolderSession } from './folderSession'
@@ -44,7 +44,6 @@ export interface Shell {
   actions: Actions
   toasts: Toasts
   scan: Store<ScanMap>
-  models: Store<ModelStatus[]>
   quality: Store<QualityStatus>
   settings: Store<SettingsBody>
   /**

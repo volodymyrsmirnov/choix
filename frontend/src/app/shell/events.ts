@@ -7,7 +7,6 @@ import type {
   FolderChangedEvent,
   LibraryChangedEvent,
   MenuActionEvent,
-  ModelStatusEvent,
   QualityEvent,
   ScanProgressEvent,
   ScanStateEvent,
@@ -19,7 +18,6 @@ export interface AppEvents {
   'scan:progress': ScanProgressEvent
   'scan:state': ScanStateEvent
   'folder:changed': FolderChangedEvent
-  'models:progress': ModelStatusEvent
   'quality:status': QualityEvent
   'menu:action': MenuActionEvent
   /** The window became the key window (Wails' common window event; no payload). */

@@ -1,4 +1,4 @@
-// The library route (#/): the Library, with its welcome panel (Task 54).
+// The library route (#/): the Library (Task 54).
 // The container and its store sit beside this file; the store itself is
 // the shell's (shell.library), so it runs on every route. The contract a
 // route module follows is in ../shell/context.tsx.

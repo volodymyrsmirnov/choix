@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { FolderGrouping } from '../../design/screens/folder/props'
+import type { FolderProps } from '../../design/screens/folder/props'
 import { FolderScreen } from '../../design/screens/folder/FolderScreen'
-import type { Cluster, FolderSummary, ModelStatus, SettingsBody } from '../../design/types'
+import type { Cluster, FolderSummary, SettingsBody } from '../../design/types'
 import type { FolderSnapshot } from './folderStore'
-import { folderScreenProps, groupingOf, scanOf, SCAN_STARTING, selectionOf, summaryOf, usableFilter, type FolderInputs } from './folderProps'
+import { folderScreenProps, scanOf, SCAN_STARTING, selectionOf, summaryOf, usableFilter, type FolderInputs } from './folderProps'
 
 const settings = (over: Partial<SettingsBody> = {}): SettingsBody => ({
   bucket_size: 600,
@@ -17,10 +17,6 @@ const settings = (over: Partial<SettingsBody> = {}): SettingsBody => ({
   visual_grouping: true,
   ...over,
 })
-const clip = (state: ModelStatus['state']): ModelStatus[] => [
-  { kind: 'clip', state, received: 0, size: 0 },
-  { kind: 'quality', state: 'ready', received: 0, size: 0 },
-]
 
 const CLUSTERS: Cluster[] = [
   { id: 1, device: 'Camera A', time: 'Mar 1, 10:00', members: [{ file_id: 11, path: 'a.jpg', content_hash: 'h', picked: true, rejected: false, kind: 'photo', format: 'jpeg' }] },
@@ -74,7 +70,6 @@ const inputs = (over: Partial<FolderInputs> = {}): FolderInputs => ({
   row: ROW,
   scan: undefined,
   settings: settings(),
-  models: clip('ready'),
   quality: null,
   filter: { query: '', device: '', sort: 'time-asc' },
   chosen: null,
@@ -109,17 +104,10 @@ describe('folderProps', () => {
     expect(scanOf({ state: 'queued', progress: null }, CLUSTERS)).toBeNull()
   })
 
-  test('grouping from the setting and the CLIP model', () => {
-    const table: [SettingsBody | undefined, ModelStatus[] | undefined, FolderGrouping][] = [
-      [settings(), clip('ready'), 'visual'],
-      [settings(), clip('downloading'), 'time-downloading'],
-      [settings(), clip('queued'), 'time-downloading'],
-      [settings(), clip('failed'), 'time-failed'],
-      [settings(), clip('disabled'), 'time-off'],
-      [settings({ visual_grouping: false }), clip('ready'), 'time-off'],
-      [undefined, undefined, 'visual'],
-    ]
-    for (const [s, m, want] of table) expect(groupingOf(s, m)).toBe(want)
+  test('no grouping: the design reads none, whatever the visual-grouping setting', () => {
+    for (const s of [settings(), settings({ visual_grouping: false }), undefined]) {
+      expect('grouping' in folderScreenProps(inputs({ settings: s }))).toBe(false)
+    }
   })
 
   test('summary: the Library row, else what the grid says', () => {
@@ -154,7 +142,7 @@ describe('folderProps', () => {
 
   test('the screen renders its title bar first, uncovered (the window drags by it)', () => {
     for (const snap of [snapshot(), snapshot({ status: 'loading', value: undefined }), snapshot({ notice: 'offline' })]) {
-      const html = renderToStaticMarkup(<FolderScreen {...folderScreenProps(inputs({ snap }))} />)
+      const html = renderToStaticMarkup(<FolderScreen {...(folderScreenProps(inputs({ snap })) as FolderProps)} />)
       // The screen's root, then the title bar as its first child: nothing wraps or precedes it.
       expect(html).toMatch(/^<div class="relative flex flex-col h-full min-h-0"><header[^>]*data-titlebar/)
       // Nothing positioned over the window (a full-size overlay would take the mouse-down).

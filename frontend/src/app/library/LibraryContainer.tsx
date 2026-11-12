@@ -1,15 +1,14 @@
 // The Library container: the design's LibraryScreen, fed from the shell.
-// LibraryScreen itself shows the welcome panel (no folders, an enabled
-// model not ready yet), the drop zone, the loading state or the timeline,
-// so the container always renders it, as the prototype's welcome and
+// LibraryScreen itself shows the drop zone (no folders), the loading state
+// or the timeline, so the container always renders it, as the prototype's
 // Library states do — and renders nothing else: the screen's own title bar
 // is the window's drag region, and nothing here sits over it.
 //
 // Sources: the folder list from the shell's Library store (libraryStore.ts,
 // alive for the whole shell), each row's scan state and progress from the
-// shell's scan store, the models and the quality worker from theirs, the
-// selection from the shell's actions, `online` and `dropActive` from the
-// window (windowSources.ts). The replica props stay closed: the ⋯ button
+// shell's scan store, the quality worker from its store, the selection
+// from the shell's actions, `dropActive` from the window
+// (windowSources.ts). The replica props stay closed: the ⋯ button
 // and a right-click open the native folder menu (System.ShowFolderMenu),
 // and Remove is the native alert (Library.Remove, through the actions).
 //
@@ -38,14 +37,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { LibraryScreen } from '../../design/screens/library/LibraryScreen'
 import type { LibraryMenu, LibraryProps } from '../../design/screens/library/props'
-import type { FolderSummary, LibraryFilter, SettingsBody } from '../../design/types'
-import { Library, Models, Settings, System } from '../shell/api'
+import type { FolderSummary, LibraryFilter } from '../../design/types'
+import { Library, System } from '../shell/api'
 import { useShell } from '../shell/context'
 import type { Store, StoreSnapshot } from '../shell/store'
 import { filterMemory, settleFilter, visibleIds } from './libraryFilter'
 import { createLibraryKeyHandler } from './libraryKeys'
 import { createLibraryHandlers, libraryView, reportError } from './libraryStore'
-import { dropSource, keepScroll, onlineSource, type Source } from './windowSources'
+import { dropSource, keepScroll, type Source } from './windowSources'
 
 const LIBRARY = { name: 'library' } as const
 
@@ -67,9 +66,7 @@ function useSnapshot<T>(store: Store<T>): StoreSnapshot<T> {
 
 // Made on first use: there is no window under react-dom/server, where only
 // the fallback is read.
-let online: Source<boolean> | null = null
 let drop: Source<boolean> | null = null
-const onlineNow = () => (online ??= onlineSource(window))
 const dropNow = () => (drop ??= dropSource(document, MutationObserver))
 
 function useWindowSource(source: () => Source<boolean>, fallback: boolean): boolean {
@@ -84,15 +81,13 @@ export function LibraryContainer() {
   const shell = useShell()
   const { actions, toasts, router } = shell
   const list = useSnapshot(shell.library)
-  const models = useSnapshot(shell.models)
   const scan = useSnapshot(shell.scan)
   const quality = useSnapshot(shell.quality)
   const toastItems = useSyncExternalStore(toasts.subscribe, toasts.items, toasts.items)
   const { selected } = useSyncExternalStore(actions.subscribe, actions.state, actions.state)
-  const isOnline = useWindowSource(onlineNow, true)
   const dropActive = useWindowSource(dropNow, false)
 
-  const view = libraryView({ list, models, scan: scan.value })
+  const view = libraryView({ list, scan: scan.value })
 
   // The toolbar's state; the latest folders and filter for the window's key
   // handler and Add Folder, which are made once.
@@ -128,19 +123,12 @@ export function LibraryContainer() {
     return createLibraryHandlers({
       library: Library,
       system: System,
-      models: Models,
-      settings: Settings,
       toasts,
       select: (id) => {
         pendingAdd.current = id
         actions.select(id)
       },
       folderName: (id) => shell.library.get().value?.find((f) => f.id === id)?.name,
-      onSaved: (patch) => {
-        const saved = shell.settings.get().value
-        if (patch && saved) shell.settings.set({ ...saved, ...patch } as SettingsBody)
-        else void shell.settings.reload()
-      },
       onError: report,
     })
   }, [shell, actions, toasts, setFilter])
@@ -196,7 +184,6 @@ export function LibraryContainer() {
 
   const props: LibraryProps = {
     folders: view.folders,
-    models: view.models,
     dropActive,
     toasts: toastItems,
     selectedId: selected,
@@ -206,7 +193,6 @@ export function LibraryContainer() {
     openMenu,
     onFilter: setFilter,
     onOpenMenu: setOpenMenu,
-    online: isOnline,
     quality: quality.value ?? null,
     onAdd: () => actions.runAction('add-folder'),
     onOpen: (id) => actions.runAction('open-folder', id),
@@ -217,8 +203,6 @@ export function LibraryContainer() {
     onConfirmRemove: () => {},
     onSettings: () => actions.runAction('settings'),
     onHelp: () => actions.runAction('shortcuts'),
-    onRetryModel: (kind) => void handlers.retryModel(kind),
-    onToggleModel: (kind, on) => void handlers.toggleModel(kind, on),
     onUndoToast: toasts.undo,
     onDismissToast: toasts.dismiss,
   }

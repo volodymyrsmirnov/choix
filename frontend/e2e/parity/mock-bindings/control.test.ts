@@ -1,12 +1,13 @@
 // The parity build's mock bindings (control.ts and the services beside it):
 // answers come from the loaded fixture, 'pending' never answers, 'error'
 // rejects the way the Wails runtime rejects a Go error, emit reaches the
-// runtime's Events.On subscribers, and every generated binding has a mock
-// of the same name and type.
+// runtime's Events.On subscribers, and every generated binding the app
+// calls has a mock of the same name and type (the app calls no Models
+// binding: the parity build has no mock of it).
 import { expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
 import * as RealCatalog from '@bindings/catalog/service'
 import * as RealLibrary from '@bindings/library/service'
-import * as RealModels from '@bindings/models/service'
 import * as RealSettings from '@bindings/settings/service'
 import * as RealSystem from '@bindings/system/service'
 import { appError } from '../../../src/app/shell/errors'
@@ -14,7 +15,6 @@ import type { FolderSummary } from '../../../src/design/types'
 import * as Catalog from './catalog/service'
 import { createControl, emit, load, type ParityFixture } from './control'
 import * as Library from './library/service'
-import * as Models from './models/service'
 import { Events } from './runtime'
 import * as Settings from './settings/service'
 import * as System from './system/service'
@@ -22,13 +22,7 @@ import * as System from './system/service'
 // The type test: each mock module has the generated module's type (same
 // names, same parameters, the same CancellablePromise results). A missing
 // or mistyped mock fails `bun run check`.
-const typed: [typeof RealCatalog, typeof RealLibrary, typeof RealModels, typeof RealSettings, typeof RealSystem] = [
-  Catalog,
-  Library,
-  Models,
-  Settings,
-  System,
-]
+const typed: [typeof RealCatalog, typeof RealLibrary, typeof RealSettings, typeof RealSystem] = [Catalog, Library, Settings, System]
 
 const FOLDER: FolderSummary & { added_at: number } = {
   id: 'f1',
@@ -82,12 +76,8 @@ test('a field the fixture leaves out never answers', async () => {
   expect(await settles(c.answer('Settings.Get', (f) => f.settings))).toBe(false)
 })
 
-test('Models.Status answers both kinds ready, as the Go shim does, from a fixture with no models field', async () => {
-  await load({ route: '#/', folders: [] })
-  expect(await Models.Status()).toEqual([
-    { kind: 'clip', state: 'ready', received: 0, size: 0 },
-    { kind: 'quality', state: 'ready', received: 0, size: 0 },
-  ] as never)
+test('the parity build has no Models mock: Catalog.QualityStatus is the only quality source', () => {
+  expect(existsSync(new URL('./models', import.meta.url))).toBe(false)
 })
 
 test('the app-facing host hands out the ui record and the toasts, and tells listeners of each load', async () => {
@@ -102,12 +92,11 @@ test('the app-facing host hands out the ui record and the toasts, and tells list
   expect(c.uiHost.toasts()).toEqual([{ id: 'a', tone: 'info', title: 'Hello' }])
 })
 
-test('Catalog.QualityStatus answers the fixture\'s quality status, as Models.Quality does, with the received and size Go still sends', async () => {
+test('Catalog.QualityStatus answers the fixture\'s quality status, with the received and size Go still sends', async () => {
   const quality = { enabled: true, state: 'scoring', active: true, done: 2, total: 9, rated: 5 } as ParityFixture['quality']
   await load({ route: '#/', quality })
   const wire = { received: 0, size: 0, ...quality }
   expect(await Catalog.QualityStatus()).toEqual(wire as never)
-  expect(await Models.Quality()).toEqual(wire as never)
 })
 
 test("'pending' never resolves", async () => {
@@ -181,13 +170,6 @@ test("Settings.Save answers saved at once, unless the fixture's calls name it: i
   expect(await Settings.Save({ picks_dir: 'x' })).toEqual({ saved: true, reclustered: false })
 })
 
-test("Models.Retry is done at once, unless the fixture's calls name it", async () => {
-  await load({ route: '#/settings', calls: { 'Models.Retry': 'pending' } })
-  expect(await settles(Models.Retry('quality'))).toBe(false)
-  await load({ route: '#/settings' })
-  expect(await settles(Models.Retry('quality'))).toBe(true)
-})
-
 test("Settings.Get 'pending' never answers", async () => {
   await load({ route: '#/settings', settings: 'pending' })
   expect(await settles(Settings.Get())).toBe(false)
@@ -220,7 +202,7 @@ test('emit reaches Events.On subscribers', () => {
   expect(seen).toEqual([['library:changed', { reason: 'stats' }]])
 })
 
-test('every generated binding name has a mock', () => {
+test('every generated binding name the app calls has a mock', () => {
   const names = (m: object) => Object.keys(m).sort()
-  expect(typed.map(names)).toEqual([RealCatalog, RealLibrary, RealModels, RealSettings, RealSystem].map(names))
+  expect(typed.map(names)).toEqual([RealCatalog, RealLibrary, RealSettings, RealSystem].map(names))
 })
