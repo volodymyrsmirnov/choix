@@ -22,9 +22,46 @@ declare global {
 /** How long open() waits for a state to render: generous, for shared CI runners. */
 export const OPEN_TIMEOUT_MS = 10_000
 
-const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+/**
+ * Resolves after the page's next real rendering update, and after the tasks
+ * that update queued.
+ *
+ * Not requestAnimationFrame: the scripted renders run under a fixed clock
+ * (Playwright's clock.setFixedTime), which replaces requestAnimationFrame
+ * with a 16 ms timer that fires whether or not the page renders. On a slow
+ * runner whose rendering lags its timers, two such "frames" can pass before
+ * any style, layout and ResizeObserver delivery has happened, and a state
+ * that measures itself (the Folder page's "+N" strip) was captured
+ * unmeasured.
+ *
+ * A fresh IntersectionObserver gets its first notification from the next
+ * rendering update, whose intersection step comes after layout and after
+ * every ResizeObserver delivery of that update, so the components'
+ * measurements of it are in. (Not a ResizeObserver probe: observing the
+ * document element would make it the shallowest observation of the update,
+ * and WebKit then reports the components' later ones as "ResizeObserver
+ * loop completed with undelivered notifications".) Those measurements set
+ * React state, whose render React's scheduler posts as a message; the
+ * message posted here runs after it (posted messages are delivered in
+ * order), so its DOM changes have reached the MutationObserver by the time
+ * this resolves.
+ */
+function renderingUpdate(): Promise<void> {
+  return new Promise((resolve) => {
+    const probe = new IntersectionObserver(() => {
+      probe.disconnect()
+      const channel = new MessageChannel()
+      channel.port1.onmessage = () => {
+        channel.port1.close()
+        resolve()
+      }
+      channel.port2.postMessage(null)
+    })
+    probe.observe(document.documentElement)
+  })
+}
 
-/** Resolves after two consecutive animation frames with no DOM mutation. */
+/** Resolves after two consecutive rendering updates with no DOM mutation. */
 async function quiet(): Promise<void> {
   let mutated = false
   const observer = new MutationObserver(() => {
@@ -35,7 +72,7 @@ async function quiet(): Promise<void> {
     let still = 0
     while (still < 2) {
       mutated = false
-      await frame()
+      await renderingUpdate()
       still = mutated ? 0 : still + 1
     }
   } finally {
@@ -59,8 +96,8 @@ export function installHarness(controller: Controller, log: OverlayLog): Harness
      * Opens state `n` with a fresh store and resolves when it is ready to
      * capture: rendered, fonts loaded, every image decoded (or failed), and
      * with `freeze` every running animation cancelled; then two consecutive
-     * animation frames without a DOM mutation. Rejects after 2 s, or at once
-     * for an unknown state.
+     * rendering updates without a DOM mutation (quiet). Rejects after
+     * OPEN_TIMEOUT_MS, or at once for an unknown state.
      */
     async open(n) {
       if (!controller.find(n)) throw new Error(`no state s${n}`)
