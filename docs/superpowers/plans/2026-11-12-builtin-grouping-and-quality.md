@@ -357,10 +357,10 @@ The only task that edits gated files.
 - Modify: `frontend/e2e/parity/mock-bindings/catalog/service.ts` (add `QualityStatus`, taking over the quality fixture behaviour of the `Models` mock), `mock-bindings/control.ts` and its test; delete `frontend/e2e/parity/mock-bindings/models/`; modify `frontend/e2e/harness/main.ts`, `frontend/e2e/api/fixtures.ts` (no `Models`)
 
 **Interfaces:**
-- Produces: no file under `frontend/src/app/**` imports the `Models` binding, subscribes to `models:progress`, or passes a deprecated prop; `groupingOf(settings)` returns `'visual'` when `visual_grouping` is on and `'time-off'` otherwise; the quality store starts from `Catalog.QualityStatus()` and applies `quality:status`; `onlineSource` is deleted.
+- Produces: no file under `frontend/src/app/**` imports the `Models` binding, subscribes to `models:progress`, or passes a deprecated prop; `groupingOf` is deleted and the Folder container passes no `grouping` (nothing in the design reads it since phase A); the quality store starts from `Catalog.QualityStatus()` and applies `quality:status`; `onlineSource` is deleted. The parity mocks lose `wireQuality` and `mock-bindings/models/` (with its `shim.ts`), and the tests that import the shim are updated.
 
 - [ ] **Step 1: Check the gate.** Pull the owner's approval commit. Run `task design:status`. Expected: `Merge check: pass` apart from `parity-not-enabled`-type findings this task resolves; no `unapproved`, no `unretired`. For each file to edit run `python3 tools/design/gate.py check --mode edit --assume-changed <path>`. Expected: no findings. Otherwise stop and report.
-- [ ] **Step 2: Update the tests first**: `folderProps.test.tsx` (`groupingOf` has two outcomes), `libraryStore.test.ts` (no models in `libraryView`; no `retryModel`/`toggleModel`), `LibraryContainer.test.tsx`, `settingsDraft.test.ts` (no retry), `qualityStore.test.ts` (starts from `Catalog.QualityStatus`, then applies an event), `store.test.ts`, `control.test.ts`. Run `cd frontend && bun test`. Expected: FAIL.
+- [ ] **Step 2: Update the tests first**: `folderProps.test.tsx` (no `groupingOf`; the props carry no `grouping`), `libraryStore.test.ts` (no models in `libraryView`; no `retryModel`/`toggleModel`), `LibraryContainer.test.tsx`, `settingsDraft.test.ts` (no retry), `qualityStore.test.ts` (starts from `Catalog.QualityStatus`, then applies an event), `store.test.ts`, `control.test.ts`. Run `cd frontend && bun test`. Expected: FAIL.
 - [ ] **Step 3: Edit the app files and the mocks** to the interface above. Containers only stop passing props; no markup or style changes.
 - [ ] **Step 4: Run** `cd frontend && bun test && bun run check`. Run `git grep -n "Models\.\|models:progress\|modelsStore" -- frontend/src/app frontend/e2e`. Expected: no match.
 - [ ] **Step 5: Commit** in one commit, `refactor(app): read the quality status from the catalog, drop the model bindings`.
@@ -375,7 +375,7 @@ The only task that edits gated files.
 - Regenerated: `frontend/bindings/**`, `docs/design/state-hashes.json`
 
 **Interfaces:**
-- Produces: the end state of §8: four services; no `events.ModelsProgress`, no `events.ModelStatus`; `events.Quality` without `Received`, `Size`, `Error`; `FolderGrouping = 'visual' | 'time-off'`; no `ModelStatus` type.
+- Produces: the end state of §8: four services; no `events.ModelsProgress`, no `events.ModelStatus`; `events.Quality` without `Received`, `Size`, `Error` (the tracker's comparison in `internal/app/session/quality.go` loses them too); no `FolderGrouping` type and no `grouping` prop (the prototype's state 227 scenario stops passing it; its rendering does not change); no `ModelStatus` type.
 
 - [ ] **Step 1: Write the failing tests**: `events.Names()` does not list `models:progress`; a `Quality` value marshals without `received`, `size` and `error`; the registration test in `cmd/choix` expects four services.
 - [ ] **Step 2: Delete and regenerate.** Remove the package and the types; run `task bindings`; delete the deprecated design members.

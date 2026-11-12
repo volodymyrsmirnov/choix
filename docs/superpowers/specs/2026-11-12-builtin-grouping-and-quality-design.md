@@ -121,7 +121,8 @@ const FeaturePrintLen = 768
 type Vision interface {
 	// FeaturePrint returns the image feature print of a still: revision 2,
 	// crop-and-scale "scale fill", FeaturePrintLen float32 values, as Vision
-	// returns them. Exactly one of in.Path and in.Data is set.
+	// returns them. Exactly one of in.Path and in.Data is set. An image
+	// Vision cannot decode gives an error wrapping ErrUnreadableImage.
 	FeaturePrint(ctx context.Context, in ImageInput) ([]float32, error)
 }
 ```
@@ -161,13 +162,15 @@ func New(s *store.Store, p Printer) *Analyzer
 func (a *Analyzer) Analyze(ctx context.Context, fileID int64, previewPath string) error
 ```
 
-- The stage reads the **preview tier** (`thumb.TierPreview`, at most 1600 px), not the thumb tier. That is the input the benchmark measured. For a video it is the preview made from the first keyframe, as today.
+- The stage reads the **preview tier** (`thumb.TierPreview`, at most 1600 px), not the thumb tier. That is the input the benchmark measured. For a video it is the preview made from the first keyframe.
+- **When a file has no preview tier, the stage uses its thumb tier**, as the media handler does. v1 made only a thumb for a video, so without this fallback the backfill would mark every video of a v1 folder `failed`.
 - The session's printer wraps `platform.Vision` and answers `analyze.ErrPrintsOff` while `visual_grouping` is off, read live for every file, as `sessionGatedEmbedder` does today.
 - `Analyze` L2-normalises the vector before storing it and rejects a vector whose length is not `platform.FeaturePrintLen` or whose norm is zero or not finite.
 - Outcomes, each ending with the file `analyzed` unless noted:
   - print made: store it with `PrintID`;
   - no printer, or the printer answers `ErrPrintsOff` (checked before any other error): store nothing, leave the row unstamped, so the file is pending when grouping is switched on;
-  - Vision failed on a readable preview: store a NULL print **stamped with `PrintID`**, so the file is not retried on every job, and log it;
+  - Vision could not read the image (`platform.ErrUnreadableImage`, the file's own fault): store a NULL print **stamped with `PrintID`**, so the file is not retried on every job, and log it;
+  - any other Vision error (the framework's fault, possibly transient): store nothing, leave the row unstamped and log it; the file is tried again by the next job's backfill;
   - cancelled, or the folder is unreachable: leave the row as it was; an unreachable folder is `pipeline.ErrFolderUnavailable`, as today;
   - the preview cannot be read while the folder is reachable: the file is `failed` with the error text, as today.
 - `sessionAnalyzeWorkers` becomes 4 **[call]**. Feature-print calls are independent and already bounded by `platform.NativeSlots`.
@@ -203,7 +206,7 @@ PRAGMA user_version = 7;
 - Output ordering is unchanged: members ascending, clusters by smallest member.
 - **It is cancellable.** It checks `ctx` at least once per row of the similarity matrix and once per merge, and returns `ctx.Err()` within a second of cancellation. The clock-skew estimate that precedes a cross-device rebuild compares pairs of prints too and is cancellable the same way. A rebuild writes clusters only after all of its clustering has returned without error, so a cancelled rebuild replaces nothing.
 - Any implementation that returns exactly these groups is acceptable. It must handle a bucket of 2,000 prints in under 5 s on the development machine, and a property test compares it with a naive version of the rule above on random inputs.
-- A bucket with more than 4,000 printed files is clustered in consecutive windows of 4,000 in the bucket's time order **[call]**, to bound memory at one similarity matrix of 4,000². Groups never span two windows. Every path that clusters a bucket (the full rebuild, the cross-device rebuild, the single-bucket rebuild) uses the same windowing.
+- A bucket with more than 4,000 printed files is clustered in consecutive windows of 4,000 in the bucket's time order **[call]**, to bound memory at one similarity matrix of 4,000². Groups never span two windows. Every path that clusters a bucket (the full rebuild and the cross-device rebuild) uses the same windowing. The single-bucket rebuild (`Grouper.RebuildBucket`, with `Store.WriteBucket` and `ListAnalyzedInBucket`) had no caller outside tests and is deleted.
 
 Everything else in `internal/group` keeps its behaviour: time buckets, files without a print going to their bucket's fallback cluster, cross-device mode, `MergedDeviceKey`.
 
@@ -232,7 +235,7 @@ Everything else in `internal/group` keeps its behaviour: time buckets, files wit
 
 - `internal/quality` holds everything: `pass.go` (unchanged in behaviour), `measure.go` (the formula, pure Go, no cgo), `scorer.go` (the store-backed `Scorer`, moved from `local.QualityScorer`).
 - Scorer id: `quality.ScorerID = "choix-sne-1024/v1"`. Rows stamped with the TOPIQ id become pending and their scores are hidden, by the existing rule.
-- Input: the preview tier JPEG, decoded with Go's `image/jpeg`. A preview whose shorter side is under 384 px is unrated (NULL score stamped with the scorer id), as today.
+- Input: the preview tier JPEG, decoded with Go's `image/jpeg`. A preview whose shorter side is under 384 px is unrated (NULL score stamped with the scorer id), as today. The header is read first: a preview claiming more than 8,192 px on a side is treated as unreadable and never decoded, so a damaged cache file cannot exhaust memory. Nothing is stamped once the pass has been cancelled, whichever outcome was about to be recorded.
 - Storage is unchanged: `files.quality_raw`, `files.quality_model`. No migration.
 - The pass runs where it runs today (last step of a folder job, when `quality_rating` is on). Nothing waits for a model. `jobScorer` no longer takes an inference turn. `local.ErrQualityUnavailable` and `Pass.IsUnavailable` are deleted.
 - Only "this photo can never be rated" is stamped with NULL. Cancellation, a disabled setting, an unreachable folder and database errors leave the row pending.
@@ -242,7 +245,7 @@ Everything else in `internal/group` keeps its behaviour: time buckets, files wit
 
 All arithmetic in float64.
 
-1. **Working copy.** If the preview's long side is over 1024 px, resample it to long side 1024 with a box (area) filter, target size `round(w·s) × round(h·s)` with `s = 1024 / long side`, and round each channel to 8 bits (half up). Otherwise use it as it is. Never scale up.
+1. **Working copy.** If the preview's long side is over 1024 px, resample it to long side 1024, target size `round(w·s) × round(h·s)` with `s = 1024 / long side` (halves to even), otherwise use it as it is. Never scale up. The resampling is the box filter of the Pillow library, because that is what the benchmark measured with: two passes, horizontal then vertical, each rounded to 8 bits (half up); an output pixel is the plain mean of the source pixels whose centres fall inside its footprint (for output index `i` and scale `r = source / target`: the source indices from `floor((i + 0.5)·r − r/2 + 0.5)` up to, not including, `floor((i + 0.5)·r + r/2 + 0.5)`, clamped to the image). It is not a fractional-overlap area filter: at 1600 → 1024 the first output pixel is the mean of the first two source pixels. Image F in §6.3 pins that case.
 2. `rgb` = the working copy's channels divided by 255. `y` = `0.2126·R + 0.7152·G + 0.0722·B` of `rgb` (luma of sRGB code values).
 3. **Sharpness at σ = 1 and σ = 2.** `g_σ` = `y` convolved with a separable Gaussian: radius `ceil(3σ)`, taps `exp(-0.5·(i/σ)²)` normalised to sum 1, borders reflected without repeating the edge sample (numpy `reflect`). `L_σ` = the 4-neighbour Laplacian of `g_σ` (up + down + left + right − 4·centre, same reflection). `var_σ` = the population variance of `L_σ` with a border of `3σ + 2` pixels removed on every side.
 4. **Noise.** `c` = `y` filtered with the 3×3 mask `[[1,−2,1],[−2,4,−2],[1,−2,1]]` (reflected borders). `gm` = gradient magnitude of `g_2`, using central differences inside and one-sided differences at the edges (numpy `gradient`). `ok` = pixels with `0.03 < y < 0.97`; if fewer than 1,000, all pixels. `thr` = the 30th percentile of `gm` over `ok` (linear interpolation between order statistics, numpy's default). `flat` = `ok` pixels with `gm ≤ thr`. `noise = 1.4826 · median(|c| over flat) / 6`.
@@ -266,6 +269,7 @@ The Go implementation must reproduce these. The test images are defined by formu
 - **C**: 640×480, `R = G = min(255, 2·a(x, y; 1))`, `B = min(255, a(x, y; 1) + 60)`.
 - **D**: 2048×1536, `R = G = B = a(x, y; 2)`. It is resampled 2:1 to 1024×768.
 - **E**: 640×480, every channel 128.
+- **F**: 1600×1200, `R = a(x, y; 2)`, `G = min(255, a(x, y; 2) + 10)`, `B = max(0, a(x, y; 2) − 10)`. It is resampled by the non-integer ratio 1.5625 to 1024×768.
 
 | Image | var_1 | var_2 | noise | dn_1 | dn_2 | midgrey_ev | clip_hi | raw | display |
 |---|---|---|---|---|---|---|---|---|---|
@@ -274,8 +278,9 @@ The Go implementation must reproduce these. The test images are defined by formu
 | C | 0.00244116455 | 0.000387579987 | 0.0647634565 | 0.00197155558 | 0.00037803356 | 1.9642239 | 0.536468099 | −46.921814 | 6.539 |
 | D | 0.00129932664 | 0.000310955732 | 0.0261635294 | 0.00122268426 | 0.000309397711 | 0.144848853 | 0 | −40.8680438 | 9.566 |
 | E | 0 | 0 | 0 | 1e-9 | 1e-9 | 0.262770556 | 0 | −115.392025 | 0 |
+| F | 0.00193048378 | 0.000166922077 | 0.0116282353 | 0.00191534455 | 0.000166614319 | 0.305494051 | 0 | −40.7327979 | 9.634 |
 
-Channel sums, to check the generators: A 117,498,873; B 117,439,461; C 195,801,086; D 1,203,225,198. Tolerance: 1e-6 relative on every feature and 1e-6 absolute on `raw`.
+Channel sums, to check the generators: A 117,498,873; B 117,439,461; C 195,801,086; D 1,203,225,198; F 734,390,856. Tolerance: 1e-6 relative on every feature and 1e-6 absolute on `raw`.
 
 ### 6.4 The badge
 
