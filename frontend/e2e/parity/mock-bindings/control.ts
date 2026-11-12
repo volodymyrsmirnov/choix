@@ -48,7 +48,7 @@ export interface ParityFixture {
   folders?: FolderSummary[] | 'pending'
   /** Models.Status: always [clip, quality]. */
   models?: ModelStatus[]
-  /** Models.Quality. */
+  /** Models.Quality and Catalog.QualityStatus. */
   quality?: QualityStatus
   /** Settings.Get. */
   settings?: SettingsBody | 'pending' | 'error'

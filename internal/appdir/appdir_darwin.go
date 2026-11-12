@@ -10,24 +10,6 @@ package appdir
 #include <stdlib.h>
 #include <string.h>
 
-// choixPrivateFrameworksPath returns a malloc'd copy of the main bundle's
-// privateFrameworksPath, or NULL when there is none or Foundation throws.
-// The caller frees it.
-static char *choixPrivateFrameworksPath(void) {
-	@autoreleasepool {
-		@try {
-			NSString *p = [[NSBundle mainBundle] privateFrameworksPath];
-			if (p == nil || p.length == 0) {
-				return NULL;
-			}
-			const char *s = p.fileSystemRepresentation;
-			return s == NULL ? NULL : strdup(s);
-		} @catch (NSException *e) {
-			return NULL;
-		}
-	}
-}
-
 // choixSearchPath returns a malloc'd copy of the first user-domain path for
 // dir, or NULL when Foundation has none. The caller frees it.
 static char *choixSearchPath(NSSearchPathDirectory dir) {
@@ -67,21 +49,6 @@ func applicationSupportDir() (string, error) {
 // libraryDir returns <NSLibraryDirectory, user domain>. It creates nothing.
 func libraryDir() (string, error) {
 	return takeCString(C.choixLibraryDir(), "library directory")
-}
-
-// BundleFrameworksDir returns the running app bundle's Contents/Frameworks
-// directory — Foundation's [[NSBundle mainBundle] privateFrameworksPath] —
-// or "" when the process is not running from an .app bundle (a bare binary,
-// a test). It is used instead of os.Executable, which resolves a relative
-// launch path against the sandbox container and then names a file that
-// does not exist (spike S6).
-func BundleFrameworksDir() string {
-	p := C.choixPrivateFrameworksPath()
-	if p == nil {
-		return ""
-	}
-	defer C.free(unsafe.Pointer(p))
-	return bundleFrameworksDir(C.GoString(p))
 }
 
 // sandboxContainerID returns APP_SANDBOX_CONTAINER_ID as libc's getenv sees

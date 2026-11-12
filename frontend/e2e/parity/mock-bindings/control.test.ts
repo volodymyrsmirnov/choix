@@ -94,6 +94,13 @@ test('the app-facing host hands out the ui record and the toasts, and tells list
   expect(c.uiHost.toasts()).toEqual([{ id: 'a', tone: 'info', title: 'Hello' }])
 })
 
+test('Catalog.QualityStatus answers the fixture\'s quality status, as Models.Quality does', async () => {
+  const quality = { enabled: true, state: 'scoring', active: true, done: 2, total: 9, rated: 5 } as ParityFixture['quality']
+  await load({ route: '#/', quality })
+  expect(await Catalog.QualityStatus()).toEqual(quality as never)
+  expect(await Models.Quality()).toEqual(quality as never)
+})
+
 test("'pending' never resolves", async () => {
   await load({ route: '#/', folders: 'pending', view: 'pending', focus: 'pending' })
   expect(await settles(Library.List())).toBe(false)

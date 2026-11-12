@@ -1,7 +1,7 @@
 //go:build smoke
 
 // Package e2e_test provides a smoke test against a synthetic 100-file corpus.
-// It does not require network access, exiftool, ffmpeg, or ONNX models.
+// It does not require network access, exiftool or ffmpeg.
 // Run with: go test -tags smoke ./internal/e2e/...
 package e2e_test
 

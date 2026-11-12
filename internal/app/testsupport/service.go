@@ -166,8 +166,8 @@ func (s *Service) SetConfirmAnswer(yes bool) {
 	s.d.setConfirm(yes)
 }
 
-// WaitIdle waits until no job is queued or running and no model download is
-// in flight, for at most timeoutMs milliseconds (capped at 25 s, see maxWait;
+// WaitIdle waits until no job is queued or running, for at most timeoutMs
+// milliseconds (capped at 25 s, see maxWait;
 // zero or a negative timeout checks once), and reports whether that happened.
 func (s *Service) WaitIdle(timeoutMs int) bool {
 	wait := time.Duration(max(timeoutMs, 0)) * time.Millisecond

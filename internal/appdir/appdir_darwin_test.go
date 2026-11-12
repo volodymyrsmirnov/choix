@@ -44,15 +44,6 @@ func TestSandboxed(t *testing.T) {
 	}
 }
 
-// A `go test` binary is not inside an .app bundle, so there is no bundle
-// Frameworks directory. (Inside a sandboxed bundle, launched by absolute and
-// by relative path, it was verified by hand: see the Task 22 report.)
-func TestBundleFrameworksDir_NotABundle(t *testing.T) {
-	if got := BundleFrameworksDir(); got != "" {
-		t.Errorf("BundleFrameworksDir = %q outside an app bundle, want empty", got)
-	}
-}
-
 // The search-path lookups only read; they create nothing.
 func TestSearchPaths(t *testing.T) {
 	support, err := applicationSupportDir()

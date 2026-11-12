@@ -5,22 +5,11 @@ import (
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/opgate"
 )
-
-// newServiceManager returns a Manager, not started, with CLIP installed and
-// both settings on.
-func newServiceManager() *Manager {
-	return New(Options{
-		Downloader: newFake(local.ModelCLIP),
-		Enabled:    func(local.ModelKind) bool { return true },
-	})
-}
 
 // wantCode fails unless err is an *apperr.Error with code.
 func wantCode(t *testing.T, err error, code string) *apperr.Error {
@@ -32,6 +21,8 @@ func wantCode(t *testing.T, err error, code string) *apperr.Error {
 	return ae
 }
 
+// The shim keeps the binding's three methods, so the generated bindings the
+// unchanged app code imports stay the same.
 func TestService_ExportedMethods(t *testing.T) {
 	typ := reflect.TypeFor[*Service]()
 	var got []string
@@ -44,22 +35,53 @@ func TestService_ExportedMethods(t *testing.T) {
 	}
 }
 
-func TestModels_Status(t *testing.T) {
-	m := newServiceManager()
-	svc := NewService(m, nil, &opgate.Gate{})
+func TestShim_Status(t *testing.T) {
+	svc := NewService(nil, &opgate.Gate{})
 	got, err := svc.Status()
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if len(got) != 2 || got[0].Kind != "clip" || got[0].State != stateReady ||
-		got[1].Kind != "quality" || got[1].State != stateQueued {
-		t.Errorf("Status = %+v, want [clip ready, quality queued]", got)
+	want := []events.ModelStatus{{Kind: "clip", State: "ready"}, {Kind: "quality", State: "ready"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Status = %+v, want %+v", got, want)
 	}
 }
 
-func TestModels_StatusAfterGateClosed(t *testing.T) {
+func TestShim_Retry(t *testing.T) {
+	svc := NewService(nil, &opgate.Gate{})
+	for _, kind := range []string{"clip", "quality"} {
+		if err := svc.Retry(kind); err != nil {
+			t.Errorf("Retry(%q) = %v, want nil", kind, err)
+		}
+	}
+	for _, kind := range []string{"", "CLIP", "nima", "unknown"} {
+		ae := wantCode(t, svc.Retry(kind), apperr.CodeInvalid)
+		if ae.Field != "kind" || ae.Reason != "unknown" {
+			t.Errorf("Retry(%q) = %+v, want field kind, reason unknown", kind, ae)
+		}
+	}
+}
+
+func TestShim_Quality(t *testing.T) {
+	want := events.Quality{
+		Enabled: true, State: "scoring", Active: true, Done: 2, Total: 9, Rated: 5, FolderID: "b",
+		Passes: []events.QualityPass{{FolderID: "a", Done: 3, Total: 4}, {FolderID: "b", Done: 2, Total: 9}},
+	}
+	svc := NewService(func() events.Quality { return want }, &opgate.Gate{})
+	got, err := svc.Quality()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("Quality = %+v, %v, want %+v", got, err, want)
+	}
+
+	none := NewService(nil, &opgate.Gate{})
+	if got, err := none.Quality(); err != nil || got.State != "disabled" || len(got.Passes) != 0 {
+		t.Errorf("Quality without a source = %+v, %v, want disabled with no passes", got, err)
+	}
+}
+
+func TestShim_AfterGateClosed(t *testing.T) {
 	var gate opgate.Gate
-	svc := NewService(newServiceManager(), func() events.Quality { return events.Quality{State: "idle"} }, &gate)
+	svc := NewService(func() events.Quality { return events.Quality{State: "idle"} }, &gate)
 	gate.Close(0)
 	got, err := svc.Status()
 	wantCode(t, err, apperr.CodeUnavailable)
@@ -69,54 +91,4 @@ func TestModels_StatusAfterGateClosed(t *testing.T) {
 	wantCode(t, svc.Retry("clip"), apperr.CodeUnavailable)
 	_, err = svc.Quality()
 	wantCode(t, err, apperr.CodeUnavailable)
-}
-
-func TestModelsRetry_UnknownKind(t *testing.T) {
-	svc := NewService(newServiceManager(), nil, &opgate.Gate{})
-	for _, kind := range []string{"", "CLIP", "nima", "unknown"} {
-		ae := wantCode(t, svc.Retry(kind), apperr.CodeInvalid)
-		if ae.Field != "kind" || ae.Reason != "unknown" {
-			t.Errorf("Retry(%q) = %+v, want field kind, reason unknown", kind, ae)
-		}
-	}
-}
-
-func TestModelsRetry_FailedModelIsQueued(t *testing.T) {
-	// CLIP installed; the quality model's only attempt fails.
-	h := newHarness(t, newFake(local.ModelCLIP), newSwitches(true, true), []time.Duration{})
-	h.m.Start(t.Context())
-	h.dl.next(t, local.ModelQuality).finish(errors.New("network down"))
-	waitState(t, h.m, local.ModelQuality, stateFailed)
-
-	svc := NewService(h.m, nil, &opgate.Gate{})
-	if err := svc.Retry("quality"); err != nil {
-		t.Fatalf("Retry: %v", err)
-	}
-	h.dl.next(t, local.ModelQuality).finish(nil)
-	waitState(t, h.m, local.ModelQuality, stateReady)
-
-	// A model that has not failed: nothing happens, no error.
-	if err := svc.Retry("clip"); err != nil {
-		t.Errorf("Retry(clip): %v", err)
-	}
-	if n := h.dl.callCount(local.ModelCLIP); n != 0 {
-		t.Errorf("CLIP downloaded %d times, want 0", n)
-	}
-}
-
-func TestModels_Quality(t *testing.T) {
-	want := events.Quality{
-		Enabled: true, State: "scoring", Active: true, Done: 2, Total: 9, Rated: 5, FolderID: "b",
-		Passes: []events.QualityPass{{FolderID: "a", Done: 3, Total: 4}, {FolderID: "b", Done: 2, Total: 9}},
-	}
-	svc := NewService(newServiceManager(), func() events.Quality { return want }, &opgate.Gate{})
-	got, err := svc.Quality()
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Errorf("Quality = %+v, %v, want %+v", got, err, want)
-	}
-
-	none := NewService(newServiceManager(), nil, &opgate.Gate{})
-	if got, err := none.Quality(); err != nil || got.State != "disabled" || len(got.Passes) != 0 {
-		t.Errorf("Quality without a source = %+v, %v, want disabled with no passes", got, err)
-	}
 }

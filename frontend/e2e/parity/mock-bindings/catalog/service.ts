@@ -2,6 +2,7 @@
 // functions, same names and types; control.ts says how they answer).
 import type { CancellablePromise } from '@wailsio/runtime/cancellable'
 import type * as $models from '../../../../bindings/github.com/volodymyrsmirnov/choix/internal/app/catalog/models'
+import type * as events$0 from '../../../../bindings/github.com/volodymyrsmirnov/choix/internal/app/events/models'
 import { act, answer, done, fail } from '../control'
 
 export function Close(_folderID: string): CancellablePromise<void> {
@@ -21,6 +22,11 @@ export function Clusters(_folderID: string): CancellablePromise<$models.FolderVi
 /** The fixture's `view` (opening the folder answers its grid). */
 export function Open(_folderID: string): CancellablePromise<$models.FolderView> {
   return answer<$models.FolderView>('Catalog.Open', (f) => f.view)
+}
+
+/** The fixture's `quality`, as Models.Quality answers it. */
+export function QualityStatus(): CancellablePromise<events$0.Quality> {
+  return answer<events$0.Quality>('Catalog.QualityStatus', (f) => f.quality)
 }
 
 /** The fixture's `ratings`. */

@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
@@ -384,66 +383,6 @@ func encodeJPEG(w, h int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// fakeDownloader is a models.Downloader: a model is installed when the test
-// says so or when its download completes; a held model's download waits
-// until released or cancelled.
-type fakeDownloader struct {
-	mu      sync.Mutex
-	has     map[local.ModelKind]bool
-	hold    map[local.ModelKind]chan struct{}
-	started map[local.ModelKind]int
-}
-
-func newFakeDownloader(installed ...local.ModelKind) *fakeDownloader {
-	d := &fakeDownloader{has: map[local.ModelKind]bool{}, hold: map[local.ModelKind]chan struct{}{}, started: map[local.ModelKind]int{}}
-	for _, k := range installed {
-		d.has[k] = true
-	}
-	return d
-}
-
-func (d *fakeDownloader) Has(kind local.ModelKind) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.has[kind]
-}
-
-func (d *fakeDownloader) holdKind(kind local.ModelKind) (release func()) {
-	ch := make(chan struct{})
-	d.mu.Lock()
-	d.hold[kind] = ch
-	d.mu.Unlock()
-	var once sync.Once
-	return func() { once.Do(func() { close(ch) }) }
-}
-
-func (d *fakeDownloader) downloads(kind local.ModelKind) int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.started[kind]
-}
-
-func (d *fakeDownloader) Download(ctx context.Context, kind local.ModelKind, onProgress func(received, total int64)) error {
-	d.mu.Lock()
-	d.started[kind]++
-	hold := d.hold[kind]
-	d.mu.Unlock()
-	if onProgress != nil {
-		onProgress(1, 10)
-	}
-	if hold != nil {
-		select {
-		case <-hold:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	d.mu.Lock()
-	d.has[kind] = true
-	d.mu.Unlock()
-	return nil
-}
-
 // fakeVision makes feature prints: the same unit vector for every image,
 // as the analyze stage's input check passed. Each call is logged as "print"
 // when it starts; a test can hold calls inside the detached function, as a
@@ -668,7 +607,6 @@ type harness struct {
 	vols         *platformtest.Volumes
 	stills       *fakeStills
 	video        *platformtest.Video
-	dl           *fakeDownloader
 	vision       *fakeVision
 	scores       *scoreGate
 	em           *recEmitter
@@ -678,9 +616,8 @@ type harness struct {
 	menu         system.MenuState // nil: no native menu
 }
 
-// newHarness points CHOIX_DATA_DIR at a new directory, writes a config with
-// the quality rating off (tests that need it switch it on) and installs
-// both models in the fake downloader.
+// newHarness points CHOIX_DATA_DIR at a new directory and writes a config
+// with the quality rating off (tests that need it switch it on).
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	data := t.TempDir()
@@ -692,7 +629,6 @@ func newHarness(t *testing.T) *harness {
 	log := &orderLog{}
 	vols := &platformtest.Volumes{}
 	vols.Add(parent, platform.VolumeInfo{UUID: "UUID-TEST", Name: "Test HD"})
-	dl := newFakeDownloader(local.ModelCLIP, local.ModelQuality)
 	h := &harness{
 		data:    data,
 		parent:  parent,
@@ -701,7 +637,6 @@ func newHarness(t *testing.T) *harness {
 		vols:    vols,
 		stills:  newFakeStills(log),
 		video:   &platformtest.Video{},
-		dl:      dl,
 		vision:  &fakeVision{log: log, entered: make(chan struct{}, 1)},
 		scores:  &scoreGate{entered: make(chan struct{}, 1)},
 		em:      newRecEmitter(log),
@@ -728,18 +663,17 @@ func (h *harness) setConfig(t *testing.T, edit func(*config.Config)) {
 
 func (h *harness) deps() Deps {
 	return Deps{
-		Bookmarks:  h.bm,
-		Volumes:    h.vols,
-		Workspace:  h.ws,
-		Stills:     h.stills,
-		Video:      h.video,
-		Vision:     h.vision,
-		Downloader: h.dl,
-		Emit:       h.em,
-		Picker:     h.picker,
-		Confirm:    h.confirm,
-		Home:       h.parent,
-		MenuState:  h.menu,
+		Bookmarks: h.bm,
+		Volumes:   h.vols,
+		Workspace: h.ws,
+		Stills:    h.stills,
+		Video:     h.video,
+		Vision:    h.vision,
+		Emit:      h.em,
+		Picker:    h.picker,
+		Confirm:   h.confirm,
+		Home:      h.parent,
+		MenuState: h.menu,
 	}
 }
 

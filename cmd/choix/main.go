@@ -14,10 +14,8 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/runtime"
-	"github.com/volodymyrsmirnov/choix/internal/appdir"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/bookmark"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
@@ -41,22 +39,21 @@ func run() int {
 
 	// The headless self-check (selfcheck.go) runs instead of the app.
 	if os.Getenv(selfCheckEnv) == "1" {
-		if selfCheck(os.Stdout) {
+		if selfCheck(os.Stdout, vision.New()) {
 			return 0
 		}
 		return 1
 	}
 
 	deps := runtime.Deps{
-		Bookmarks:  bookmark.New(),
-		Volumes:    volumes.New(),
-		Workspace:  workspace.New(),
-		Stills:     imageio.New(),
-		Video:      avmedia.New(),
-		Vision:     vision.New(),
-		Downloader: local.NewInstaller(appdir.Models()),
-		MenuState:  shellMenuState(),
-		TitleBar:   shellTitleBar(),
+		Bookmarks: bookmark.New(),
+		Volumes:   volumes.New(),
+		Workspace: workspace.New(),
+		Stills:    imageio.New(),
+		Video:     avmedia.New(),
+		Vision:    vision.New(),
+		MenuState: shellMenuState(),
+		TitleBar:  shellTitleBar(),
 		// Home stays empty: the runtime reads the real home directory from
 		// the password database ($HOME is the sandbox container).
 	}

@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
 	"github.com/volodymyrsmirnov/choix/internal/app/catalog"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
@@ -143,41 +142,69 @@ func TestRuntime_EventsOnTheWire(t *testing.T) {
 	if progress == 0 {
 		t.Error("no scan:progress for the folder")
 	}
-	if h.em.count(events.ModelsProgress) == 0 {
-		t.Error("no models:progress")
+	if n := h.em.count(events.ModelsProgress); n != 0 {
+		t.Errorf("models:progress events = %d; want none (nothing is downloaded)", n)
 	}
 }
 
-func TestRuntime_ModelDownloadedQueuesBackfill(t *testing.T) {
+// Switching visual grouping on queues a backfill of every reachable folder,
+// which prints the files analyzed while it was off; switching it off queues
+// nothing.
+func TestRuntime_SettingsOnQueuesBackfill(t *testing.T) {
 	h := newHarness(t)
-	h.dl = newFakeDownloader(local.ModelQuality) // CLIP is missing
-	releaseCLIP := h.dl.holdKind(local.ModelCLIP)
-	defer releaseCLIP()
-	root := h.folder(t, "Trip", 3, 64, 48)
+	h.setConfig(t, func(c *config.Config) { c.VisualGrouping = false })
+	rootA := h.folder(t, "A", 2, 64, 48)
+	rootB := h.folder(t, "B", 2, 64, 48)
 	r := h.start(t)
-	id := h.add(t, r, root)
+	idA := h.add(t, r, rootA)
+	idB := h.add(t, r, rootB)
+	waitReady(t, r, idA)
+	waitReady(t, r, idB)
+	if n := h.vision.calls.Load(); n != 0 {
+		t.Fatalf("FeaturePrint calls with visual grouping off = %d; want none", n)
+	}
 
-	// Feature prints need no model: the first job prints every file.
-	waitFor(t, "the first job to finish", func() bool { return h.em.countState(id, "ready") >= 1 })
+	if _, err := r.Settings.Save(settings.Patch{VisualGrouping: ptr(true)}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, id := range []string{idA, idB} {
+		waitFor(t, "the backfill of "+id, func() bool { return h.em.countState(id, "ready") >= 2 })
+		waitReady(t, r, id)
+	}
 	const printed = `SELECT COUNT(*) FROM ai_signals WHERE vision_print IS NOT NULL`
-	if n := countRows(t, openState(t, root), printed); n != 3 {
-		t.Fatalf("prints after the first job = %d; want 3", n)
+	for _, root := range []string{rootA, rootB} {
+		if n := countRows(t, openState(t, root), printed); n != 2 {
+			t.Fatalf("prints in %s after switching grouping on = %d; want 2", filepath.Base(root), n)
+		}
 	}
-	calls := h.vision.calls.Load()
 
-	// The model arriving still queues a backfill, which finds nothing to do.
-	releaseCLIP()
-	waitFor(t, "the backfill job to finish", func() bool { return h.em.countState(id, "ready") >= 2 })
-	waitReady(t, r, id)
-	if n := h.vision.calls.Load(); n != calls {
-		t.Fatalf("FeaturePrint calls during the backfill = %d; want none", n-calls)
+	readyA, readyB := h.em.countState(idA, "ready"), h.em.countState(idB, "ready")
+	queued := h.em.count(events.ScanState)
+	if _, err := r.Settings.Save(settings.Patch{VisualGrouping: ptr(false)}); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	if n := countRows(t, openState(t, root), printed); n != 3 {
-		t.Fatalf("prints after the backfill = %d; want 3", n)
+	// Switching it off is synchronous up to the hand-off of a backfill; give
+	// a queued job time to show before checking that none came.
+	time.Sleep(200 * time.Millisecond)
+	if !r.Idle() {
+		t.Fatal("Idle() = false after switching visual grouping off; want no job")
+	}
+	if h.em.countState(idA, "ready") != readyA || h.em.countState(idB, "ready") != readyB || h.em.count(events.ScanState) != queued {
+		t.Fatal("a job ran after switching visual grouping off; want none")
 	}
 }
 
-func TestRuntime_ModelPresentAtLaunchQueuesNothing(t *testing.T) {
+// With nothing queued, the runtime is idle: there is no download to wait
+// for.
+func TestRuntime_IdleWithEmptyQueue(t *testing.T) {
+	h := newHarness(t)
+	r := h.start(t)
+	if !r.Idle() {
+		t.Fatal("Idle() = false with an empty queue")
+	}
+}
+
+func TestRuntime_LaunchQueuesNothing(t *testing.T) {
 	h := newHarness(t)
 	root := h.folder(t, "Trip", 3, 64, 48)
 	r := h.start(t)
@@ -190,7 +217,7 @@ func TestRuntime_ModelPresentAtLaunchQueuesNothing(t *testing.T) {
 	h.em = newRecEmitter(h.log)
 	r2 := h.start(t)
 	if !r2.Idle() {
-		t.Fatal("Idle() = false right after Start with both models on disk and nothing pending")
+		t.Fatal("Idle() = false right after Start with nothing pending")
 	}
 	if n := h.stills.callCount(); n != calls {
 		t.Fatalf("Stills calls after Start = %d; want none (%d before)", n-calls, calls)
@@ -203,27 +230,16 @@ func TestRuntime_ModelPresentAtLaunchQueuesNothing(t *testing.T) {
 	}
 }
 
-func TestRuntime_VisualGroupingOffNeverDownloadsClip(t *testing.T) {
+func TestRuntime_VisualGroupingOffPrintsNothing(t *testing.T) {
 	h := newHarness(t)
 	h.setConfig(t, func(c *config.Config) { c.VisualGrouping = false })
-	h.dl = newFakeDownloader() // nothing installed
 	root := h.folder(t, "Trip", 3, 64, 48)
 	r := h.start(t)
 	id := h.add(t, r, root)
 	waitReady(t, r, id)
 
-	if n := h.dl.downloads(local.ModelCLIP); n != 0 {
-		t.Fatalf("CLIP downloads = %d; want none", n)
-	}
 	if n := h.vision.calls.Load(); n != 0 {
 		t.Fatalf("FeaturePrint calls = %d; want none", n)
-	}
-	st, err := r.Models.Status()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st[0].Kind != "clip" || st[0].State != "disabled" {
-		t.Fatalf("clip status = %+v; want disabled", st[0])
 	}
 }
 
@@ -260,7 +276,7 @@ func TestRuntime_QualityOffStopsScoringAtOnce(t *testing.T) {
 	if _, err := r.Settings.Save(settings.Patch{QualityRating: ptr(false)}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	q, err := r.Models.Quality()
+	q, err := r.Catalog.QualityStatus()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -648,7 +664,7 @@ func TestRuntime_ShutdownOrder(t *testing.T) {
 		return i
 	}
 	order := []string{stepGateClosed, stepCancelled, stepEmitterClosedFake, stepSilenced, stepQueueStopped,
-		stepCatalogClosed, stepModelsStopped, stepSessionsClosed, stepInferenceClosed, stepLibraryClosed}
+		stepCatalogClosed, stepSessionsClosed, stepLibraryClosed}
 	for i := 1; i < len(order); i++ {
 		if at(order[i-1]) >= at(order[i]) {
 			t.Fatalf("%q came after %q: %v", order[i-1], order[i], log)
@@ -657,8 +673,8 @@ func TestRuntime_ShutdownOrder(t *testing.T) {
 	if len(activeAtSessions) != 0 {
 		t.Fatalf("bookmark access when the sessions were closed: %v; want none", activeAtSessions)
 	}
-	// Every native call and inference ended before the queue stopped, so no
-	// store or ONNX session was used after it was closed.
+	// Every native call ended before the queue stopped, so no store was used
+	// after it was closed.
 	queue := at(stepQueueStopped)
 	for i, e := range log {
 		if (e == "stills" || e == "print") && i > queue {
@@ -983,6 +999,9 @@ func TestRuntime_BindingsAfterShutdownAreUnavailable(t *testing.T) {
 	if _, err := r.Models.Quality(); !isUnavailable(err) {
 		t.Errorf("Models.Quality = %v; want unavailable", err)
 	}
+	if _, err := r.Catalog.QualityStatus(); !isUnavailable(err) {
+		t.Errorf("Catalog.QualityStatus = %v; want unavailable", err)
+	}
 	if _, err := r.System.Info(); !isUnavailable(err) {
 		t.Errorf("System.Info = %v; want unavailable", err)
 	}
@@ -1026,57 +1045,6 @@ func TestRuntime_NoEmitAfterShutdown(t *testing.T) {
 	case <-h.em.closed:
 	default:
 		t.Fatal("Shutdown did not close the emitter")
-	}
-}
-
-func TestRuntime_ShutdownDuringDownloadLeavesPartFile(t *testing.T) {
-	h := newHarness(t)
-	served := make(chan struct{}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Length", "1048576")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(make([]byte, 4096))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-		select {
-		case served <- struct{}{}:
-		default:
-		}
-		<-req.Context().Done()
-	}))
-	t.Cleanup(srv.Close)
-
-	inst := local.NewInstaller(appdir.Models())
-	m := local.KnownModels[local.ModelCLIP]
-	m.URL = srv.URL + "/clip.onnx"
-	inst.Models = map[local.ModelKind]local.Model{local.ModelCLIP: m}
-	d := h.deps()
-	d.Downloader = inst
-	r, err := New(d)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	r.presenceEvery = time.Hour
-	t.Cleanup(r.Shutdown)
-	r.Start(context.Background())
-
-	part := inst.Path(local.ModelCLIP) + ".part"
-	receive(t, "the download to start", served)
-	waitFor(t, "bytes in the part file", func() bool {
-		fi, err := os.Stat(part)
-		return err == nil && fi.Size() > 0
-	})
-	if r.Idle() {
-		t.Fatal("Idle() = true while a model downloads")
-	}
-	shutdownWithin(t, r, QuitDeadline+time.Second)
-
-	if fi, err := os.Stat(part); err != nil || fi.Size() == 0 {
-		t.Fatalf("part file after Shutdown: %v; want it kept for the next launch", err)
-	}
-	if _, err := os.Stat(inst.Path(local.ModelCLIP)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("model file after an interrupted download: %v; want none", err)
 	}
 }
 

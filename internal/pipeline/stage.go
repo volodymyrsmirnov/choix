@@ -24,7 +24,7 @@ type ThumbProcessor interface {
 	Build(ctx context.Context, fileID int64) error
 }
 
-// AnalyzeProcessor is the surface needed from the ai/local package.
+// AnalyzeProcessor is the surface needed from the analyze package.
 type AnalyzeProcessor interface {
 	Analyze(ctx context.Context, fileID int64) error
 }

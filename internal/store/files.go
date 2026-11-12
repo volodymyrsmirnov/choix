@@ -174,39 +174,6 @@ func (r *FilesRepo) UpdateStatus(id int64, status, errMsg string) error {
 	return err
 }
 
-// BumpAnalyzedMissingEmbedding rewinds every 'analyzed' file row that
-// lacks a CLIP embedding back to 'thumbed' (the analyze stage's input
-// status). The first-run wizard calls this after installing the CLIP
-// model so files that were analyzed without one get re-processed on the
-// next pipeline run.
-func (r *FilesRepo) BumpAnalyzedMissingEmbedding() (int64, error) {
-	res, err := r.db.ExecContext(context.Background(), `
-		UPDATE files
-		   SET scan_status = 'thumbed', error = NULL
-		 WHERE scan_status = 'analyzed'
-		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL)`)
-	if err != nil {
-		return 0, fmt.Errorf("BumpAnalyzedMissingEmbedding: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
-}
-
-// CountAnalyzedMissingEmbedding returns how many 'analyzed' files have no
-// CLIP embedding — exactly the rows BumpAnalyzedMissingEmbedding would
-// rewind.
-func (r *FilesRepo) CountAnalyzedMissingEmbedding() (int, error) {
-	var n int
-	err := r.db.QueryRowContext(context.Background(), `
-		SELECT COUNT(*) FROM files
-		 WHERE scan_status = 'analyzed'
-		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL)`).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("CountAnalyzedMissingEmbedding: %w", err)
-	}
-	return n, nil
-}
-
 // missingPrint selects the 'analyzed' files that are pending for a print
 // id (the single parameter): no ai_signals row, or a row whose
 // vision_print_id is NULL or another id. A row stamped with the id but no

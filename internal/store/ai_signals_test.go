@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
 	"errors"
 	"math"
 	"slices"
@@ -11,87 +10,19 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 )
 
-func TestAISignalsUpsertAndGet(t *testing.T) {
+func TestAISignalsGetMissing(t *testing.T) {
 	s := newTestStore(t)
-
-	fid, err := s.Files().Insert(File{
-		Path: "p.jpg", Size: 1, Mtime: 1, ContentHash: "h",
-		Kind: "photo", Format: "jpeg", ScanStatus: "thumbed",
-	})
-	if err != nil {
-		t.Fatalf("Insert file: %v", err)
-	}
-
-	rec := AISignals{
-		FileID:        fid,
-		ClipEmbedding: bytes.Repeat([]byte{0x01}, 512*4),
-		ComputedAt:    sql.NullInt64{Int64: 1700000000, Valid: true},
-	}
-	if err := s.AISignals().Upsert(rec); err != nil {
-		t.Fatalf("Upsert: %v", err)
-	}
-
-	rec.ClipEmbedding = bytes.Repeat([]byte{0x02}, 512*4)
-	if err := s.AISignals().Upsert(rec); err != nil {
-		t.Fatalf("Upsert overwrite: %v", err)
-	}
-
-	got, err := s.AISignals().GetByFileID(fid)
-	if err != nil {
-		t.Fatalf("GetByFileID: %v", err)
-	}
-	if got.FileID != fid {
-		t.Errorf("FileID = %d, want %d", got.FileID, fid)
-	}
-	if !bytes.Equal(got.ClipEmbedding, rec.ClipEmbedding) {
-		t.Errorf("clip_embedding mismatch after upsert")
-	}
-	if len(got.Embedding) != 512 {
-		t.Errorf("decoded embedding len = %d, want 512", len(got.Embedding))
-	}
-
 	if _, err := s.AISignals().GetByFileID(99999); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetByFileID missing: got %v, want ErrNotFound", err)
 	}
 }
 
-func TestAISignalsAllEmbeddings(t *testing.T) {
-	s := newTestStore(t)
-
-	mk := func(path string, withEmbed bool) int64 {
-		id, err := s.Files().Insert(File{
-			Path: path, Size: 1, Mtime: 1, ContentHash: "h",
-			Kind: "photo", Format: "jpeg", ScanStatus: "analyzed",
-		})
-		if err != nil {
-			t.Fatalf("Insert %s: %v", path, err)
-		}
-		rec := AISignals{FileID: id}
-		if withEmbed {
-			rec.ClipEmbedding = bytes.Repeat([]byte{0x01}, 4*4)
-		}
-		if err := s.AISignals().Upsert(rec); err != nil {
-			t.Fatalf("Upsert AI %s: %v", path, err)
-		}
-		return id
-	}
-
-	a := mk("a.jpg", true)
-	b := mk("b.jpg", true)
-	mk("c.jpg", false) // no embedding — must be absent from the map
-
-	got, err := s.AISignals().AllEmbeddings()
-	if err != nil {
-		t.Fatalf("AllEmbeddings: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
-	}
-	if _, ok := got[a]; !ok {
-		t.Errorf("missing id %d", a)
-	}
-	if _, ok := got[b]; !ok {
-		t.Errorf("missing id %d", b)
+// insertClipRow writes a retired clip_embedding value for the file, as a
+// folder last processed by an earlier build holds.
+func insertClipRow(t *testing.T, s *Store, fileID int64, clip []byte) {
+	t.Helper()
+	if _, err := s.db.Exec(`INSERT INTO ai_signals (file_id, clip_embedding) VALUES (?, ?)`, fileID, clip); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -138,9 +69,7 @@ func TestPrint_NilIsStampedAndClipKept(t *testing.T) {
 	s := newTestStore(t)
 	id := insertAnalyzed(t, s, "a.jpg", "photo", "h")
 	clip := bytes.Repeat([]byte{0x01}, 512*4)
-	if err := s.AISignals().Upsert(AISignals{FileID: id, ClipEmbedding: clip}); err != nil {
-		t.Fatal(err)
-	}
+	insertClipRow(t, s, id, clip)
 	if err := s.AISignals().UpsertPrint(id, testPrint(1), testPrintID); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +83,11 @@ func TestPrint_NilIsStampedAndClipKept(t *testing.T) {
 	if got.Print != nil || got.PrintID != testPrintID {
 		t.Fatalf("print len %d, id %q; want no print, stamped %q", len(got.Print), got.PrintID, testPrintID)
 	}
-	if !bytes.Equal(got.ClipEmbedding, clip) {
+	var kept []byte
+	if err := s.db.QueryRow(`SELECT clip_embedding FROM ai_signals WHERE file_id = ?`, id).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(kept, clip) {
 		t.Fatal("UpsertPrint changed clip_embedding")
 	}
 	if all, err := s.AISignals().AllPrints(testPrintID); err != nil || len(all) != 0 {
@@ -227,9 +160,7 @@ func TestPrint_CountAndBumpMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A row with only a CLIP embedding has a NULL print id.
-	if err := s.AISignals().Upsert(AISignals{FileID: unstamped, ClipEmbedding: bytes.Repeat([]byte{1}, 16)}); err != nil {
-		t.Fatal(err)
-	}
+	insertClipRow(t, s, unstamped, bytes.Repeat([]byte{1}, 16))
 	if err := s.Files().UpdateStatus(stamped, "analyzed", "earlier error"); err != nil {
 		t.Fatal(err)
 	}

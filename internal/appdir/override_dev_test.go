@@ -58,12 +58,21 @@ func TestRoot_EnvOverride(t *testing.T) {
 		t.Errorf("Logs directory not created: %v", err)
 	}
 
-	models := Models()
-	if models != filepath.Join(want, "models") {
-		t.Errorf("Models = %q, want %q", models, filepath.Join(want, "models"))
+	if _, err := os.Lstat(filepath.Join(want, "models")); !os.IsNotExist(err) {
+		t.Errorf("a models directory exists under the data root: %v; want none", err)
 	}
-	if fi, err := os.Stat(models); err != nil || !fi.IsDir() {
-		t.Errorf("Models directory not created: %v", err)
+}
+
+// LegacyModels names the old models directory and creates nothing, not even
+// the data root.
+func TestLegacyModels_CreatesNothing(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "new")
+	t.Setenv("CHOIX_DATA_DIR", root)
+	if got, want := LegacyModels(), filepath.Join(root, "models"); got != want {
+		t.Errorf("LegacyModels = %q, want %q", got, want)
+	}
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("LegacyModels created the data root (or it is unreadable): %v", err)
 	}
 }
 
