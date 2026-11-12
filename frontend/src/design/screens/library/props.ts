@@ -1,5 +1,5 @@
 import type { LibraryMenu } from '../../components/LibraryFilterBar'
-import type { FolderSummary, LibraryFilter, ModelStatus, QualityStatus, ScanProgress, ToastItem } from '../../types'
+import type { FolderSummary, LibraryFilter, QualityStatus, ToastItem } from '../../types'
 
 export type { LibraryMenu }
 
@@ -36,26 +36,16 @@ export interface LibraryProps {
   onFilter?(f: LibraryFilter): void
   /** A toolbar menu opens (or closes: null). */
   onOpenMenu?(m: LibraryMenu | null): void
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  models?: ModelStatus[]
   /** Folders are being dragged over the window. */
   dropActive: boolean
   toasts: ToastItem[]
   selectedId: string | null
   /** Prototype only: one row's forced `hover` or `focus` look. */
   forceRow?: { id: string; force: string }
-  /**
-   * @deprecated Not drawn: each scan shows in its folder's row (the title
-   * bar shows no status another element shows). Kept, optional, so the app,
-   * which still feeds it, compiles; remove it with libraryView's indicator.
-   */
-  scan?: { folder: string; progress: ScanProgress } | { count: number } | null
   /** Row whose context-menu replica is open. */
   menuFor: string | null
   /** Row whose Remove alert replica is open. */
   removePrompt: string | null
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  online?: boolean
   /**
    * The quality worker: each rating pass in flight shows in its folder's row
    * (from `passes`, or done/total for the folder_id when Go lists none). The
@@ -71,10 +61,6 @@ export interface LibraryProps {
   onConfirmRemove(id: string, confirmed: boolean): void
   onSettings(): void
   onHelp(): void
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  onRetryModel?(kind: ModelStatus['kind']): void
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  onToggleModel?(kind: ModelStatus['kind'], on: boolean): void
   onUndoToast(id: string): void
   onDismissToast(id: string): void
 }

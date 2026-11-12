@@ -170,7 +170,6 @@ export const scenarios: Scenario[] = [
   lib(105, 'One scanning, one queued', {
     // The first and third rows, so both are on screen at 960 × 600.
     folders: replace(SIX, scanning(LISBON, THUMBS), { ...KYOTO, state: 'queued' }),
-    scan: { folder: LISBON.name, progress: THUMBS },
   }),
   lib(106, 'Scan error row', {
     folders: replace(SIX, { ...KYOTO, state: 'error', error: 'Scan failed: Choix may not read this folder' }),
@@ -207,7 +206,6 @@ export const scenarios: Scenario[] = [
   lib(116, 'Folder spanning three months', { folders: [...SIX, THREE_MONTHS] }),
   lib(117, 'Scanning, previews not ready', {
     folders: [...SIX, scanning(HOKKAIDO, scanAt('metadata', 270, 980))],
-    scan: { folder: HOKKAIDO.name, progress: scanAt('metadata', 270, 980) },
   }),
   lib(118, 'Single folder', { folders: [DOLOMITES] }),
   lib(119, 'Folder with 0 photos', { folders: [EMPTY_CARD, DOLOMITES, KYOTO] }),
@@ -217,7 +215,6 @@ export const scenarios: Scenario[] = [
   // progress (the title bar shows none). The first three rows, on screen at 960 × 600.
   lib(123, 'Two folders scanning, one queued', {
     folders: replace(SIX, scanning(LISBON, THUMBS), scanning(DOLOMITES, scanAt('analyze', 38, 96)), { ...KYOTO, state: 'queued' }),
-    scan: { count: 2 },
   }),
   // The toolbar (the owner's round 2): search, filter and order. State 102 is the
   // toolbar at rest. A search matches names and locations: "is" finds Lisbon

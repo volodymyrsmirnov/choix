@@ -32,7 +32,6 @@ const props = (over: Partial<LibraryProps> = {}): LibraryProps => ({
   dropActive: false,
   toasts: [],
   selectedId: null,
-  scan: null,
   menuFor: null,
   removePrompt: null,
   quality: null,
@@ -85,13 +84,11 @@ test('nothing to say: the bar has no indicator slot and no divider', () => {
 
 test('scans show only in their rows, one or several', () => {
   const folders = [folder('a', 'Alpha', true), folder('b', 'Bravo', true)]
-  for (const scan of [{ folder: 'Alpha', progress }, { count: 2 }, null] as LibraryProps['scan'][]) {
-    const html = render({ folders, scan })
-    expect(bar(html)).not.toContain('data-testid="scan-progress"')
-    expect(bar(html)).not.toContain('Alpha')
-    expect(row(html, 'a')).toContain('Generating thumbnails')
-    expect(row(html, 'b')).toContain('Generating thumbnails')
-  }
+  const html = render({ folders })
+  expect(bar(html)).not.toContain('data-testid="scan-progress"')
+  expect(bar(html)).not.toContain('Alpha')
+  expect(row(html, 'a')).toContain('Generating thumbnails')
+  expect(row(html, 'b')).toContain('Generating thumbnails')
 })
 
 test('a rating pass shows in its folder’s row, with its own counts; never in the bar', () => {

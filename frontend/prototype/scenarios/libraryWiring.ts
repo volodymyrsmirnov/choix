@@ -20,7 +20,6 @@ export interface LibraryState {
   toasts?: ToastItem[]
   selectedId?: string | null
   forceRow?: { id: string; force: string }
-  scan?: LibraryProps['scan']
   quality?: QualityStatus | null
   menuFor?: string | null
   removePrompt?: string | null
@@ -55,7 +54,6 @@ export function libraryProps(ctx: ScenarioCtx, s: LibraryState): LibraryProps {
     toasts: toastsOf(state, s.toasts),
     selectedId: read(state, 'selectedId', s.selectedId ?? null),
     forceRow: s.forceRow,
-    scan: s.scan ?? null,
     quality: s.quality ?? null,
     menuFor: open(LIBRARY_OVERLAYS.menu, s.menuFor),
     removePrompt: open(LIBRARY_OVERLAYS.remove, s.removePrompt),

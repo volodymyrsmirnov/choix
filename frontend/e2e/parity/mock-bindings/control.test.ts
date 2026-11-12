@@ -92,11 +92,10 @@ test('the app-facing host hands out the ui record and the toasts, and tells list
   expect(c.uiHost.toasts()).toEqual([{ id: 'a', tone: 'info', title: 'Hello' }])
 })
 
-test('Catalog.QualityStatus answers the fixture\'s quality status, with the received and size Go still sends', async () => {
+test("Catalog.QualityStatus answers the fixture's quality status as it is", async () => {
   const quality = { enabled: true, state: 'scoring', active: true, done: 2, total: 9, rated: 5 } as ParityFixture['quality']
   await load({ route: '#/', quality })
-  const wire = { received: 0, size: 0, ...quality }
-  expect(await Catalog.QualityStatus()).toEqual(wire as never)
+  expect(await Catalog.QualityStatus()).toEqual(quality as never)
 })
 
 test("'pending' never resolves", async () => {

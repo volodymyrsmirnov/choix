@@ -22,7 +22,6 @@ var eventTypes = map[string]reflect.Type{
 	events.LibraryChanged: reflect.TypeFor[events.LibraryChangedEvent](),
 	events.ScanProgress:   reflect.TypeFor[events.ScanProgressEvent](),
 	events.ScanState:      reflect.TypeFor[events.ScanStateEvent](),
-	events.ModelsProgress: reflect.TypeFor[events.ModelStatus](),
 	events.QualityStatus:  reflect.TypeFor[events.Quality](),
 	events.FolderChanged:  reflect.TypeFor[events.FolderChangedEvent](),
 	events.MenuAction:     reflect.TypeFor[events.MenuActionEvent](),
@@ -121,8 +120,8 @@ func TestEvents_EveryNameRegistered(t *testing.T) {
 	for name := range registered {
 		t.Errorf("events.go registers %q, which is not in events.Names()", name)
 	}
-	if n := len(events.Names()); n != 7 {
-		t.Errorf("events.Names() has %d names; the shell registers 7", n)
+	if n := len(events.Names()); n != 6 {
+		t.Errorf("events.Names() has %d names; the shell registers 6", n)
 	}
 }
 

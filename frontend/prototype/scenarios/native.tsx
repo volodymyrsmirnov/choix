@@ -145,9 +145,6 @@ export const scenarios: Scenario[] = [
             folders: replace(SIX, s.folder),
             selectedId: s.folder.id,
             menuFor: s.folder.id,
-            ...(s.folder.state === 'scanning' && s.folder.scan
-              ? { scan: { folder: s.folder.name, progress: s.folder.scan } }
-              : {}),
           })}
         />
       ),

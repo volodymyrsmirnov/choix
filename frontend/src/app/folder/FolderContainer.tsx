@@ -20,7 +20,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { actionTitle } from '../../design/screens/focus/logic'
 import { filterClusters } from '../../design/screens/folder/filter'
 import { FolderScreen } from '../../design/screens/folder/FolderScreen'
-import type { FolderMenu, FolderProps } from '../../design/screens/folder/props'
+import type { FolderMenu } from '../../design/screens/folder/props'
 import type { FolderFilter } from '../../design/types'
 import { Library } from '../shell/api'
 import { useShell, useToastProps } from '../shell/context'
@@ -132,8 +132,7 @@ export function FolderContainer({ folderId }: { folderId: string }) {
 
   return (
     <FolderScreen
-      // No `grouping`: the design reads none (folderProps.ts FolderScreenProps).
-      {...(folderScreenProps({
+      {...folderScreenProps({
         folderId,
         snap,
         row: row.value,
@@ -167,7 +166,7 @@ export function FolderContainer({ folderId }: { folderId: string }) {
           onSettings: () => shell.actions.runAction('settings'),
           onHelp: () => shell.actions.runAction('shortcuts'),
         },
-      }) as FolderProps)}
+      })}
     />
   )
 }

@@ -5,7 +5,6 @@ export {
     FolderChangedEvent,
     LibraryChangedEvent,
     MenuActionEvent,
-    ModelStatus,
     Progress,
     Quality,
     QualityPass,

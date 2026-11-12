@@ -57,7 +57,6 @@ export interface FolderState {
   selected?: number
   hideRejected?: boolean
   quality?: boolean
-  grouping?: FolderProps['grouping']
   /** The quality worker's status, for the title bar's indicator. */
   qualityStatus?: QualityStatus | null
   reclustering?: boolean
@@ -96,7 +95,6 @@ export function folderProps(ctx: ScenarioCtx, s: FolderState): FolderProps {
       hide_rejected_photos: s.hideRejected ?? false,
       quality_rating: s.quality ?? true,
     },
-    grouping: s.grouping ?? 'visual',
     quality: s.qualityStatus ?? null,
     reclustering: s.reclustering ?? false,
     failedFiles: s.failedFiles ?? 0,
@@ -218,9 +216,10 @@ export const scenarios: Scenario[] = [
   folder(225, 'Read-only volume while open', { clusters: REVIEWED, folder: summaryOf(REVIEWED, ON_CARD), notice: 'read-only' }, NEW),
   folder(226, 'Picks missing their copies (notice)', { clusters: REVIEWED, picksMissing: 4 }, NEW),
   // Visual grouping off is the user's choice: the page shows no notice for
-  // it (kept as a state so parity proves the app shows none either). 216
-  // and 228, the notices of a model download, are retired.
-  folder(227, 'Visual grouping off (no notice)', { clusters: REVIEWED, grouping: 'time-off' }, NEW),
+  // it, so it draws as 203 does (kept as a state so parity proves the app
+  // shows none either: its fixture turns visual grouping off). 216 and 228,
+  // the notices of a model download, are retired.
+  folder(227, 'Visual grouping off (no notice)', { clusters: REVIEWED }, NEW),
   folder(
     229,
     'Title bar with quality indicator',

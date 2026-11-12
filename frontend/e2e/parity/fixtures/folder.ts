@@ -8,8 +8,8 @@
 //     'pending' while the state is still loading (200);
 //   - Library.List: the folder's row (the title bar's name and counts), as
 //     `scanning` with the run's progress when the state shows a scan;
-//   - Settings.Get: what makes the page group by time only (visual grouping
-//     off: GROUPING_SOURCE), hide rejected photos or leave out the badges;
+//   - Settings.Get: visual grouping off where the state is about it
+//     (TIME_ONLY), rejected photos hidden or the badges left out;
 //   - Catalog.QualityStatus when the title bar shows the quality worker (229);
 //   - the toasts of 222 and 223, seeded (the app's own re-cluster toasts
 //     leave after 4 s, which a comparison could outlast;
@@ -48,21 +48,10 @@ export function folderScenarioProps(n: number, list: Scenario[] = scenarios): Fo
 }
 
 /**
- * What Go reports for each way the page groups: the visual-grouping setting
- * (Settings.Get). The app passes no grouping (the design reads none), so
- * this only gives each scenario the settings it implies.
+ * The states whose Settings.Get answers visual grouping off (227). The page
+ * draws nothing from the setting, so such a state draws as its visual twin.
  */
-export const GROUPING_SOURCE: Record<'visual' | 'time-off', { visual_grouping: boolean }> = {
-  visual: { visual_grouping: true },
-  'time-off': { visual_grouping: false },
-}
-
-/** Go's report for the page's grouping; the scenarios use no other value. */
-function groupingSource(grouping: FolderProps['grouping']): { visual_grouping: boolean } {
-  const source = (GROUPING_SOURCE as Record<string, { visual_grouping: boolean } | undefined>)[grouping]
-  if (!source) throw new Error(`parity fixtures: no grouping source for "${grouping}"`)
-  return source
-}
+export const TIME_ONLY: ReadonlySet<number> = new Set([227])
 
 /** How Catalog.Recluster answers in the states that come from pressing Re-cluster. */
 export const RECLUSTER_CALLS: Record<number, 'pending' | AppErrorCause> = {
@@ -97,13 +86,12 @@ export function rowOf(p: FolderProps): FolderSummary {
 
 /** The Folder route of `p`'s folder with `p`'s data, as Go answers it. */
 export function folderFixture(p: FolderProps, n?: number): ParityFixture {
-  const source = groupingSource(p.grouping)
   const settings: SettingsBody = {
     ...DEFAULTS,
     picks_dir: p.picksDir,
     hide_rejected_photos: p.settings.hide_rejected_photos,
     quality_rating: p.settings.quality_rating,
-    visual_grouping: source.visual_grouping,
+    visual_grouping: n === undefined || !TIME_ONLY.has(n),
   }
   const recluster = n === undefined ? undefined : RECLUSTER_CALLS[n]
   return plain({

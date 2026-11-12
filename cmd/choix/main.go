@@ -86,7 +86,6 @@ func run() int {
 	app.RegisterService(application.NewService(rt.Library))
 	app.RegisterService(application.NewService(rt.Catalog))
 	app.RegisterService(application.NewService(rt.Settings))
-	app.RegisterService(application.NewService(rt.Models))
 	app.RegisterService(application.NewService(rt.System))
 	app.RegisterService(application.NewServiceWithOptions(rt.Media, application.ServiceOptions{Route: "/media"}))
 

@@ -189,8 +189,6 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
       ] as const) {
         expect([key, got[key]]).toEqual([key, p[key]])
       }
-      // The app passes no grouping: the design reads none (227 draws as 210 does).
-      expect('grouping' in got).toBe(false)
       for (const stop of stops) stop()
     })
   }
@@ -231,4 +229,12 @@ test('FOLDER_MEDIA gives each member the photo the scenario shows for it, and se
   const r = Bun.spawnSync(['bun', `${import.meta.dir}/fixtures/media.ts`])
   expect(r.exitCode).toBe(0)
   expect(JSON.parse(r.stdout.toString())).toEqual(MEDIA)
+})
+
+test("227's fixture answers visual grouping off, every other Folder state's answers it on; 227 draws as 203", () => {
+  for (const n of FOLDER_STATES) {
+    expect([n, (FOLDER[n]!.settings as SettingsBody).visual_grouping]).toEqual([n, n !== 227])
+  }
+  const html = (n: number) => renderToStaticMarkup(<FolderScreen {...folderScenarioProps(n)} />)
+  expect(html(227)).toBe(html(203))
 })

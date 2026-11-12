@@ -106,15 +106,8 @@ export interface FolderInputs {
   handlers: FolderHandlers
 }
 
-/**
- * The Folder screen's props, without `grouping`: the design reads it
- * nowhere (the page shows no notice for how its clusters were formed), so
- * the app passes none. The prop is still declared until the design drops it.
- */
-export type FolderScreenProps = Omit<FolderProps, 'grouping'>
-
-/** Every FolderScreenProps field, from its source. */
-export function folderScreenProps(i: FolderInputs): FolderScreenProps {
+/** Every FolderProps field, from its source. */
+export function folderScreenProps(i: FolderInputs): FolderProps {
   const data = i.snap.value
   const clusters = data?.clusters ?? null
   const devices = data?.devices ?? []

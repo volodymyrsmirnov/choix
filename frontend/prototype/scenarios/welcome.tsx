@@ -7,6 +7,7 @@
 import { ErrorScreen } from '../../src/design/screens/error/ErrorScreen'
 import { LibraryScreen } from '../../src/design/screens/library/LibraryScreen'
 import { DOLOMITES, LISBON, quality, replace, scanAt, scanning, SIX } from '../mock/data'
+import type { ScanProgress } from '../../src/design/types'
 import type { Scenario } from '../registry'
 import { libraryProps, type LibraryState } from './libraryWiring'
 
@@ -14,6 +15,8 @@ const TITLE_BAR = 'mockup-2026-11-11#s-a'
 
 /** What #40 shows as the error: a render error's message as WebKit words it. */
 export const RENDER_ERROR = "TypeError: undefined is not an object (evaluating 'cluster.members.length')"
+/** The run that stopped (32): Lisbon's job, at its last numbers. */
+export const STOPPED_RUN = scanAt('analyze', 141, 420, { state: 'stopped' })
 /** One rating pass (31): Dolomites (95 photos). */
 const ONE_PASS = quality({
   state: 'scoring',
@@ -36,8 +39,8 @@ const TWO_PASSES = quality({
 /** Where Reload leads in the prototype: the filled Library. */
 const RELOADED = 102
 
-const shell = (n: number, label: string, progress: Parameters<typeof scanAt>, extra: Partial<LibraryState> = {}): Scenario => {
-  const scan = scanAt(...progress)
+const shell = (n: number, label: string, progress: Parameters<typeof scanAt> | ScanProgress, extra: Partial<LibraryState> = {}): Scenario => {
+  const scan = Array.isArray(progress) ? scanAt(...progress) : progress
   return {
     n,
     group: 'welcome',
@@ -48,9 +51,8 @@ const shell = (n: number, label: string, progress: Parameters<typeof scanAt>, ex
     render: (ctx) => (
       <LibraryScreen
         {...libraryProps(ctx, {
+          // The screen draws the run in its row, from folders.
           folders: replace(SIX, scan.state === 'running' ? scanning(LISBON, scan) : { ...LISBON, state: 'error', error: 'Scan stopped. Rescan to finish it.' }),
-          // What Go reports of the run (the screen draws it in the row, from folders).
-          scan: { folder: LISBON.name, progress: scan },
           ...extra,
         })}
       />
@@ -68,7 +70,7 @@ export const scenarios: Scenario[] = [
     subject: '[data-folder="dolomites"]',
     render: (ctx) => <LibraryScreen {...libraryProps(ctx, { folders: SIX, quality: ONE_PASS })} />,
   },
-  shell(32, 'Scan stopped, in its row', ['analyze', 141, 420, { state: 'stopped' }]),
+  shell(32, 'Scan stopped, in its row', STOPPED_RUN),
   shell(33, 'Scan: reading metadata', ['metadata', 204, 420]),
   shell(34, 'Scan: thumbnails', ['thumb', 325, 420, { failed: 7 }]),
   shell(35, 'Scan: analyzing', ['analyze', 271, 420]),

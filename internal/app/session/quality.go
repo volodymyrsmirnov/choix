@@ -89,8 +89,7 @@ func NewQualityTracker(o QualityOptions) *QualityTracker {
 //     logged; its photos stay pending).
 //
 // Active is true for waiting and scoring. Rated counts the photos the passes
-// dealt with since the tracker was made; it only grows. Received, Size and
-// Error are never set.
+// dealt with since the tracker was made; it only grows.
 func (t *QualityTracker) Status() events.Quality {
 	busy := t.o.Busy != nil && t.o.Busy()
 
@@ -262,8 +261,7 @@ func (t *QualityTracker) publish(force bool) {
 // qualityEqual reports whether a and b are the same status.
 func qualityEqual(a, b events.Quality) bool {
 	return a.Enabled == b.Enabled && a.State == b.State && a.Active == b.Active &&
-		a.Received == b.Received && a.Size == b.Size && a.Done == b.Done && a.Total == b.Total &&
-		a.Rated == b.Rated && a.Error == b.Error && a.FolderID == b.FolderID &&
+		a.Done == b.Done && a.Total == b.Total && a.Rated == b.Rated && a.FolderID == b.FolderID &&
 		slices.Equal(a.Passes, b.Passes)
 }
 
@@ -279,7 +277,7 @@ func qualityProgressOnly(a, b events.Quality) bool {
 			return false
 		}
 	}
-	a.Received, a.Size, a.Done, a.Total, a.Rated = b.Received, b.Size, b.Done, b.Total, b.Rated
+	a.Done, a.Total, a.Rated = b.Done, b.Total, b.Rated
 	a.Passes = b.Passes
 	return qualityEqual(a, b)
 }

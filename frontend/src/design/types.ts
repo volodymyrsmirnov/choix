@@ -64,28 +64,16 @@ export type QualityState =
   | 'waiting'
   | 'scoring'
   | 'idle'
-  /** @deprecated removed in phase B */
-  | 'downloading'
-  /** @deprecated removed in phase B */
-  | 'download_failed'
-  /** @deprecated removed in phase B */
-  | 'error'
 export interface QualityStatus {
   enabled: boolean
   state: QualityState
   // Keep polling while true: work is in flight or queued, or a scan is
   // running that will hand the worker photos.
   active: boolean
-  /** @deprecated removed in phase B */
-  received?: number
-  /** @deprecated removed in phase B */
-  size?: number
   done: number     // photos rated in the current pass
   total: number
   // Photos dealt with since choix started; only grows.
   rated: number
-  /** @deprecated removed in phase B */
-  error?: string
   // The folder of the pass that done/total describe (the latest begun);
   // absent when no pass runs.
   folder_id?: string
@@ -147,15 +135,6 @@ export interface FolderSummary {
    * own literals compile until the binding carries it.
    */
   added_at?: number
-}
-
-/** @deprecated removed in phase B: nothing is downloaded and nothing renders it. */
-export interface ModelStatus {
-  kind: 'clip' | 'quality'
-  state: 'disabled' | 'queued' | 'downloading' | 'failed' | 'ready'
-  received: number
-  size: number
-  error?: string
 }
 
 export type ScreenId = 'library' | 'folder' | 'focus' | 'compare' | 'settings'

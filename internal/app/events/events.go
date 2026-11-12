@@ -17,7 +17,6 @@ const (
 	LibraryChanged = "library:changed"
 	ScanProgress   = "scan:progress"
 	ScanState      = "scan:state"
-	ModelsProgress = "models:progress"
 	QualityStatus  = "quality:status"
 	FolderChanged  = "folder:changed"
 	MenuAction     = "menu:action"
@@ -28,8 +27,7 @@ const (
 func Names() []string {
 	return []string{
 		LibraryChanged, ScanProgress, ScanState,
-		ModelsProgress, QualityStatus,
-		FolderChanged, MenuAction,
+		QualityStatus, FolderChanged, MenuAction,
 	}
 }
 
@@ -42,29 +40,17 @@ type Progress struct {
 	State  string `json:"state"` // running | stopped
 }
 
-// ModelStatus is the download state of one model (design type ModelStatus).
-type ModelStatus struct {
-	Kind     string `json:"kind"`  // clip | quality
-	State    string `json:"state"` // disabled | queued | downloading | failed | ready
-	Received int64  `json:"received"`
-	Size     int64  `json:"size"` // 0 while unknown
-	Error    string `json:"error,omitempty"`
-}
-
 // Quality is a snapshot of the quality worker (design type QualityStatus,
 // v1's quality.Status with the same state names). Up to two folder jobs run
 // at once, so up to two rating passes: Passes lists each with its folder,
 // and Done, Total and FolderID describe the latest one begun.
 type Quality struct {
-	Enabled  bool   `json:"enabled"`
-	State    string `json:"state"`
-	Active   bool   `json:"active"`
-	Received int64  `json:"received"`
-	Size     int64  `json:"size"`
-	Done     int    `json:"done"`
-	Total    int    `json:"total"`
-	Rated    int    `json:"rated"`
-	Error    string `json:"error,omitempty"`
+	Enabled bool   `json:"enabled"`
+	State   string `json:"state"`
+	Active  bool   `json:"active"`
+	Done    int    `json:"done"`
+	Total   int    `json:"total"`
+	Rated   int    `json:"rated"`
 	// FolderID is the folder of the pass Done and Total describe; empty
 	// when no pass runs.
 	FolderID string `json:"folder_id,omitempty"`

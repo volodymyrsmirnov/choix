@@ -21,7 +21,8 @@ import (
 // the HTTP test fixtures), and the downloaded models with everything that
 // existed only for them (the built-in grouping and quality spec, §7: the
 // ONNX Runtime package, the inference engine, the session's inference turn,
-// the model download manager, and the build-time fetch and export scripts).
+// the models binding with its download manager, and the build-time fetch
+// and export scripts).
 var retiredPaths = []string{
 	"internal/cli",
 	"internal/server",
@@ -34,7 +35,7 @@ var retiredPaths = []string{
 	"internal/ai/local",
 	"internal/app/inference",
 	"internal/app/session/inference.go",
-	"internal/app/models/manager.go",
+	"internal/app/models",
 	"build/onnxruntime",
 	"build/quality-model",
 }

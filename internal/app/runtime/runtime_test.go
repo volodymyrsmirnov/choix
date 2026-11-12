@@ -142,9 +142,6 @@ func TestRuntime_EventsOnTheWire(t *testing.T) {
 	if progress == 0 {
 		t.Error("no scan:progress for the folder")
 	}
-	if n := h.em.count(events.ModelsProgress); n != 0 {
-		t.Errorf("models:progress events = %d; want none (nothing is downloaded)", n)
-	}
 }
 
 // Switching visual grouping on queues a backfill of every reachable folder,
@@ -992,12 +989,6 @@ func TestRuntime_BindingsAfterShutdownAreUnavailable(t *testing.T) {
 
 	if _, err := r.Library.List(); !isUnavailable(err) {
 		t.Errorf("Library.List = %v; want unavailable", err)
-	}
-	if _, err := r.Models.Status(); !isUnavailable(err) {
-		t.Errorf("Models.Status = %v; want unavailable", err)
-	}
-	if _, err := r.Models.Quality(); !isUnavailable(err) {
-		t.Errorf("Models.Quality = %v; want unavailable", err)
 	}
 	if _, err := r.Catalog.QualityStatus(); !isUnavailable(err) {
 		t.Errorf("Catalog.QualityStatus = %v; want unavailable", err)

@@ -15,7 +15,6 @@ declare module "@wailsio/runtime" {
             "folder:changed": events$0.FolderChangedEvent;
             "library:changed": events$0.LibraryChangedEvent;
             "menu:action": events$0.MenuActionEvent;
-            "models:progress": events$0.ModelStatus;
             "quality:status": events$0.Quality;
             "scan:progress": events$0.ScanProgressEvent;
             "scan:state": events$0.ScanStateEvent;

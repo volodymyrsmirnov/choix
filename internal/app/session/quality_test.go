@@ -134,7 +134,8 @@ func TestStatus_Scoring(t *testing.T) {
 		FolderID: "F", Passes: []events.QualityPass{{FolderID: "F", Done: 1, Total: 4}}})
 }
 
-// The quality status has no download and no error state: with the setting
+// The quality status has no download and no error state (the payload has
+// no field for either): with the setting
 // on it is idle, scoring while a pass runs, idle again after a pass whatever
 // error ended it, and disabled with the setting off.
 func TestTracker_NoDownloadOrErrorStates(t *testing.T) {
@@ -147,11 +148,7 @@ func TestTracker_NoDownloadOrErrorStates(t *testing.T) {
 		FolderID: "F", Passes: []events.QualityPass{{FolderID: "F", Done: 1, Total: 3}}})
 
 	end(1, fmt.Errorf("quality: rate file 3: %w", errors.New("SetQuality: database is locked")))
-	got := e.tr.Status()
-	assertQuality(t, got, events.Quality{Enabled: true, State: "idle", Rated: 1})
-	if got.Error != "" {
-		t.Fatalf("error text = %q; want none", got.Error)
-	}
+	assertQuality(t, e.tr.Status(), events.Quality{Enabled: true, State: "idle", Rated: 1})
 
 	e.set(func(e *qualityTestEnv) { e.enabled = false })
 	assertQuality(t, e.tr.Status(), events.Quality{Enabled: false, State: "disabled", Rated: 1})

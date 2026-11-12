@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { FolderProps } from '../../design/screens/folder/props'
 import { FolderScreen } from '../../design/screens/folder/FolderScreen'
 import type { Cluster, FolderSummary, SettingsBody } from '../../design/types'
 import type { FolderSnapshot } from './folderStore'
@@ -142,7 +141,7 @@ describe('folderProps', () => {
 
   test('the screen renders its title bar first, uncovered (the window drags by it)', () => {
     for (const snap of [snapshot(), snapshot({ status: 'loading', value: undefined }), snapshot({ notice: 'offline' })]) {
-      const html = renderToStaticMarkup(<FolderScreen {...(folderScreenProps(inputs({ snap })) as FolderProps)} />)
+      const html = renderToStaticMarkup(<FolderScreen {...folderScreenProps(inputs({ snap }))} />)
       // The screen's root, then the title bar as its first child: nothing wraps or precedes it.
       expect(html).toMatch(/^<div class="relative flex flex-col h-full min-h-0"><header[^>]*data-titlebar/)
       // Nothing positioned over the window (a full-size overlay would take the mouse-down).

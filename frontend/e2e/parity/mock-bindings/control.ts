@@ -192,16 +192,6 @@ export const emit = control.emit
 export const answer = control.answer
 export const act = control.act
 
-/**
- * The quality snapshot as Go sends it: the fixture's (the design's
- * QualityStatus) with `received` and `size` at 0, the fields Go's
- * events.Quality still carries, unused, until they are deleted and the
- * bindings regenerated; this goes with them.
- */
-export function wireQuality<Q extends object>(q: Q | undefined): (Q & { received: number; size: number }) | undefined {
-  return q === undefined ? undefined : { received: 0, size: 0, ...q }
-}
-
 /** A binding that only acts: it answers at once. */
 export function done(): CancellablePromise<void>
 export function done<T>(value: T): CancellablePromise<T>

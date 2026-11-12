@@ -15,7 +15,6 @@ func init() {
 	application.RegisterEvent[events.LibraryChangedEvent](events.LibraryChanged)
 	application.RegisterEvent[events.ScanProgressEvent](events.ScanProgress)
 	application.RegisterEvent[events.ScanStateEvent](events.ScanState)
-	application.RegisterEvent[events.ModelStatus](events.ModelsProgress)
 	application.RegisterEvent[events.Quality](events.QualityStatus)
 	application.RegisterEvent[events.FolderChangedEvent](events.FolderChanged)
 	application.RegisterEvent[events.MenuActionEvent](events.MenuAction)

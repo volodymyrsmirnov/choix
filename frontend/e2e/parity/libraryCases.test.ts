@@ -95,15 +95,9 @@ describe('each step stands for the scenario prop the fixture cannot carry, and o
       expect(p.openMenu ?? null).toBe(s.menu ?? null)
       // No state of these groups shows a replica: the app opens the native menu and alert.
       expect([p.menuFor, p.removePrompt]).toEqual([null, null])
-      const named = p.scan && !('count' in p.scan) ? p.scan : null
+      // A stopped run shows in its row: the case's error text, on a folder in the error state.
       if (s.stopRun !== undefined) {
-        expect(named?.progress.state).toBe('stopped')
-        expect(p.folders?.find((f) => f.name === named?.folder)).toMatchObject({ state: 'error', error: s.stopRun })
-      } else if (named) {
-        expect(named.progress.state).toBe('running')
-      } else if (p.scan && 'count' in p.scan) {
-        // Several jobs are counted: exactly that many rows are scanning.
-        expect(p.folders?.filter((f) => f.state === 'scanning').length).toBe(p.scan.count)
+        expect(p.folders?.find((f) => f.state === 'error')).toMatchObject({ error: s.stopRun })
       }
     })
   }
@@ -140,13 +134,11 @@ describe("the app's stores, fed the fixture, show the scenario's data", () => {
       expect(view.folders).toEqual(p.folders)
       // The screen the scenario draws: loading only while the list is (111), the drop zone with no folders.
       expect(view.screen).toBe(p.folders === null ? 'loading' : p.folders.length === 0 ? 'empty' : 'timeline')
-      // The title bar draws no scan any more (p.scan is deprecated, not drawn): the rows carry it.
+      // The title bar draws no scan: the rows carry it.
       expect('scan' in view).toBe(false)
       expect(fixture.quality ?? null).toEqual(p.quality)
-      // What the store holds is that snapshot, with the received and size Go
-      // still sends until events.Quality drops them (mock-bindings/control.ts wireQuality).
-      const { received: _r, size: _s, ...held } = quality.get().value ?? { received: 0, size: 0 }
-      expect(quality.get().value === undefined ? null : held).toEqual(p.quality)
+      // What the store holds is that snapshot.
+      expect(quality.get().value ?? null).toEqual(p.quality)
       expect(fixture.toasts ?? []).toEqual(p.toasts)
       for (const s of stops) s()
     })

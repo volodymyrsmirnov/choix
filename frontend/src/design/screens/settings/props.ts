@@ -1,4 +1,4 @@
-import type { ModelStatus, QualityStatus, SettingsBody, ToastItem } from '../../types'
+import type { QualityStatus, SettingsBody, ToastItem } from '../../types'
 
 /** Overlay ids Settings registers; each is also the key that opens it. */
 export const SETTINGS_OVERLAYS = {
@@ -47,10 +47,6 @@ export interface SettingsProps {
   saving: boolean
   /** The quality worker (saved setting), for the status line under the switch. */
   quality: QualityStatus | null
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  retrying?: boolean
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  models?: ModelStatus[]
   /** The "Discard unsaved changes?" prompt is open. */
   leavePrompt: boolean
   toasts: ToastItem[]
@@ -73,10 +69,6 @@ export interface SettingsProps {
   onHelp(): void
   /** Load again after a failed load. */
   onReload(): void
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  onRetryQuality?(): void
-  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
-  onRetryModel?(kind: ModelStatus['kind']): void
   /** The leave prompt's answer: true discards the edits and leaves. */
   onConfirmLeave(leave: boolean): void
   onUndoToast(id: string): void

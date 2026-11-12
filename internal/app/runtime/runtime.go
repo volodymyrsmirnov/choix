@@ -37,7 +37,6 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/app/media"
-	"github.com/volodymyrsmirnov/choix/internal/app/models"
 	"github.com/volodymyrsmirnov/choix/internal/app/opgate"
 	"github.com/volodymyrsmirnov/choix/internal/app/session"
 	"github.com/volodymyrsmirnov/choix/internal/app/settings"
@@ -108,14 +107,11 @@ type Deps struct {
 
 // Runtime holds the app's cores and the bindings over them. The exported
 // fields are the frontend bindings and the media handler; they are set by
-// New and never change. Models is the compatibility shim of the Models
-// binding (internal/app/models), kept until the app code reads the quality
-// status from Catalog.QualityStatus.
+// New and never change.
 type Runtime struct {
 	Library  *library.Service
 	Catalog  *catalog.Service
 	Settings *settings.Service
-	Models   *models.Service
 	System   *system.Service
 	Media    *media.Handler
 
@@ -284,7 +280,6 @@ func New(d Deps) (*Runtime, error) {
 	})
 	r.Catalog = catalog.NewService(r.catalog, r.quality.Status, r.gate)
 	r.Settings = settings.NewService(r.settings, settings.Hooks{Recluster: r.reclusterOpen}, r.gate)
-	r.Models = models.NewService(r.quality.Status, r.gate)
 	r.System = system.NewService(system.Deps{
 		Library:     r.lib,
 		Sessions:    r.sessions,

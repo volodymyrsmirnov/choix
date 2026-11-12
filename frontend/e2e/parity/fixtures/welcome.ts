@@ -13,7 +13,7 @@
 // with no folders (what is under the error does not show)
 // and the scenario's error text in `ui`, under the key the case names
 // (errorScreen.ts, cases.ts).
-import { RENDER_ERROR, scenarios } from '../../../prototype/scenarios/welcome'
+import { RENDER_ERROR, scenarios, STOPPED_RUN } from '../../../prototype/scenarios/welcome'
 import type { FolderSummary } from '../../../src/design/types'
 import { ERROR_SCREEN_STATE, RENDER_ERROR_KEY } from '../errorScreen'
 import type { ParityFixture } from '../mock-bindings/control'
@@ -22,15 +22,14 @@ import { libraryFixture, scenarioProps } from './library'
 /** The state whose run stopped (32). */
 const STOPPED_STATE = 32
 
-/** State 32's folders as Go lists them before the job fails: the stopped row still scanning. */
+/** State 32's folders as Go lists them before the job fails: the stopped row (its one error row) still scanning. */
 function beforeStop(): FolderSummary[] {
   const p = scenarioProps(scenarios, STOPPED_STATE)
-  if (!p.folders || !p.scan || 'count' in p.scan) throw new Error(`parity fixtures: #${STOPPED_STATE} shows no stopped run`)
-  const { folder, progress } = p.scan
+  if (p.folders?.filter((f) => f.state === 'error').length !== 1) throw new Error(`parity fixtures: #${STOPPED_STATE} shows no stopped run`)
   return p.folders.map((f) => {
-    if (f.name !== folder) return f
+    if (f.state !== 'error') return f
     const { error: _text, ...row } = f
-    return { ...row, state: 'scanning', scan: { ...progress, state: 'running' } }
+    return { ...row, state: 'scanning', scan: { ...STOPPED_RUN, state: 'running' } }
   })
 }
 
