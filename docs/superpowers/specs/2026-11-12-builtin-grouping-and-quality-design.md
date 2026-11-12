@@ -170,7 +170,7 @@ func (a *Analyzer) Analyze(ctx context.Context, fileID int64, previewPath string
 - Outcomes, each ending with the file `analyzed` unless noted:
   - print made: store it with `PrintID`;
   - no printer, or the printer answers `ErrPrintsOff` (checked before any other error): store nothing, leave the row unstamped, so the file is pending when grouping is switched on;
-  - Vision could not read the image (`platform.ErrUnreadableImage`, the file's own fault): store a NULL print **stamped with `PrintID`**, so the file is not retried on every job, and log it;
+  - Vision could not read the image (`platform.ErrUnreadableImage`, the file's own fault), or returned a vector rejected above: store a NULL print **stamped with `PrintID`**, so the file is not retried on every job, and log it;
   - any other Vision error (the framework's fault, possibly transient): store nothing, leave the row unstamped and log it; the file is tried again by the next job's backfill;
   - cancelled, or the folder is unreachable: leave the row as it was; an unreachable folder is `pipeline.ErrFolderUnavailable`, as today;
   - the preview cannot be read while the folder is reachable: the file is `failed` with the error text, as today.

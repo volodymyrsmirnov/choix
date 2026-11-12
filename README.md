@@ -72,8 +72,8 @@ discover → metadata → thumb → analyze → cluster
 3. **thumb** — makes 256 px (grid) and 1600 px (Focus) JPEGs. RAW files (RAF,
    DNG) use the JPEG preview embedded by the camera; videos get five keyframes.
 4. **analyze** — computes an image feature print per file with Apple's Vision
-   framework, on the device, from the 1600 px preview (when visual grouping is
-   on).
+   framework, on the device, from the 1600 px preview, or from the 256 px
+   thumbnail of a file that has no preview (when visual grouping is on).
 5. **cluster** — sorts by `(device, capture time)`, splits into time buckets at
    the gap threshold, then sub-clusters each bucket by how alike the feature
    prints are (complete-link: every shot in a cluster is close to every other).
