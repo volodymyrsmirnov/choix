@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/app/runtime"
@@ -67,6 +68,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/bookmark"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/vision"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/volumes"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/workspace"
 	"github.com/volodymyrsmirnov/choix/internal/rawpreview"
@@ -473,7 +475,6 @@ type uat struct {
 	picker   *uatPicker
 	r        *runtime.Runtime
 	limit    int
-	clip     bool            // CLIP model present and ONNX Runtime usable
 	stills   platform.Stills // the real ImageIO reader, shared with the runtime
 	stopped  chan struct{}
 	stopOnce sync.Once
@@ -715,15 +716,14 @@ func (u *uat) setup(t *testing.T) {
 	} else {
 		u.logf("onnxruntime: %s", v)
 	}
-	u.clip = present[local.ModelCLIP] && ort
-
 	// A model that is absent, or cannot run, has its setting off: nothing
-	// tries to download it.
+	// tries to download it. Visual grouping needs no model: its feature
+	// prints come from Vision.
 	cfg, err := config.Load()
 	if err != nil {
 		u.fatalf("load the settings: %v", err)
 	}
-	cfg.VisualGrouping = u.clip
+	cfg.VisualGrouping = true
 	cfg.QualityRating = present[local.ModelQuality] && ort
 	if err := config.Save(cfg); err != nil {
 		u.fatalf("save the settings: %v", err)
@@ -735,6 +735,7 @@ func (u *uat) setup(t *testing.T) {
 		Workspace:  workspace.New(),
 		Stills:     u.stills,
 		Video:      avmedia.New(),
+		Vision:     vision.New(),
 		Downloader: diskModels{models: local.NewModelStore(linked)},
 		Emit:       u.rec,
 		Picker:     u.picker,
@@ -1003,7 +1004,9 @@ func (u *uat) checkFiles(label, root string) checkResult {
 	_ = trows.Close()
 
 	embedded := map[int64]bool{}
-	erows, err := db.QueryContext(ctx, `SELECT file_id FROM ai_signals WHERE clip_embedding IS NOT NULL AND length(clip_embedding) > 0`)
+	erows, err := db.QueryContext(ctx, `SELECT file_id FROM ai_signals
+		WHERE vision_print IS NOT NULL AND length(vision_print) = ? AND vision_print_id = ?`,
+		platform.FeaturePrintLen*4, analyze.PrintID)
 	if err != nil {
 		u.fatalf("%s: query ai_signals: %v", label, err)
 	}
@@ -1107,12 +1110,8 @@ func (u *uat) checkFiles(label, root string) checkResult {
 	if res.clusters == 0 {
 		u.errorf("%s: no clusters", label)
 	}
-	if u.clip {
-		if nonFailed > 0 && withEmbedding*100 < nonFailed*99 {
-			u.errorf("%s: %d of %d non-failed files have an embedding; want at least 99%%", label, withEmbedding, nonFailed)
-		}
-	} else {
-		u.logf("%s: embedding check skipped (no CLIP)", label)
+	if nonFailed > 0 && withEmbedding*100 < nonFailed*99 {
+		u.errorf("%s: %d of %d non-failed files have a feature print; want at least 99%%", label, withEmbedding, nonFailed)
 	}
 	// One camera must be one device. Two bodies of one model (two serials)
 	// are two devices by design; see splitCameras.

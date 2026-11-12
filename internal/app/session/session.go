@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -25,7 +24,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/apperr"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/config"
@@ -65,14 +64,14 @@ func init() {
 }
 
 // Deps are what sessions are built from. Settings returns the live
-// machine-wide settings; Embedder is the app's shared CLIP session (owned
-// and closed elsewhere) and may be nil.
+// machine-wide settings; Vision makes the feature prints of visual grouping
+// and may be nil (no print is made; the runtime always sets it).
 type Deps struct {
 	Library  *library.Library
 	Settings func() config.Config
 	Stills   platform.Stills
 	Video    platform.Video
-	Embedder local.Embedder
+	Vision   platform.Vision
 }
 
 // The folder's working directory and database, relative to its root.
@@ -214,22 +213,20 @@ func sessionRootReachable(root string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// errSessionVisualGroupingOff is what the analyze stage's embedder answers while
-// visual grouping is off: the file is analyzed without an embedding.
-var errSessionVisualGroupingOff = errors.New("session: visual grouping is off")
-
-// sessionGatedEmbedder embeds only while the live visual_grouping setting is
-// on.
-type sessionGatedEmbedder struct {
-	inner    local.Embedder
+// sessionPrinter is the analyze stage's printer: the feature print of a
+// preview through Vision, made only while the live visual_grouping setting
+// is on (read for every file). Off, it answers analyze.ErrPrintsOff, so the
+// file is analyzed without a print and stays pending for one.
+type sessionPrinter struct {
+	vision   platform.Vision
 	settings func() config.Config
 }
 
-func (e *sessionGatedEmbedder) Embed(img image.Image) ([]float32, error) {
-	if !e.settings().VisualGrouping {
-		return nil, errSessionVisualGroupingOff
+func (p *sessionPrinter) Print(ctx context.Context, path string) ([]float32, error) {
+	if !p.settings().VisualGrouping {
+		return nil, analyze.ErrPrintsOff
 	}
-	return e.inner.Embed(img)
+	return p.vision.FeaturePrint(ctx, platform.ImageInput{Path: path})
 }
 
 // openSession makes the checks of a session open on root, already accessed

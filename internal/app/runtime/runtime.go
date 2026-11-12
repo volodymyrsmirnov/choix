@@ -93,14 +93,16 @@ const (
 // Deps are what the runtime is built from: the platform, the model
 // downloader, the frontend's event sink, the native dialogs and menu and the
 // window's title bar.
-// Bookmarks, Volumes, Workspace, Stills, Video, Downloader, Picker and
-// Confirm are required.
+// Bookmarks, Volumes, Workspace, Stills, Video, Vision, Downloader, Picker
+// and Confirm are required.
 type Deps struct {
 	Bookmarks platform.Bookmarks
 	Volumes   platform.Volumes
 	Workspace platform.Workspace
 	Stills    platform.Stills
 	Video     platform.Video
+	// Vision makes the feature prints of visual grouping.
+	Vision platform.Vision
 
 	Downloader models.Downloader
 	// Emit receives every event for the frontend; nil sends none. If it also
@@ -120,10 +122,6 @@ type Deps struct {
 	// CPUOnly lists the models that skip the CoreML execution provider (nil:
 	// the defaults of local.SessionOptions).
 	CPUOnly map[local.ModelKind]bool
-
-	// Embedder replaces the inference engine's CLIP session (tests inject a
-	// fake). nil: the engine's.
-	Embedder local.Embedder
 }
 
 // Runtime holds the app's cores and the bindings over them. The exported
@@ -253,16 +251,12 @@ func New(d Deps) (*Runtime, error) {
 	})
 
 	r.engine = inference.New(local.NewModelStore(appdir.Models()), d.CPUOnly)
-	embedder := d.Embedder
-	if embedder == nil {
-		embedder = r.engine.Embedder(func() bool { return r.settings.Get().VisualGrouping })
-	}
 	r.sessions = session.NewManager(session.Deps{
 		Library:  r.lib,
 		Settings: r.settings.Get,
 		Stills:   d.Stills,
 		Video:    d.Video,
-		Embedder: embedder,
+		Vision:   d.Vision,
 	})
 
 	r.quality = session.NewQualityTracker(session.QualityOptions{
@@ -274,7 +268,6 @@ func New(d Deps) (*Runtime, error) {
 	job := session.NewJob(session.JobOptions{
 		Sessions: r.sessions,
 		Settings: r.settings.Get,
-		Models:   r.models,
 		Quality:  r.quality,
 		Emit:     r.coalescer,
 		AfterJob: r.afterJob,
@@ -346,6 +339,8 @@ func checkDeps(d Deps) error {
 		missing = "Stills"
 	case d.Video == nil:
 		missing = "Video"
+	case d.Vision == nil:
+		missing = "Vision"
 	case d.Downloader == nil:
 		missing = "Downloader"
 	case d.Picker == nil:

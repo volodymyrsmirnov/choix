@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/config"
 	"github.com/volodymyrsmirnov/choix/internal/picks"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
+	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -47,7 +49,8 @@ func sessionTestStillProps(captured time.Time) map[string]any {
 }
 
 // sessionTestInsertAnalyzed inserts an analyzed photo row captured at
-// captured, with emb as its CLIP embedding when not nil.
+// captured, with emb as its feature print (stamped analyze.PrintID) when not
+// nil.
 func sessionTestInsertAnalyzed(t *testing.T, st *store.Store, rel string, captured time.Time, emb []float32) int64 {
 	t.Helper()
 	id, err := st.Files().Insert(store.File{Path: rel, Size: 1, Mtime: 1, ContentHash: "h-" + rel, Kind: "photo", Format: "jpeg", ScanStatus: "analyzed"})
@@ -59,15 +62,17 @@ func sessionTestInsertAnalyzed(t *testing.T, st *store.Store, rel string, captur
 		captured.Unix(), id); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.AISignals().Upsert(store.AISignals{FileID: id, Embedding: emb}); err != nil {
-		t.Fatal(err)
+	if emb != nil {
+		if err := st.AISignals().UpsertPrint(id, emb, analyze.PrintID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return id
 }
 
-// sessionTestUnit returns a 512-dim unit vector along axis i.
+// sessionTestUnit returns a feature-print-long unit vector along axis i.
 func sessionTestUnit(i int) []float32 {
-	v := make([]float32, 512)
+	v := make([]float32, platform.FeaturePrintLen)
 	v[i] = 1
 	return v
 }
@@ -114,8 +119,56 @@ func sessionTestWaitErr(t *testing.T, errc <-chan error) error {
 
 func TestClusterParams(t *testing.T) {
 	cfg := config.Defaults()
-	if got, want := ClusterParams(cfg), "b=600;t=0.9200;x=false;v=true"; got != want {
+	if got, want := ClusterParams(cfg), "b=600;t=0.9000;x=false;v=true;m=vnfp-r2/fill/preview/v1+complete"; got != want {
 		t.Fatalf("ClusterParams(defaults) = %q; want %q", got, want)
+	}
+}
+
+// TestEnsureClustered_OldParamsRecluster: a folder clustered by an earlier
+// build (its params have no method, and another similarity) re-clusters by
+// itself when it is opened, and keeps every pick.
+func TestEnsureClustered_OldParamsRecluster(t *testing.T) {
+	h := newSessionTestHarness(t, sessionTestOptions{})
+	id, _ := h.folder(t, "old")
+	s, release := h.acquire(t, id)
+	defer release()
+	ctx := context.Background()
+	var ids []int64
+	for i := range 3 {
+		ids = append(ids, sessionTestInsertAnalyzed(t, s.Store, string(rune('a'+i))+".jpg",
+			sessionTestDay.Add(time.Duration(i)*time.Second), nil))
+	}
+	picked := []store.Pick{
+		{FileID: ids[0], State: "picked", PickedAt: 100, Rating: sql.NullInt64{Int64: 4, Valid: true}},
+		{FileID: ids[2], State: "rejected", PickedAt: 200},
+	}
+	for _, p := range picked {
+		if err := s.Store.Picks().Upsert(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Store.KV().Set(sessionKVClusterParams, "b=600;t=0.9200;x=false;v=true"); err != nil {
+		t.Fatal(err)
+	}
+
+	reclustered, err := s.EnsureClustered(ctx, h.settings.get)
+	if err != nil || !reclustered {
+		t.Fatalf("EnsureClustered = %v, %v; want true", reclustered, err)
+	}
+	if got, want := sessionTestStoredParams(t, s.Store), ClusterParams(h.settings.get()); got != want {
+		t.Fatalf("stored params = %q; want %q", got, want)
+	}
+	if n := sessionTestClusterCount(t, s.Store); n != 1 {
+		t.Fatalf("clusters = %d; want 1 (one time bucket, no prints yet)", n)
+	}
+	for _, want := range picked {
+		got, err := s.Store.Picks().Get(want.FileID)
+		if err != nil || got != want {
+			t.Fatalf("pick of %d = %+v, %v; want %+v", want.FileID, got, err, want)
+		}
+	}
+	if again, err := s.EnsureClustered(ctx, h.settings.get); err != nil || again {
+		t.Fatalf("second EnsureClustered = %v, %v; want false", again, err)
 	}
 }
 
@@ -264,7 +317,7 @@ func TestClusterer_OlderRunCannotOverwriteNewer(t *testing.T) {
 	}
 }
 
-func TestClusterer_VisualGroupingOffIgnoresEmbeddings(t *testing.T) {
+func TestClusterer_VisualGroupingOffIgnoresPrints(t *testing.T) {
 	h := newSessionTestHarness(t, sessionTestOptions{})
 	id, _ := h.folder(t, "visual")
 	s, release := h.acquire(t, id)
@@ -278,7 +331,7 @@ func TestClusterer_VisualGroupingOffIgnoresEmbeddings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := sessionTestClusterCount(t, s.Store); n != 3 {
-		t.Fatalf("visual clusters = %d; want 3 (three unrelated embeddings)", n)
+		t.Fatalf("visual clusters = %d; want 3 (three unrelated prints)", n)
 	}
 
 	p, _ := s.NewPipeline(h.settings.get) // built with visual grouping on
@@ -353,9 +406,9 @@ func TestPicksDir_OrphanDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestNewPipeline_VisualGroupingOffComputesNoEmbeddings(t *testing.T) {
-	emb := &sessionTestEmbedder{}
-	h := newSessionTestHarness(t, sessionTestOptions{embedder: emb})
+func TestNewPipeline_VisualGroupingOffComputesNoPrints(t *testing.T) {
+	vis := &platformtest.Vision{}
+	h := newSessionTestHarness(t, sessionTestOptions{vision: vis})
 	id, root := h.folder(t, "noembed")
 	sessionTestWriteJPEG(t, root, "a.jpg")
 	sessionTestWriteJPEG(t, root, "b.jpg")
@@ -368,25 +421,28 @@ func TestNewPipeline_VisualGroupingOffComputesNoEmbeddings(t *testing.T) {
 	if err := p.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if n := emb.calls.Load(); n != 0 {
-		t.Fatalf("embedder called %d times with visual grouping off; want 0", n)
+	if n := len(vis.Calls()); n != 0 {
+		t.Fatalf("Vision called %d times with visual grouping off; want 0", n)
 	}
 	if n, err := s.Store.Files().CountByStatus("analyzed"); err != nil || n != 2 {
 		t.Fatalf("analyzed = %d, %v; want 2", n, err)
 	}
-	embeds, err := s.Store.AISignals().AllEmbeddings()
-	if err != nil || len(embeds) != 0 {
-		t.Fatalf("embeddings = %d, %v; want none", len(embeds), err)
+	prints, err := s.Store.AISignals().AllPrints(analyze.PrintID)
+	if err != nil || len(prints) != 0 {
+		t.Fatalf("prints = %d, %v; want none", len(prints), err)
+	}
+	if n, err := s.Store.Files().CountAnalyzedMissingPrint(analyze.PrintID); err != nil || n != 2 {
+		t.Fatalf("pending for a print = %d, %v; want 2", n, err)
 	}
 
-	// The same pipeline embeds once the setting is back on.
+	// The same pipeline prints once the setting is back on.
 	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
 	sessionTestWriteJPEG(t, root, "c.jpg")
 	if err := p.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if n := emb.calls.Load(); n != 1 {
-		t.Fatalf("embedder called %d times; want 1 (the new file)", n)
+	if n := len(vis.Calls()); n != 1 {
+		t.Fatalf("Vision called %d times; want 1 (the new file)", n)
 	}
 }
 
@@ -469,7 +525,7 @@ func TestPicksDir_RefusesDotAndDotDot(t *testing.T) {
 	}
 }
 
-func TestNewPipeline_MissingThumbnailFailsReadably(t *testing.T) {
+func TestNewPipeline_MissingPreviewFailsReadably(t *testing.T) {
 	h := newSessionTestHarness(t, sessionTestOptions{})
 	id, _ := h.folder(t, "nothumb")
 	s, release := h.acquire(t, id)
@@ -481,13 +537,13 @@ func TestNewPipeline_MissingThumbnailFailsReadably(t *testing.T) {
 
 	p, _ := s.NewPipeline(h.settings.get)
 	if err := p.Resume(context.Background()); err != nil {
-		t.Fatalf("Resume: %v (one file without a thumbnail must not stop the job)", err)
+		t.Fatalf("Resume: %v (one file without a preview must not stop the job)", err)
 	}
 	f, err := s.Store.Files().GetByID(fid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "cannot analyze: no cached thumbnail image for this file (not found)"
+	const want = "cannot analyze: no cached preview image for this file (not found)"
 	if f.ScanStatus != "failed" || f.ErrMsg.String != want {
 		t.Fatalf("file = %s %q; want failed %q", f.ScanStatus, f.ErrMsg.String, want)
 	}

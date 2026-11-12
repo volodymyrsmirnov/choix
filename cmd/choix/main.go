@@ -21,6 +21,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/bookmark"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/vision"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/volumes"
 	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/workspace"
 )
@@ -52,6 +53,7 @@ func run() int {
 		Workspace:  workspace.New(),
 		Stills:     imageio.New(),
 		Video:      avmedia.New(),
+		Vision:     vision.New(),
 		Downloader: local.NewInstaller(appdir.Models()),
 		MenuState:  shellMenuState(),
 		TitleBar:   shellTitleBar(),

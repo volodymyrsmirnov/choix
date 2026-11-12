@@ -151,23 +151,29 @@ func TestRuntime_EventsOnTheWire(t *testing.T) {
 func TestRuntime_ModelDownloadedQueuesBackfill(t *testing.T) {
 	h := newHarness(t)
 	h.dl = newFakeDownloader(local.ModelQuality) // CLIP is missing
-	h.emb.dl = h.dl
 	releaseCLIP := h.dl.holdKind(local.ModelCLIP)
 	defer releaseCLIP()
 	root := h.folder(t, "Trip", 3, 64, 48)
 	r := h.start(t)
 	id := h.add(t, r, root)
 
+	// Feature prints need no model: the first job prints every file.
 	waitFor(t, "the first job to finish", func() bool { return h.em.countState(id, "ready") >= 1 })
-	if n := countRows(t, openState(t, root), `SELECT COUNT(*) FROM ai_signals WHERE clip_embedding IS NOT NULL`); n != 0 {
-		t.Fatalf("embeddings before CLIP was installed = %d; want 0", n)
+	const printed = `SELECT COUNT(*) FROM ai_signals WHERE vision_print IS NOT NULL`
+	if n := countRows(t, openState(t, root), printed); n != 3 {
+		t.Fatalf("prints after the first job = %d; want 3", n)
 	}
+	calls := h.vision.calls.Load()
 
+	// The model arriving still queues a backfill, which finds nothing to do.
 	releaseCLIP()
 	waitFor(t, "the backfill job to finish", func() bool { return h.em.countState(id, "ready") >= 2 })
 	waitReady(t, r, id)
-	if n := countRows(t, openState(t, root), `SELECT COUNT(*) FROM ai_signals WHERE clip_embedding IS NOT NULL`); n != 3 {
-		t.Fatalf("embeddings after the backfill = %d; want 3", n)
+	if n := h.vision.calls.Load(); n != calls {
+		t.Fatalf("FeaturePrint calls during the backfill = %d; want none", n-calls)
+	}
+	if n := countRows(t, openState(t, root), printed); n != 3 {
+		t.Fatalf("prints after the backfill = %d; want 3", n)
 	}
 }
 
@@ -180,7 +186,7 @@ func TestRuntime_ModelPresentAtLaunchQueuesNothing(t *testing.T) {
 	r.Shutdown()
 
 	calls := h.stills.callCount()
-	embeds := h.emb.calls.Load()
+	prints := h.vision.calls.Load()
 	h.em = newRecEmitter(h.log)
 	r2 := h.start(t)
 	if !r2.Idle() {
@@ -189,8 +195,8 @@ func TestRuntime_ModelPresentAtLaunchQueuesNothing(t *testing.T) {
 	if n := h.stills.callCount(); n != calls {
 		t.Fatalf("Stills calls after Start = %d; want none (%d before)", n-calls, calls)
 	}
-	if n := h.emb.calls.Load(); n != embeds {
-		t.Fatalf("Embed calls after Start = %d; want none", n-embeds)
+	if n := h.vision.calls.Load(); n != prints {
+		t.Fatalf("FeaturePrint calls after Start = %d; want none", n-prints)
 	}
 	if n := h.em.count(events.ScanState); n != 0 {
 		t.Fatalf("scan:state events after Start = %d; want none", n)
@@ -201,7 +207,6 @@ func TestRuntime_VisualGroupingOffNeverDownloadsClip(t *testing.T) {
 	h := newHarness(t)
 	h.setConfig(t, func(c *config.Config) { c.VisualGrouping = false })
 	h.dl = newFakeDownloader() // nothing installed
-	h.emb.dl = h.dl
 	root := h.folder(t, "Trip", 3, 64, 48)
 	r := h.start(t)
 	id := h.add(t, r, root)
@@ -210,8 +215,8 @@ func TestRuntime_VisualGroupingOffNeverDownloadsClip(t *testing.T) {
 	if n := h.dl.downloads(local.ModelCLIP); n != 0 {
 		t.Fatalf("CLIP downloads = %d; want none", n)
 	}
-	if n := h.emb.calls.Load(); n != 0 {
-		t.Fatalf("Embed calls = %d; want none", n)
+	if n := h.vision.calls.Load(); n != 0 {
+		t.Fatalf("FeaturePrint calls = %d; want none", n)
 	}
 	st, err := r.Models.Status()
 	if err != nil {
@@ -612,11 +617,11 @@ func TestRuntime_QueuedRescanSurvivesRestart(t *testing.T) {
 func TestRuntime_ShutdownOrder(t *testing.T) {
 	h := newHarness(t)
 	root := h.folder(t, "Trip", 3, 64, 48)
-	release := h.emb.holdCalls()
+	release := h.vision.holdCalls()
 	defer release()
 	r := h.start(t)
 	id := h.add(t, r, root)
-	receive(t, "an inference in flight", h.emb.entered)
+	receive(t, "a feature print in flight", h.vision.entered)
 	if _, err := r.Catalog.Open(id); err != nil {
 		t.Fatalf("Catalog.Open: %v", err)
 	}
@@ -626,7 +631,7 @@ func TestRuntime_ShutdownOrder(t *testing.T) {
 		h.log.add(step)
 		switch step {
 		case stepSilenced:
-			// The inference in flight is awaited by queue.Stop; let it end.
+			// Let the feature print in flight end before the sessions close.
 			release()
 		case stepSessionsClosed:
 			activeAtSessions = h.bm.Active()
@@ -656,7 +661,7 @@ func TestRuntime_ShutdownOrder(t *testing.T) {
 	// store or ONNX session was used after it was closed.
 	queue := at(stepQueueStopped)
 	for i, e := range log {
-		if (e == "stills" || strings.HasPrefix(e, "embed")) && i > queue {
+		if (e == "stills" || e == "print") && i > queue {
 			t.Fatalf("%q at %d, after the queue stopped (%d): %v", e, i, queue, log)
 		}
 	}
@@ -997,14 +1002,14 @@ func TestRuntime_BindingsAfterShutdownAreUnavailable(t *testing.T) {
 func TestRuntime_NoEmitAfterShutdown(t *testing.T) {
 	h := newHarness(t)
 	root := h.folder(t, "Trip", 3, 64, 48)
-	release := h.emb.holdCalls()
+	release := h.vision.holdCalls()
 	defer release()
 	r := h.start(t)
 	h.add(t, r, root)
-	receive(t, "an inference in flight", h.emb.entered)
+	receive(t, "a feature print in flight", h.vision.entered)
 	r.hook = func(step string) {
 		if step == stepSilenced {
-			release() // queue.Stop awaits the inference in flight
+			release() // let the feature print in flight end
 		}
 	}
 	r.Shutdown()

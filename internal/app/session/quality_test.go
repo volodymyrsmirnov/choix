@@ -508,7 +508,7 @@ func (f emitterFunc) Emit(name string, data any) { f(name, data) }
 // counted.
 func TestQualityTracker_TracksTheJobsPass(t *testing.T) {
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "tracked")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tr := NewQualityTracker(QualityOptions{
@@ -534,7 +534,7 @@ func TestQualityTracker_TracksTheJobsPass(t *testing.T) {
 // photo; the job still finishes.
 func TestQualityTracker_SettingOffStopsTheJobsPass(t *testing.T) {
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
-	h := newJobTestHarness(t, sessionTestOptions{stills: stills}, nil)
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills})
 	id, root := h.folder(t, "opt-out")
 	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
 	tr := NewQualityTracker(QualityOptions{

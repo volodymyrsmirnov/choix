@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -203,5 +204,42 @@ func TestEstimateSkew_Cancelled(t *testing.T) {
 	cancel()
 	if _, err := EstimateSkew(ctx, files, embeds); !errors.Is(err, context.Canceled) {
 		t.Fatalf("EstimateSkew = %v; want context.Canceled", err)
+	}
+}
+
+// TestSkew_AnchorThreshold: on the feature print's scale a pair anchors the
+// skew estimate at a similarity of 0.93 or more: pairs at 0.94 recover the
+// offset, pairs at 0.92 leave it at 0.
+func TestSkew_AnchorThreshold(t *testing.T) {
+	const offset = int64(90)
+	for _, tc := range []struct {
+		sim  float64
+		want int64
+	}{{0.94, offset}, {0.92, 0}} {
+		files := []store.File{
+			makeFile(10, "iPhone#A", 100),
+			makeFile(11, "iPhone#A", 200),
+			makeFile(12, "iPhone#A", 300),
+			makeFile(13, "iPhone#A", 400),
+			makeFile(20, "X-T5#B", 100+offset),
+			makeFile(21, "X-T5#B", 200+offset),
+			makeFile(22, "X-T5#B", 300+offset),
+		}
+		// Scene k lies in dimensions 2k and 2k+1, so only the two shots of
+		// one scene are alike; the second camera's shot is tc.sim away.
+		scene := func(k int, sim float64) []float32 {
+			v := make([]float32, 8)
+			v[2*k] = float32(sim)
+			v[2*k+1] = float32(math.Sqrt(1 - sim*sim))
+			return v
+		}
+		embeds := map[int64][]float32{
+			10: scene(0, 1), 11: scene(1, 1), 12: scene(2, 1), 13: scene(3, 1),
+			20: scene(0, tc.sim), 21: scene(1, tc.sim), 22: scene(2, tc.sim),
+		}
+		out := mustSkew(t, files, embeds)
+		if got := out["X-T5#B"]; got != tc.want {
+			t.Errorf("similarity %.2f: skew = %d, want %d", tc.sim, got, tc.want)
+		}
 	}
 }

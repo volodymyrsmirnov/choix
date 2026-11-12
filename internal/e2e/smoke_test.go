@@ -7,7 +7,6 @@ package e2e_test
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"image"
 	"image/color"
@@ -19,8 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/group"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
+	"github.com/volodymyrsmirnov/choix/internal/platform"
+	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 	"github.com/volodymyrsmirnov/choix/internal/scanner"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
@@ -64,22 +66,30 @@ func (t *noopThumb) Build(ctx context.Context, fileID int64) error {
 	return t.st.Files().UpdateStatus(fileID, "thumbed", "")
 }
 
-// stubAnalyzer satisfies pipeline.AnalyzeProcessor. Writes a deterministic
-// ai_signals row and advances to 'analyzed'.
-type stubAnalyzer struct{ st *store.Store }
+// visionPrinter is the analyze stage's printer over a platform.Vision, as
+// the app's session makes it (with visual grouping on).
+type visionPrinter struct{ v platform.Vision }
 
-func (a *stubAnalyzer) Analyze(ctx context.Context, fileID int64) error {
-	if err := ctx.Err(); err != nil {
+func (p visionPrinter) Print(ctx context.Context, path string) ([]float32, error) {
+	return p.v.FeaturePrint(ctx, platform.ImageInput{Path: path})
+}
+
+// smokeAnalyzer satisfies pipeline.AnalyzeProcessor with the real analyze
+// stage and the platformtest Vision fake. The smoke corpus has no
+// thumbnails (noopThumb), so each original — a small JPEG, opened read-only
+// — stands in for its preview.
+type smokeAnalyzer struct {
+	st   *store.Store
+	root string
+	a    *analyze.Analyzer
+}
+
+func (a *smokeAnalyzer) Analyze(ctx context.Context, fileID int64) error {
+	f, err := a.st.Files().GetByID(fileID)
+	if err != nil {
 		return err
 	}
-	if err := a.st.AISignals().Upsert(store.AISignals{
-		FileID:        fileID,
-		ClipEmbedding: make([]byte, 512*4), // zero embedding
-		ComputedAt:    sql.NullInt64{Int64: time.Now().Unix(), Valid: true},
-	}); err != nil {
-		return err
-	}
-	return a.st.Files().UpdateStatus(fileID, "analyzed", "")
+	return a.a.Analyze(ctx, fileID, filepath.Join(a.root, filepath.FromSlash(f.Path)))
 }
 
 // storeIDLister adapts *store.Store to pipeline.IDLister.
@@ -260,14 +270,16 @@ func TestSmoke_100FileCorpus(t *testing.T) {
 
 	start := time.Now()
 
+	grouper := group.NewGrouper(st, 600, 0.90, false)
+	grouper.UsePrints(analyze.PrintID)
 	prog := make(chan pipeline.Progress, 256)
 	p := &pipeline.Pipeline{
 		Store:         &storeIDLister{st: st},
 		Scanner:       scanner.New(root, st),
 		MetaExtractor: &noopMeta{st: st},
 		ThumbBuilder:  &noopThumb{st: st},
-		Analyzer:      &stubAnalyzer{st: st},
-		Grouper:       group.NewGrouper(st, 600, 0.92, false),
+		Analyzer:      &smokeAnalyzer{st: st, root: root, a: analyze.New(st, visionPrinter{v: &platformtest.Vision{}})},
+		Grouper:       grouper,
 		Reporter:      pipeline.NewReporter(prog),
 		Concurrency: map[string]int{
 			"metadata": runtime.NumCPU(),
@@ -305,7 +317,19 @@ func TestSmoke_100FileCorpus(t *testing.T) {
 		t.Logf("failed file: %s err=%s", f.Path, f.ErrMsg.String)
 	}
 
-	// 2. At least one cluster.
+	// 2. Every analyzed file has a feature print stamped analyze.PrintID.
+	prints, err := st.AISignals().AllPrints(analyze.PrintID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prints) != len(all) {
+		t.Errorf("prints = %d, want one per analyzed file (%d)", len(prints), len(all))
+	}
+	if n, err := st.Files().CountAnalyzedMissingPrint(analyze.PrintID); err != nil || n != 0 {
+		t.Errorf("analyzed files pending for a print = %d, %v; want 0", n, err)
+	}
+
+	// 3. At least one cluster.
 	clusters, err := st.Clusters().ListAll()
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +338,7 @@ func TestSmoke_100FileCorpus(t *testing.T) {
 		t.Errorf("no clusters formed")
 	}
 
-	// 3. Picks export round-trip.
+	// 4. Picks export round-trip, and picks survive a re-cluster.
 	if len(all) > 0 {
 		picksDir := filepath.Join(root, "picks")
 		if err := os.MkdirAll(picksDir, 0o755); err != nil { //nolint:gosec // temp dir
@@ -323,12 +347,23 @@ func TestSmoke_100FileCorpus(t *testing.T) {
 		if err := st.Picks().SetState(all[0].ID, "picked"); err != nil {
 			t.Fatalf("pick: %v", err)
 		}
+		if err := st.Picks().SetState(all[len(all)-1].ID, "rejected"); err != nil {
+			t.Fatalf("reject: %v", err)
+		}
 		if _, err := os.Stat(picksDir); err != nil {
 			t.Errorf("picks dir missing: %v", err)
 		}
+		if err := grouper.RebuildAll(ctx); err != nil {
+			t.Fatalf("re-cluster: %v", err)
+		}
+		for id, want := range map[int64]string{all[0].ID: "picked", all[len(all)-1].ID: "rejected"} {
+			if p, err := st.Picks().Get(id); err != nil || p.State != want {
+				t.Errorf("pick of %d after a re-cluster = %+v, %v; want %s", id, p, err, want)
+			}
+		}
 	}
 
-	// 4. Originals unchanged.
+	// 5. Originals unchanged.
 	verifyUnchanged(t, snap, root)
 }
 

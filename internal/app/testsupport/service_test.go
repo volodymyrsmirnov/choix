@@ -118,6 +118,7 @@ func newFixture(t *testing.T, rootFn func(root string) string) *fixture {
 		Workspace:  &platformtest.Workspace{},
 		Stills:     &platformtest.Stills{},
 		Video:      &platformtest.Video{},
+		Vision:     &platformtest.Vision{},
 		Downloader: noDownloads{},
 		Picker:     d,
 		Confirm:    d,

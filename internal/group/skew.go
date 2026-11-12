@@ -11,11 +11,13 @@ import (
 // load-bearing for "did these two cameras shoot the same scene", and the
 // user toggle gates the whole feature anyway.
 const (
-	// anchorSimilarity is the cosine threshold for accepting a (refFile,
-	// otherFile) pair as evidence of "same scene from two cameras". Set
-	// well above the default cluster threshold (0.92) so we only rely on
-	// near-identical frames when estimating skew.
-	anchorSimilarity = 0.95
+	// anchorSimilarity is the feature-print similarity at or above which a
+	// (refFile, otherFile) pair is accepted as evidence of "same scene from
+	// two cameras". Set above the default cluster similarity (0.90): on a
+	// labelled folder every pair at or above 0.91 was a true pair, so only
+	// near-identical frames anchor the estimate. Untested on real
+	// two-camera data.
+	anchorSimilarity = 0.93
 
 	// maxSkewSec bounds the search window: only pairs whose raw EXIF
 	// timestamps differ by at most this much are considered. Cameras
@@ -38,15 +40,15 @@ type skewEntry struct {
 // device. Subtract offset[device_key] from each file's captured_at to align
 // every device onto a single canonical timeline.
 //
-// Reference device: the one with the most embedded files; ties broken
+// Reference device: the one with the most printed files; ties broken
 // alphabetically. The reference's offset is always 0. Each non-reference
 // device D's offset is the median of (d.captured_at - r.captured_at) over
-// pairs where cosine(emb_d, emb_r) >= anchorSimilarity and the raw time
+// pairs where similarity(print_d, print_r) >= anchorSimilarity and the raw time
 // difference is within ±maxSkewSec. Devices with fewer than minAnchors
 // qualifying pairs get offset 0 (untouched).
 //
 // Returns an empty map if there are zero or one devices with usable
-// embedded files — there's nothing to align. The pair search checks ctx once
+// printed files — there's nothing to align. The pair search checks ctx once
 // per reference file and returns ctx's error when it is cancelled.
 func EstimateSkew(ctx context.Context, files []store.File, embeds map[int64][]float32) (map[string]int64, error) {
 	byDevice := map[string][]skewEntry{}
@@ -102,7 +104,7 @@ func EstimateSkew(ctx context.Context, files []store.File, embeds map[int64][]fl
 }
 
 // pairDeltas returns (other.CapturedAt - ref.CapturedAt) for every pair
-// whose cosine similarity is >= anchorSimilarity and whose raw time
+// whose similarity is >= anchorSimilarity and whose raw time
 // difference is within ±maxSkewSec. Both inputs must be sorted ascending
 // by CapturedAt; the implementation slides a forward-only window over
 // `other` as it walks `ref`, checking ctx once per ref entry.

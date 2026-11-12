@@ -12,8 +12,8 @@ func TestDefaults(t *testing.T) {
 	if c.BucketSizeSec != 600 {
 		t.Errorf("BucketSizeSec = %d, want 600", c.BucketSizeSec)
 	}
-	if c.VisualClusterThreshold != 0.92 {
-		t.Errorf("VisualClusterThreshold = %v, want 0.92", c.VisualClusterThreshold)
+	if c.VisualSimilarity != 0.90 {
+		t.Errorf("VisualSimilarity = %v, want 0.90", c.VisualSimilarity)
 	}
 	if c.PicksDir != "picks" {
 		t.Errorf("PicksDir = %q, want \"picks\"", c.PicksDir)
@@ -42,7 +42,7 @@ func TestLoadFileParsesValues(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	body := `
 bucket_size_sec = 300
-visual_cluster_threshold = 0.85
+visual_similarity = 0.85
 picks_dir = "selected"
 advance_on_action = true
 hide_rejected_photos = true
@@ -64,8 +64,8 @@ cross_device_merging = true
 	if cfg.BucketSizeSec != 300 {
 		t.Errorf("BucketSizeSec = %d, want 300", cfg.BucketSizeSec)
 	}
-	if cfg.VisualClusterThreshold != 0.85 {
-		t.Errorf("VisualClusterThreshold = %v, want 0.85", cfg.VisualClusterThreshold)
+	if cfg.VisualSimilarity != 0.85 {
+		t.Errorf("VisualSimilarity = %v, want 0.85", cfg.VisualSimilarity)
 	}
 	if cfg.PicksDir != "selected" {
 		t.Errorf("PicksDir = %q", cfg.PicksDir)
@@ -98,8 +98,8 @@ func TestLoadFilePartialLeavesUnsetFieldsAtDefault(t *testing.T) {
 	if cfg.BucketSizeSec != 120 {
 		t.Errorf("BucketSizeSec = %d, want 120", cfg.BucketSizeSec)
 	}
-	if cfg.VisualClusterThreshold != 0.92 {
-		t.Errorf("VisualClusterThreshold = %v, want default 0.92", cfg.VisualClusterThreshold)
+	if cfg.VisualSimilarity != 0.90 {
+		t.Errorf("VisualSimilarity = %v, want default 0.90", cfg.VisualSimilarity)
 	}
 	if cfg.AdvanceOnAction || cfg.HideRejectedPhotos || cfg.CrossDeviceMerging {
 		t.Errorf("bools changed by partial load: %+v", cfg)

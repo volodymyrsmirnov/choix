@@ -76,7 +76,7 @@ func (p Patch) applyTo(cfg *config.Config) {
 		cfg.BucketSizeSec = *p.BucketSize
 	}
 	if p.Similarity != nil {
-		cfg.VisualClusterThreshold = *p.Similarity
+		cfg.VisualSimilarity = *p.Similarity
 	}
 	if p.PicksDir != nil {
 		cfg.PicksDir = *p.PicksDir

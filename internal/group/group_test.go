@@ -14,10 +14,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
-// helper: insert a file row with analyzed status + AI signal carrying the supplied embedding.
+// helper: insert a file row with analyzed status and a print, emb padded
+// to the print length (nil: a stamped NULL print).
 func insertAnalyzed(t *testing.T, s *store.Store, path, dev string, captured int64, emb []float32) int64 {
 	t.Helper()
 	id, err := s.Files().Insert(store.File{
@@ -44,15 +46,37 @@ func insertAnalyzed(t *testing.T, s *store.Store, path, dev string, captured int
 	if err := s.Files().UpdateStatus(id, "analyzed", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
-	if err := s.AISignals().Upsert(store.AISignals{FileID: id, Embedding: emb}); err != nil {
-		t.Fatalf("Upsert ai_signals: %v", err)
+	if err := s.AISignals().UpsertPrint(id, pad(emb), testPrintID); err != nil {
+		t.Fatalf("UpsertPrint: %v", err)
 	}
 	return id
 }
 
+// testPrintID stamps the prints the tests store; newGrouper uses it.
+const testPrintID = "test-print/v1"
+
+// pad returns v padded with zeros to platform.FeaturePrintLen, the only
+// length the store keeps: norms and dot products are unchanged. nil stays
+// nil (a stamped NULL print).
+func pad(v []float32) []float32 {
+	if v == nil {
+		return nil
+	}
+	out := make([]float32, platform.FeaturePrintLen)
+	copy(out, v)
+	return out
+}
+
+// newGrouper is NewGrouper using the prints stamped testPrintID.
+func newGrouper(s *store.Store, bucketSec int64, threshold float64, crossDevice bool) *Grouper {
+	g := NewGrouper(s, bucketSec, threshold, crossDevice)
+	g.UsePrints(testPrintID)
+	return g
+}
+
 func TestRebuildBucketCreatesClusters(t *testing.T) {
 	s := store.NewTestStore(t) // exported helper from store package
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 
 	// Two near-identical, one orthogonal — same device, same time bucket.
 	a := normalize([]float32{1.0, 0.0, 0.0, 0.0})
@@ -136,7 +160,7 @@ func insertAnalyzedNoEmbedding(t *testing.T, s *store.Store, path, dev string, c
 // visual signal saying these are different scenes we trust the bucket.
 func TestRebuildBucketGroupsEmbeddinglessFilesAsOne(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 
 	for i := 0; i < 5; i++ {
 		insertAnalyzedNoEmbedding(t, s, fmt.Sprintf("img%d.heic", i), "Apple iPhone#X", int64(700+i*10))
@@ -168,7 +192,7 @@ func TestRebuildBucketGroupsEmbeddinglessFilesAsOne(t *testing.T) {
 // fallback cluster (not one per file).
 func TestRebuildBucketMixedEmbeddingFallback(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 
 	a := normalize([]float32{1.0, 0.0, 0.0, 0.0})
 	b := normalize([]float32{0.99, 0.05, 0.0, 0.0})
@@ -207,7 +231,7 @@ func TestRebuildBucketMixedEmbeddingFallback(t *testing.T) {
 
 func TestRebuildBucketIsIdempotent(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 
 	a := normalize([]float32{1.0, 0.0, 0.0, 0.0})
 	b := normalize([]float32{0.99, 0.05, 0.0, 0.0})
@@ -233,7 +257,7 @@ func TestRebuildBucketIsIdempotent(t *testing.T) {
 // gap-based bucketing must not have that artifact.
 func TestRebuildAllUsesGapBasedBuckets(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 
 	// Use timestamps that straddle a 600s clock boundary at 14:35:00
 	// (52500). 14:34:59 = 52499, 14:35:01 = 52501. Gap = 2s, well under
@@ -267,7 +291,7 @@ func TestRebuildAllUsesGapBasedBuckets(t *testing.T) {
 
 func TestRebuildAllRepopulatesEveryBucket(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 
 	a := normalize([]float32{1.0, 0.0, 0.0, 0.0})
 	b := normalize([]float32{0.99, 0.05, 0.0, 0.0})
@@ -319,7 +343,7 @@ func TestRebuildAllCrossDeviceMergesIdenticalScenes(t *testing.T) {
 	{
 		s := store.NewTestStore(t)
 		build(s)
-		g := NewGrouper(s, 600, 0.92, false)
+		g := newGrouper(s, 600, 0.92, false)
 		if err := g.RebuildAll(context.Background()); err != nil {
 			t.Fatalf("RebuildAll (off): %v", err)
 		}
@@ -343,7 +367,7 @@ func TestRebuildAllCrossDeviceMergesIdenticalScenes(t *testing.T) {
 	{
 		s := store.NewTestStore(t)
 		build(s)
-		g := NewGrouper(s, 600, 0.92, true)
+		g := newGrouper(s, 600, 0.92, true)
 		if err := g.RebuildAll(context.Background()); err != nil {
 			t.Fatalf("RebuildAll (on): %v", err)
 		}
@@ -391,8 +415,8 @@ func TestRebuildAllCrossDeviceToggleCycle(t *testing.T) {
 	insertAnalyzed(t, s, "fuji2.jpg", "X-T5#B", 1100+60, v2)
 	insertAnalyzed(t, s, "fuji3.jpg", "X-T5#B", 1200+60, v1)
 
-	gOff := NewGrouper(s, 600, 0.92, false)
-	gOn := NewGrouper(s, 600, 0.92, true)
+	gOff := newGrouper(s, 600, 0.92, false)
+	gOn := newGrouper(s, 600, 0.92, true)
 
 	steps := []struct {
 		g    *Grouper
@@ -420,7 +444,7 @@ func TestRebuildAllCrossDeviceToggleCycle(t *testing.T) {
 // would mix unrelated scenes.
 func TestRebuildAllCrossDeviceNoEmbeddingsShortCircuits(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, true)
+	g := newGrouper(s, 600, 0.92, true)
 
 	insertAnalyzedNoEmbedding(t, s, "ip.heic", "iPhone#A", 1000)
 	insertAnalyzedNoEmbedding(t, s, "fuji.heic", "X-T5#B", 1010)
@@ -446,7 +470,7 @@ func TestRebuildAllCrossDeviceNoEmbeddingsShortCircuits(t *testing.T) {
 // embedding must NOT merge across devices — they fall back per device.
 func TestRebuildAllCrossDeviceNoEmbeddingsPerBucketStaySeparate(t *testing.T) {
 	s := store.NewTestStore(t)
-	g := NewGrouper(s, 600, 0.92, true)
+	g := newGrouper(s, 600, 0.92, true)
 
 	v := normalize([]float32{1, 0, 0, 0})
 	for i := 0; i < 3; i++ {
@@ -467,7 +491,7 @@ func TestRebuildAllCrossDeviceNoEmbeddingsPerBucketStaySeparate(t *testing.T) {
 		hasNoEmb := false
 		for _, id := range ids {
 			sig, err := s.AISignals().GetByFileID(id)
-			if err != nil || sig.Embedding == nil {
+			if err != nil || sig.Print == nil {
 				hasNoEmb = true
 				break
 			}
@@ -566,32 +590,32 @@ func TestGrouper_WithoutEmbeddingsIsTimeOnly(t *testing.T) {
 		return len(all)
 	}
 
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 	if got := clusterCount(t, g); got != 2 {
 		t.Fatalf("embeddings on (default): %d clusters, want 2", got)
 	}
 
-	g.SetUseEmbeddings(false)
+	g.UsePrints("")
 	if got := clusterCount(t, g); got != 1 {
 		t.Fatalf("embeddings off: %d clusters, want 1 (time-only)", got)
 	}
 
 	// Cross-device mode needs embeddings; with them off it must fall back
 	// to the same time-only result.
-	gx := NewGrouper(s, 600, 0.92, true)
-	gx.SetUseEmbeddings(false)
+	gx := newGrouper(s, 600, 0.92, true)
+	gx.UsePrints("")
 	if got := clusterCount(t, gx); got != 1 {
 		t.Fatalf("cross-device, embeddings off: %d clusters, want 1", got)
 	}
 
-	g.SetUseEmbeddings(true)
+	g.UsePrints(testPrintID)
 	if got := clusterCount(t, g); got != 2 {
 		t.Fatalf("embeddings back on: %d clusters, want 2", got)
 	}
 
 	// RebuildBucket follows the same switch.
 	bucket := sql.NullInt64{Int64: 600, Valid: true}
-	g.SetUseEmbeddings(false)
+	g.UsePrints("")
 	if err := g.RebuildBucket(context.Background(), "Fuji#A", bucket); err != nil {
 		t.Fatalf("RebuildBucket: %v", err)
 	}
@@ -605,11 +629,11 @@ func TestGrouper_WithoutEmbeddingsIsTimeOnly(t *testing.T) {
 }
 
 // insertBulk inserts n analyzed files of device dev in one transaction, the
-// i-th captured at captured(i) and carrying the embedding emb, and returns
+// i-th captured at captured(i) and carrying the print emb (padded), and returns
 // their ids in insertion order.
 func insertBulk(t *testing.T, s *store.Store, dev string, n int, captured func(i int) int64, emb []float32) []int64 {
 	t.Helper()
-	blob := make([]byte, 4*len(emb))
+	blob := make([]byte, 4*platform.FeaturePrintLen)
 	for i, v := range emb {
 		binary.LittleEndian.PutUint32(blob[4*i:], math.Float32bits(v))
 	}
@@ -631,7 +655,7 @@ func insertBulk(t *testing.T, s *store.Store, dev string, n int, captured func(i
 		if ids[i], err = res.LastInsertId(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO ai_signals (file_id, clip_embedding) VALUES (?, ?)`, ids[i], blob); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ai_signals (file_id, vision_print, vision_print_id) VALUES (?, ?, ?)`, ids[i], blob, testPrintID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -668,7 +692,7 @@ func TestCluster_LargeBucketIsWindowed(t *testing.T) {
 	s := store.NewTestStore(t)
 	v := normalize([]float32{1, 2, 3, 4})
 	insertBulk(t, s, "Cam#1", MaxClusterWindow+1, func(i int) int64 { return 1000 + int64(i)/10 }, v)
-	g := NewGrouper(s, 600, 0.9, false)
+	g := newGrouper(s, 600, 0.9, false)
 	if err := g.RebuildAll(context.Background()); err != nil {
 		t.Fatalf("RebuildAll: %v", err)
 	}
@@ -685,7 +709,7 @@ func TestRebuildBucket_IsWindowed(t *testing.T) {
 	const n = MaxClusterWindow + 1
 	// The first file inserted is the latest shot.
 	ids := insertBulk(t, s, "Cam#1", n, func(i int) int64 { return 100 + int64(n-i) }, v)
-	g := NewGrouper(s, 100000, 0.9, false)
+	g := newGrouper(s, 100000, 0.9, false)
 	bucket := sql.NullInt64{Int64: 0, Valid: true}
 	if err := g.RebuildBucket(context.Background(), "Cam#1", bucket); err != nil {
 		t.Fatalf("RebuildBucket: %v", err)
@@ -790,7 +814,7 @@ func TestRebuild_CancelledKeepsClusters(t *testing.T) {
 			insertAnalyzed(t, s, fmt.Sprintf("f%02d.jpg", i), dev, int64(1000+i), randomUnit(r, 8))
 		}
 		// The clusters of an earlier rebuild, per device and per bucket.
-		if err := NewGrouper(s, 600, 0.2, false).RebuildAll(context.Background()); err != nil {
+		if err := newGrouper(s, 600, 0.2, false).RebuildAll(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		return s
@@ -811,7 +835,7 @@ func TestRebuild_CancelledKeepsClusters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := build(t)
 			before := clusterSnapshot(t, s)
-			g := NewGrouper(s, 600, -0.9, tc.cross)
+			g := newGrouper(s, 600, -0.9, tc.cross)
 			if err := tc.rebuild(g, newCountdownCtx(tc.checks)); !errors.Is(err, context.Canceled) {
 				t.Fatalf("rebuild = %v; want context.Canceled", err)
 			}
@@ -826,5 +850,35 @@ func TestRebuild_CancelledKeepsClusters(t *testing.T) {
 				t.Fatal("the rebuild changed nothing; the test proves nothing")
 			}
 		})
+	}
+}
+
+// Only prints stamped with the grouper's print id count: a print made by
+// another method (an earlier build's) is treated as no print, so its file
+// goes to the bucket's fallback cluster.
+func TestRebuildAll_IgnoresOtherPrintID(t *testing.T) {
+	s := store.NewTestStore(t)
+	a := normalize([]float32{1, 0, 0, 0})
+	c := normalize([]float32{0, 0, 1, 0})
+	insertAnalyzed(t, s, "a.jpg", "Fuji#A", 600, a)
+	insertAnalyzed(t, s, "b.jpg", "Fuji#A", 650, c)
+	old := insertAnalyzedNoEmbedding(t, s, "old.jpg", "Fuji#A", 700)
+	if err := s.AISignals().UpsertPrint(old, pad(a), "older-print/v0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := newGrouper(s, 600, 0.9, false).RebuildAll(context.Background()); err != nil {
+		t.Fatalf("RebuildAll: %v", err)
+	}
+	// a and c are apart; the old print does not join a, it is the
+	// bucket's fallback cluster on its own.
+	if got, want := clusterSizes(t, s), []int{1, 1, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cluster sizes = %v; want %v", got, want)
+	}
+	// A grouper with no print id clusters by time alone.
+	if err := NewGrouper(s, 600, 0.9, false).RebuildAll(context.Background()); err != nil {
+		t.Fatalf("RebuildAll: %v", err)
+	}
+	if got, want := clusterSizes(t, s), []int{3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("time-only cluster sizes = %v; want %v", got, want)
 	}
 }

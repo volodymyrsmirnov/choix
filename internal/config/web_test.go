@@ -24,12 +24,12 @@ func TestSaveLoadRoundTripAllFields(t *testing.T) {
 	stubConfigDir(t)
 
 	in := &Config{
-		BucketSizeSec:          900,
-		VisualClusterThreshold: 0.88,
-		PicksDir:               "exports",
-		AdvanceOnAction:        true,
-		HideRejectedPhotos:     true,
-		CrossDeviceMerging:     true,
+		BucketSizeSec:      900,
+		VisualSimilarity:   0.88,
+		PicksDir:           "exports",
+		AdvanceOnAction:    true,
+		HideRejectedPhotos: true,
+		CrossDeviceMerging: true,
 	}
 	if err := Save(in); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -49,21 +49,21 @@ func TestSaveLoadRoundTripFalseBoolsPersist(t *testing.T) {
 
 	// First write everything true so the file exists with the bools set.
 	if err := Save(&Config{
-		BucketSizeSec:          600,
-		VisualClusterThreshold: 0.92,
-		PicksDir:               "picks",
-		AdvanceOnAction:        true,
-		HideRejectedPhotos:     true,
-		CrossDeviceMerging:     true,
+		BucketSizeSec:      600,
+		VisualSimilarity:   0.92,
+		PicksDir:           "picks",
+		AdvanceOnAction:    true,
+		HideRejectedPhotos: true,
+		CrossDeviceMerging: true,
 	}); err != nil {
 		t.Fatalf("Save (true): %v", err)
 	}
 
 	// Now overwrite with all bools false and verify they don't snap back.
 	if err := Save(&Config{
-		BucketSizeSec:          600,
-		VisualClusterThreshold: 0.92,
-		PicksDir:               "picks",
+		BucketSizeSec:    600,
+		VisualSimilarity: 0.92,
+		PicksDir:         "picks",
 	}); err != nil {
 		t.Fatalf("Save (false): %v", err)
 	}
@@ -93,7 +93,7 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 // upgrade-path migration test has a stable target to write into.
 func TestSavedFilePathIsExpected(t *testing.T) {
 	dir := stubConfigDir(t)
-	if err := Save(&Config{BucketSizeSec: 1, VisualClusterThreshold: 0.5, PicksDir: "x"}); err != nil {
+	if err := Save(&Config{BucketSizeSec: 1, VisualSimilarity: 0.5, PicksDir: "x"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	want := filepath.Join(dir, "config.toml")
@@ -211,5 +211,36 @@ func TestLoad_IgnoresEnvironment(t *testing.T) {
 	}
 	if cfg.PicksDir != "picks" {
 		t.Errorf("PicksDir = %q, want picks (environment must be ignored)", cfg.PicksDir)
+	}
+}
+
+// TestLoad_IgnoresRetiredThresholdKey: a config.toml written by an earlier
+// build holds visual_cluster_threshold, on another similarity scale. It is
+// ignored on read (the similarity is the default) and not written back.
+func TestLoad_IgnoresRetiredThresholdKey(t *testing.T) {
+	dir := stubConfigDir(t)
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("visual_cluster_threshold = 0.7\nbucket_size_sec = 300\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.VisualSimilarity != 0.90 || cfg.BucketSizeSec != 300 {
+		t.Fatalf("similarity %v, bucket %d; want 0.90, 300", cfg.VisualSimilarity, cfg.BucketSizeSec)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "visual_similarity = 0.9") {
+		t.Errorf("saved config has no visual_similarity:\n%s", data)
+	}
+	if strings.Contains(string(data), "visual_cluster_threshold") {
+		t.Errorf("saved config still writes visual_cluster_threshold:\n%s", data)
 	}
 }

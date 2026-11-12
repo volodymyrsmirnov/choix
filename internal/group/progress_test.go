@@ -67,7 +67,7 @@ func TestRebuildAllProgress_PerDeviceCountsFilesBucketByBucket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	calls := rebuildWithProgress(t, NewGrouper(s, 600, 0.92, false))
+	calls := rebuildWithProgress(t, newGrouper(s, 600, 0.92, false))
 	checkProgress(t, calls, 6, 5)
 }
 
@@ -82,13 +82,13 @@ func TestRebuildAllProgress_CrossDeviceCountsEveryFile(t *testing.T) {
 	// Without an embedding: the per-device fallback.
 	insertAnalyzedNoEmbedding(t, s, "fuji2.jpg", "X-T5#B", 20000)
 
-	calls := rebuildWithProgress(t, NewGrouper(s, 600, 0.92, true))
+	calls := rebuildWithProgress(t, newGrouper(s, 600, 0.92, true))
 	checkProgress(t, calls, 5, 3)
 }
 
 func TestRebuildAllProgress_EmptyFolder(t *testing.T) {
 	s := store.NewTestStore(t)
-	calls := rebuildWithProgress(t, NewGrouper(s, 600, 0.92, false))
+	calls := rebuildWithProgress(t, newGrouper(s, 600, 0.92, false))
 	if len(calls) != 1 || calls[0] != (progressCall{0, 0}) {
 		t.Errorf("progress calls %v; want one 0 of 0", calls)
 	}
@@ -97,7 +97,7 @@ func TestRebuildAllProgress_EmptyFolder(t *testing.T) {
 func TestRebuildAll_NilProgress(t *testing.T) {
 	s := store.NewTestStore(t)
 	insertAnalyzedNoEmbedding(t, s, "a.jpg", "Cam#1", 1000)
-	g := NewGrouper(s, 600, 0.92, false)
+	g := newGrouper(s, 600, 0.92, false)
 	if err := g.RebuildAllProgress(context.Background(), nil); err != nil {
 		t.Fatalf("RebuildAllProgress(nil): %v", err)
 	}

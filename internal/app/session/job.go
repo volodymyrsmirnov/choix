@@ -1,6 +1,6 @@
 // The folder job: everything one folder needs, run by the Queue — a few
 // folders at a time, never one folder twice at once — the pipeline pass, the
-// CLIP backfill, the refresh of the folder's cached stats and previews once
+// feature-print backfill, the refresh of the folder's cached stats and previews once
 // its clusters are final, and the quality-rating pass.
 
 package session
@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/ai/local"
+	"github.com/volodymyrsmirnov/choix/internal/analyze"
 	"github.com/volodymyrsmirnov/choix/internal/app/events"
 	"github.com/volodymyrsmirnov/choix/internal/app/library"
 	"github.com/volodymyrsmirnov/choix/internal/config"
@@ -21,12 +21,6 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/quality"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
-
-// ModelState reports whether a model can be used: its setting is on and its
-// file is installed. *models.Manager implements it.
-type ModelState interface {
-	Ready(kind local.ModelKind) bool
-}
 
 // QualityRun tracks the quality-rating passes of the jobs. Begin is called
 // when a pass of the folder folderID starts; the pass runs under passCtx, which the tracker cancels
@@ -45,8 +39,6 @@ type JobOptions struct {
 	// Settings returns the live settings; each step reads them when it
 	// runs. nil: the built-in defaults.
 	Settings func() config.Config
-	// Models says which models are ready. nil: none is.
-	Models ModelState
 	// Quality tracks the rating pass. nil: the pass runs untracked.
 	Quality QualityRun
 	// Emit receives folder:changed. nil: no events.
@@ -83,9 +75,9 @@ var errJobFolderGone = errors.New("session: the folder's directory is gone")
 //  2. The pipeline: a full job walks the folder and processes every file
 //     (discover → cluster, resuming from each file's status); a backfill
 //     only resumes, and only when files are pending.
-//  3. CLIP backfill: while visual grouping is on and the CLIP model is
-//     ready, files analyzed without an embedding are rewound and analyzed
-//     again, which reclusters.
+//  3. Print backfill: while visual grouping is on, files analyzed without a
+//     feature print stamped analyze.PrintID are rewound and analyzed again,
+//     which reclusters.
 //  4. EnsureClustered, for a setting changed after the cluster stage.
 //  5. The clusters are final: AfterJob, then folder:changed "clusters", so
 //     the open folder shows its grid and the Library row its counts and
@@ -172,8 +164,8 @@ func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(eve
 		return err
 	}
 
-	// 3. CLIP backfill.
-	if err := j.backfillEmbeddings(sctx, s, p); err != nil {
+	// 3. Print backfill.
+	if err := j.backfillPrints(sctx, s, p); err != nil {
 		return err
 	}
 	if err := jobBetween(ctx, s); err != nil {
@@ -215,26 +207,28 @@ func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(eve
 	return jobBetween(ctx, s)
 }
 
-// backfillEmbeddings rewinds the files analyzed without a CLIP embedding and
+// backfillPrints rewinds the files analyzed without a feature print stamped
+// analyze.PrintID (grouping was off, or an earlier build made them) and
 // analyzes them again (which reclusters), when visual grouping is on, the
-// CLIP model is ready and such files exist.
-func (j *Job) backfillEmbeddings(ctx context.Context, s *Session, p *pipeline.Pipeline) error {
-	if !j.o.Settings().VisualGrouping || !j.ready(local.ModelCLIP) {
+// session can make prints and such files exist. A file Vision could not
+// print is stamped, so it is not rewound again.
+func (j *Job) backfillPrints(ctx context.Context, s *Session, p *pipeline.Pipeline) error {
+	if !j.o.Settings().VisualGrouping || s.deps.Vision == nil {
 		return nil
 	}
 	files := s.Store.Files()
-	n, err := files.CountAnalyzedMissingEmbedding()
+	n, err := files.CountAnalyzedMissingPrint(analyze.PrintID)
 	if err != nil {
-		return fmt.Errorf("session: clip backfill: %w", err)
+		return fmt.Errorf("session: print backfill: %w", err)
 	}
 	if n == 0 {
 		return nil
 	}
-	if _, err := files.BumpAnalyzedMissingEmbedding(); err != nil {
-		return fmt.Errorf("session: clip backfill: %w", err)
+	if _, err := files.BumpAnalyzedMissingPrint(analyze.PrintID); err != nil {
+		return fmt.Errorf("session: print backfill: %w", err)
 	}
 	if err := p.Resume(ctx); err != nil {
-		return fmt.Errorf("session: clip backfill: %w", err)
+		return fmt.Errorf("session: print backfill: %w", err)
 	}
 	return nil
 }
@@ -370,11 +364,6 @@ func (j *Job) ratingsNotifier(folderID string) (rated, flush func()) {
 // rating reports whether a quality-rating pass is due: quality_rating is on.
 func (j *Job) rating() bool {
 	return j.o.Settings().QualityRating
-}
-
-// ready reports whether the model of kind is ready.
-func (j *Job) ready(kind local.ModelKind) bool {
-	return j.o.Models != nil && j.o.Models.Ready(kind)
 }
 
 // emit sends folder:changed for the folder at once. Each reason has its own

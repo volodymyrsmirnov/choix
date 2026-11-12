@@ -444,10 +444,11 @@ func (d *fakeDownloader) Download(ctx context.Context, kind local.ModelKind, onP
 	return nil
 }
 
-// fakeEmbedder is the shared CLIP session: a unit vector once the CLIP
-// model is installed, local.ErrModelMissing before. A test can hold calls.
-type fakeEmbedder struct {
-	dl      *fakeDownloader
+// fakeVision makes feature prints: the same unit vector for every image,
+// as the analyze stage's input check passed. Each call is logged as "print"
+// when it starts; a test can hold calls inside the detached function, as a
+// slow native call would be.
+type fakeVision struct {
 	log     *orderLog
 	calls   atomic.Int64
 	entered chan struct{}
@@ -456,35 +457,38 @@ type fakeEmbedder struct {
 	hold chan struct{}
 }
 
-func (e *fakeEmbedder) holdCalls() (release func()) {
+var _ platform.Vision = (*fakeVision)(nil)
+
+func (v *fakeVision) holdCalls() (release func()) {
 	ch := make(chan struct{})
-	e.mu.Lock()
-	e.hold = ch
-	e.mu.Unlock()
+	v.mu.Lock()
+	v.hold = ch
+	v.mu.Unlock()
 	var once sync.Once
 	return func() { once.Do(func() { close(ch) }) }
 }
 
-func (e *fakeEmbedder) Embed(image.Image) ([]float32, error) {
-	e.calls.Add(1)
-	e.log.add("embed start")
-	defer e.log.add("embed end")
-	e.mu.Lock()
-	hold := e.hold
-	e.mu.Unlock()
-	if hold != nil {
-		select {
-		case e.entered <- struct{}{}:
-		default:
+func (v *fakeVision) FeaturePrint(ctx context.Context, in platform.ImageInput) ([]float32, error) {
+	v.calls.Add(1)
+	v.log.add("print")
+	v.mu.Lock()
+	hold := v.hold
+	v.mu.Unlock()
+	return platform.Detach(ctx, func() ([]float32, error) {
+		if hold != nil {
+			select {
+			case v.entered <- struct{}{}:
+			default:
+			}
+			<-hold
 		}
-		<-hold
-	}
-	if !e.dl.Has(local.ModelCLIP) {
-		return nil, local.ErrModelMissing
-	}
-	v := make([]float32, 512)
-	v[0] = 1
-	return v, nil
+		if _, err := os.Stat(in.Path); in.Path != "" && err != nil {
+			return nil, fmt.Errorf("fake vision: %w", err)
+		}
+		p := make([]float32, platform.FeaturePrintLen)
+		p[0] = 1
+		return p, nil
+	})
 }
 
 // scoreGate observes the photos the rating passes score (the runtime's
@@ -665,7 +669,7 @@ type harness struct {
 	stills       *fakeStills
 	video        *platformtest.Video
 	dl           *fakeDownloader
-	emb          *fakeEmbedder
+	vision       *fakeVision
 	scores       *scoreGate
 	em           *recEmitter
 	picker       *fakePicker
@@ -698,7 +702,7 @@ func newHarness(t *testing.T) *harness {
 		stills:  newFakeStills(log),
 		video:   &platformtest.Video{},
 		dl:      dl,
-		emb:     &fakeEmbedder{dl: dl, log: log, entered: make(chan struct{}, 1)},
+		vision:  &fakeVision{log: log, entered: make(chan struct{}, 1)},
 		scores:  &scoreGate{entered: make(chan struct{}, 1)},
 		em:      newRecEmitter(log),
 		picker:  &fakePicker{},
@@ -729,12 +733,12 @@ func (h *harness) deps() Deps {
 		Workspace:  h.ws,
 		Stills:     h.stills,
 		Video:      h.video,
+		Vision:     h.vision,
 		Downloader: h.dl,
 		Emit:       h.em,
 		Picker:     h.picker,
 		Confirm:    h.confirm,
 		Home:       h.parent,
-		Embedder:   h.emb,
 		MenuState:  h.menu,
 	}
 }

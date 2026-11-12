@@ -27,7 +27,7 @@ type Body struct {
 func bodyOf(c config.Config) Body {
 	return Body{
 		BucketSize:         c.BucketSizeSec,
-		Similarity:         c.VisualClusterThreshold,
+		Similarity:         c.VisualSimilarity,
 		PicksDir:           c.PicksDir,
 		AdvanceOnAction:    c.AdvanceOnAction,
 		HideRejectedPhotos: c.HideRejectedPhotos,

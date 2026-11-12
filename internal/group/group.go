@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -31,27 +31,42 @@ type Grouper struct {
 	bucketSec   int64
 	threshold   float64
 	crossDevice bool
-	// noEmbeddings is the inverse of SetUseEmbeddings, so the zero value
-	// means "use them" (the default).
-	noEmbeddings atomic.Bool
+
+	mu      sync.Mutex
+	printID string // see UsePrints; "" uses no prints
 }
 
-// NewGrouper constructs a Grouper. bucketSec is the time-bucket width in seconds
-// (default 600 per spec). threshold is the cosine similarity for visual clustering
-// (default 0.92 per spec). crossDevice enables the cross-device merging mode:
-// devices are aligned via clock-skew detection before bucketing, and bursts that
-// span devices collapse into one cluster.
+// NewGrouper constructs a Grouper. bucketSec is the time-bucket width in
+// seconds (default 600 per spec). threshold is the feature-print similarity
+// above which shots may share a visual cluster (complete-link; default 0.90).
+// crossDevice enables the cross-device merging mode: devices are aligned via
+// clock-skew detection before bucketing, and bursts that span devices
+// collapse into one cluster.
+//
+// A new Grouper uses no prints: its clusters are the time buckets alone
+// until UsePrints names the prints to use.
 func NewGrouper(s *store.Store, bucketSec int64, threshold float64, crossDevice bool) *Grouper {
 	return &Grouper{s: s, bucketSec: bucketSec, threshold: threshold, crossDevice: crossDevice}
 }
 
-// SetUseEmbeddings switches visual sub-clustering. Off, every file is
-// treated as having no embedding, so clusters are the time buckets alone
-// (and cross-device mode, which needs embeddings, falls back to per-device
-// grouping). On is the default. It applies from the next rebuild.
-func (g *Grouper) SetUseEmbeddings(on bool) { g.noEmbeddings.Store(!on) }
+// UsePrints switches visual sub-clustering: with a print id, the stored
+// feature prints stamped with that id are used (a print stamped otherwise
+// counts as none); with "", every file is treated as having no print, so
+// clusters are the time buckets alone (and cross-device mode, which needs
+// prints, falls back to per-device grouping). It applies from the next
+// rebuild.
+func (g *Grouper) UsePrints(printID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.printID = printID
+}
 
-func (g *Grouper) useEmbeddings() bool { return !g.noEmbeddings.Load() }
+// prints returns the print id in use, "" for none.
+func (g *Grouper) prints() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.printID
+}
 
 // RebuildBucket recomputes clusters for the given (device_key, time_bucket).
 // The bucket is clustered like every other path (clusterIDs, in time order)
@@ -81,16 +96,17 @@ func (g *Grouper) RebuildBucket(ctx context.Context, deviceKey string, timeBucke
 		ids[i] = f.ID
 	}
 
-	// Gather embeddings. Files without embeddings (e.g., when the CLIP model
-	// is not installed) are merged into the bucket-level fallback cluster:
-	// time proximity already does the grouping work, so without a visual
-	// signal saying these are different scenes we trust the bucket.
+	// Gather prints. Files without one (visual grouping was off when they
+	// were analyzed, or Vision could not make one) are merged into the
+	// bucket-level fallback cluster: time proximity already does the
+	// grouping work, so without a visual signal saying these are different
+	// scenes we trust the bucket.
 	embeds := make(map[int64][]float32, len(files))
-	if g.useEmbeddings() {
+	if printID := g.prints(); printID != "" {
 		for _, id := range ids {
 			sig, err := g.s.AISignals().GetByFileID(id)
-			if err == nil && sig.Embedding != nil {
-				embeds[id] = sig.Embedding
+			if err == nil && sig.Print != nil && sig.PrintID == printID {
+				embeds[id] = sig.Print
 			}
 		}
 	}
@@ -128,10 +144,10 @@ type runFile struct {
 // absolute clock — fixing the boundary-alignment artifact where a shot at
 // 14:34:59 and one at 14:35:01 ended up in different clusters.
 //
-// Cross-device mode (when g.crossDevice && embeddings exist): EstimateSkew
+// Cross-device mode (when g.crossDevice && prints exist): EstimateSkew
 // computes a per-device offset, the gap-walk runs over the merged
 // canonical timeline, and clusters whose members span devices are tagged
-// with MergedDeviceKey. Files without embeddings still cluster only with
+// with MergedDeviceKey. Files without a print still cluster only with
 // their own device — without a visual signal, we have no evidence two
 // cameras shot the same scene.
 //
@@ -140,7 +156,7 @@ type runFile struct {
 // start time. Files with NULL captured_at form their own per-device
 // singleton bucket with NULL time_bucket.
 //
-// All embeddings are loaded in one query and the cluster/cluster_members
+// All prints are loaded in one query and the cluster/cluster_members
 // rebuild lands in a single transaction, so a recluster of a 2 000-photo
 // library is one fsync rather than thousands.
 //
@@ -174,12 +190,12 @@ func (p *clusterProgress) add(n int) {
 // the caller's goroutine.
 func (g *Grouper) RebuildAllProgress(ctx context.Context, progress func(done, total int)) error {
 	start := time.Now()
-	useEmb := g.useEmbeddings()
+	printID := g.prints()
 	slog.Info("cluster rebuild start",
 		"bucket_sec", g.bucketSec,
 		"threshold", g.threshold,
 		"cross_device", g.crossDevice,
-		"use_embeddings", useEmb,
+		"prints", printID,
 	)
 	files, err := g.s.Files().ListAllAnalyzed()
 	if err != nil {
@@ -189,22 +205,22 @@ func (g *Grouper) RebuildAllProgress(ctx context.Context, progress func(done, to
 	prog := &clusterProgress{fn: progress, total: len(files)}
 	prog.add(0)
 	if len(files) == 0 {
-		slog.Info("cluster rebuild done", "files", 0, "embeddings", 0, "mode", "empty", "elapsed_ms", time.Since(start).Milliseconds())
+		slog.Info("cluster rebuild done", "files", 0, "prints", 0, "mode", "empty", "elapsed_ms", time.Since(start).Milliseconds())
 		return g.s.WriteClusters(ctx, nil)
 	}
 
-	// With embeddings off every file counts as having none: an empty map
+	// With prints off every file counts as having none: an empty map
 	// leaves only the time buckets (and short-circuits cross-device mode).
 	embeds := map[int64][]float32{}
-	if useEmb {
-		embeds, err = g.s.AISignals().AllEmbeddings()
+	if printID != "" {
+		embeds, err = g.s.AISignals().AllPrints(printID)
 		if err != nil {
-			slog.Warn("cluster rebuild failed", "phase", "load_embeddings", "err", err)
-			return fmt.Errorf("load embeddings: %w", err)
+			slog.Warn("cluster rebuild failed", "phase", "load_prints", "err", err)
+			return fmt.Errorf("load prints: %w", err)
 		}
 	}
 
-	// Cross-device mode requires at least one embedding to anchor the
+	// Cross-device mode requires at least one print to anchor the
 	// timelines. Without any, fall back to per-device behavior — merging
 	// adjacent devices on time alone would mix unrelated scenes.
 	mode := "per_device"
@@ -220,7 +236,7 @@ func (g *Grouper) RebuildAllProgress(ctx context.Context, progress func(done, to
 	}
 	slog.Info("cluster rebuild done",
 		"files", len(files),
-		"embeddings", len(embeds),
+		"prints", len(embeds),
 		"mode", mode,
 		"elapsed_ms", time.Since(start).Milliseconds(),
 	)
@@ -324,7 +340,7 @@ func (g *Grouper) rebuildAllPerDevice(ctx context.Context, files []store.File, e
 // timeline built by subtracting each device's estimated clock skew. The
 // per-cluster device_key is computed from the membership: single-device
 // clusters keep that device's key; multi-device clusters are tagged with
-// MergedDeviceKey. Files without embeddings stay anchored to their own
+// MergedDeviceKey. Files without a print stay anchored to their own
 // device's timeline so we never claim two cameras shot the same scene
 // when we have no visual evidence.
 func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File, embeds map[int64][]float32, prog *clusterProgress) error {
@@ -354,7 +370,7 @@ func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File,
 			noTimeByDevice[dev] = append(noTimeByDevice[dev], f.ID)
 			continue
 		}
-		// Files without embeddings opt out of cross-device merging — the
+		// Files without a print opt out of cross-device merging — the
 		// gap-walk happens per device for these (handled below).
 		if _, ok := embeds[f.ID]; !ok {
 			noEmbByDevice[dev] = append(noEmbByDevice[dev], runFile{
@@ -452,7 +468,7 @@ func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File,
 		return err
 	}
 
-	// Per-device fallback: files without embeddings still need clusters,
+	// Per-device fallback: files without a print still need clusters,
 	// but we don't merge them across devices. Run the standard gap-walk
 	// per device for these.
 	for _, dev := range deviceOrder {
