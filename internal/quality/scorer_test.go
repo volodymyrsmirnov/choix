@@ -5,7 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"image"
 	"image/jpeg"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -211,5 +214,99 @@ func TestScorer_Cancelled(t *testing.T) {
 	}
 	if n := e.pending(t); n != 1 {
 		t.Fatalf("pending = %d; want 1", n)
+	}
+}
+
+// withClaimedSize returns the JPEG data with its SOF0 header patched to
+// claim w×h pixels; the scan data stays that of the small image.
+func withClaimedSize(t *testing.T, data []byte, w, h int) []byte {
+	t.Helper()
+	out := bytes.Clone(data)
+	for i := 2; i+9 < len(out); {
+		if out[i] != 0xFF {
+			t.Fatalf("no marker at %d", i)
+		}
+		marker := out[i+1]
+		n := int(out[i+2])<<8 | int(out[i+3])
+		if marker == 0xC0 {
+			// FF C0, length (2), precision (1), height (2), width (2).
+			out[i+5], out[i+6] = byte(h>>8), byte(h) //nolint:gosec // h ≤ 65535
+			out[i+7], out[i+8] = byte(w>>8), byte(w) //nolint:gosec // w ≤ 65535
+			return out
+		}
+		i += 2 + n
+	}
+	t.Fatal("no SOF0 marker")
+	return nil
+}
+
+// A preview whose header claims more than MaxPreviewSide pixels on a side is
+// treated as unreadable and never decoded: a damaged cache file cannot
+// exhaust memory.
+func TestScorer_HugePreviewIsNotDecoded(t *testing.T) {
+	small := previewJPEG(t, 64, 48)
+	decode := decodePreview
+	decodePreview = func(r io.Reader) (image.Image, error) {
+		t.Error("a preview claiming a huge size was decoded")
+		return decode(r)
+	}
+	t.Cleanup(func() { decodePreview = decode })
+
+	for _, size := range [][2]int{{MaxPreviewSide + 1, 100}, {100, MaxPreviewSide + 1}, {65535, 65535}} {
+		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+			data := withClaimedSize(t, small, size[0], size[1])
+			if cfg, err := jpeg.DecodeConfig(bytes.NewReader(data)); err != nil || cfg.Width != size[0] || cfg.Height != size[1] {
+				t.Fatalf("patched header reads %dx%d, %v; want %dx%d", cfg.Width, cfg.Height, err, size[0], size[1])
+			}
+			for _, reachable := range []bool{true, false} {
+				e := newScorerEnv(t)
+				e.scorer.FailureGuard = func() bool { return reachable }
+				item := e.addPhoto(t, "huge.jpg", data)
+				err := e.scorer.Score(context.Background(), item)
+				raw, model := e.stored(t, item.FileID)
+				if reachable {
+					if err != nil || raw.Valid || model.String != ScorerID {
+						t.Fatalf("reachable: Score = %v, stored raw=%+v model=%q; want a NULL score stamped %q", err, raw, model.String, ScorerID)
+					}
+				} else if !errors.Is(err, pipeline.ErrFolderUnavailable) || model.Valid {
+					t.Fatalf("folder gone: Score = %v, model=%+v; want ErrFolderUnavailable and nothing stamped", err, model)
+				}
+			}
+		})
+	}
+}
+
+// Nothing is stamped once the pass is cancelled, whichever outcome was about
+// to be recorded: the context is cancelled while the preview is looked up.
+func TestScorer_CancelledDuringPreviewLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte // nil: the lookup fails
+	}{
+		{"unreadable", nil},
+		{"not a JPEG", []byte("not a jpeg")},
+		{"too small", previewJPEG(t, 500, 300)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newScorerEnv(t)
+			item := e.addPhoto(t, "a.jpg", tc.data)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			lookup := e.scorer.previewPath
+			e.scorer.previewPath = func(id int64) (string, error) {
+				cancel()
+				return lookup(id)
+			}
+
+			if err := e.scorer.Score(ctx, item); !errors.Is(err, context.Canceled) {
+				t.Fatalf("Score = %v; want context.Canceled", err)
+			}
+			if raw, model := e.stored(t, item.FileID); raw.Valid || model.Valid {
+				t.Fatalf("stored raw=%+v model=%+v; want nothing stamped after the cancellation", raw, model)
+			}
+			if n := e.pending(t); n != 1 {
+				t.Fatalf("pending = %d; want 1", n)
+			}
+		})
 	}
 }
