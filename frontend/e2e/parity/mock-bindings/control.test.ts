@@ -79,7 +79,15 @@ test('a call made before load answers once the fixture is loaded, with a copy', 
 test('a field the fixture leaves out never answers', async () => {
   const c = createControl()
   await c.load({ route: '#/' })
-  expect(await settles(c.answer('Models.Status', (f) => f.models))).toBe(false)
+  expect(await settles(c.answer('Settings.Get', (f) => f.settings))).toBe(false)
+})
+
+test('Models.Status answers both kinds ready, as the Go shim does, from a fixture with no models field', async () => {
+  await load({ route: '#/', folders: [] })
+  expect(await Models.Status()).toEqual([
+    { kind: 'clip', state: 'ready', received: 0, size: 0 },
+    { kind: 'quality', state: 'ready', received: 0, size: 0 },
+  ] as never)
 })
 
 test('the app-facing host hands out the ui record and the toasts, and tells listeners of each load', async () => {
@@ -94,11 +102,12 @@ test('the app-facing host hands out the ui record and the toasts, and tells list
   expect(c.uiHost.toasts()).toEqual([{ id: 'a', tone: 'info', title: 'Hello' }])
 })
 
-test('Catalog.QualityStatus answers the fixture\'s quality status, as Models.Quality does', async () => {
+test('Catalog.QualityStatus answers the fixture\'s quality status, as Models.Quality does, with the received and size Go still sends', async () => {
   const quality = { enabled: true, state: 'scoring', active: true, done: 2, total: 9, rated: 5 } as ParityFixture['quality']
   await load({ route: '#/', quality })
-  expect(await Catalog.QualityStatus()).toEqual(quality as never)
-  expect(await Models.Quality()).toEqual(quality as never)
+  const wire = { received: 0, size: 0, ...quality }
+  expect(await Catalog.QualityStatus()).toEqual(wire as never)
+  expect(await Models.Quality()).toEqual(wire as never)
 })
 
 test("'pending' never resolves", async () => {

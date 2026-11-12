@@ -8,8 +8,8 @@ const BAR: Record<BannerTone, string> = { info: 'bg-sel', warn: 'bg-warn', error
 const ICON_TONE: Record<BannerTone, string> = { info: 'text-sel', warn: 'text-warn', error: 'text-reject' }
 
 /**
- * An in-page notice (a compact model download, time-only grouping, a folder
- * that went offline): a tone bar, an optional icon, a title, an optional line
+ * An in-page notice (a folder that went offline, picks missing their
+ * copies): a tone bar, an optional icon, a title, an optional line
  * of body text, optional extra content such as a progress rail, and actions.
  */
 export function Banner({

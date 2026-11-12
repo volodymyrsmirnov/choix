@@ -1,8 +1,9 @@
 // Settings flows: change a field → Save (the section marker comes and goes,
 // a toast confirms); make a field invalid → its error, Save disabled → fix
 // it; the leave prompt → Keep editing (button and Escape), then → Discard
-// changes, back in the Library; Retry on a failed model row; the sidebar
-// moves the highlight; the seeded "Save failed" toast dismissed.
+// changes, back in the Library; the sidebar moves the highlight; visual
+// grouping off and on; a failed load; the seeded "Save failed" toast
+// dismissed.
 import { expect, type Page } from '@playwright/test'
 import type { ProtoHandle } from '../flows.pw'
 import { landOn } from './landing'
@@ -96,23 +97,6 @@ export default async function settings(page: Page, proto: ProtoHandle): Promise<
   await expect(prompt).toBeVisible()
   await prompt.getByRole('button', { name: 'Keep editing' }).click()
   await expect(prompt).toHaveCount(0)
-
-  // Retry on a failed model row: the quality model, then CLIP.
-  await proto.open(506)
-  const qualityRow = page.locator('[data-model="quality"]')
-  await expect(qualityRow).toHaveAttribute('data-state', 'failed')
-  await expect(page.getByTestId('quality-retry')).toBeVisible()
-  await page.getByRole('button', { name: 'Retry the quality rating download' }).click()
-  await expect(qualityRow).toHaveAttribute('data-state', 'downloading')
-
-  await proto.open(517)
-  const clipRow = page.locator('[data-model="clip"]')
-  await expect(clipRow).toHaveAttribute('data-state', 'failed')
-  // Downloads are sequential: with the quality model downloading, the
-  // retried CLIP download waits in the queue.
-  await expect(page.locator('[data-model="quality"]')).toHaveAttribute('data-state', 'downloading')
-  await page.getByRole('button', { name: 'Retry the visual grouping download' }).click()
-  await expect(clipRow).toHaveAttribute('data-state', 'queued')
 
   // Visual grouping off: the similarity and cross-device controls wait for it.
   await proto.open(507)

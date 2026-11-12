@@ -47,10 +47,10 @@ export interface SettingsProps {
   saving: boolean
   /** The quality worker (saved setting), for the status line under the switch. */
   quality: QualityStatus | null
-  /** The quality model's Retry is in flight. */
-  retrying: boolean
-  /** Both model downloads, [clip, quality]; never both `downloading`. */
-  models: ModelStatus[]
+  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
+  retrying?: boolean
+  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
+  models?: ModelStatus[]
   /** The "Discard unsaved changes?" prompt is open. */
   leavePrompt: boolean
   toasts: ToastItem[]
@@ -73,10 +73,10 @@ export interface SettingsProps {
   onHelp(): void
   /** Load again after a failed load. */
   onReload(): void
-  /** The quality model's Retry (v1's retry from the quality status). */
-  onRetryQuality(): void
-  /** Another model's Retry (CLIP). */
-  onRetryModel(kind: ModelStatus['kind']): void
+  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
+  onRetryQuality?(): void
+  /** @deprecated removed in phase B: ignored, nothing is downloaded. */
+  onRetryModel?(kind: ModelStatus['kind']): void
   /** The leave prompt's answer: true discards the edits and leaves. */
   onConfirmLeave(leave: boolean): void
   onUndoToast(id: string): void

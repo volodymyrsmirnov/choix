@@ -3,7 +3,7 @@
 import type { CancellablePromise } from '@wailsio/runtime/cancellable'
 import type * as $models from '../../../../bindings/github.com/volodymyrsmirnov/choix/internal/app/catalog/models'
 import type * as events$0 from '../../../../bindings/github.com/volodymyrsmirnov/choix/internal/app/events/models'
-import { act, answer, done, fail } from '../control'
+import { act, answer, done, fail, wireQuality } from '../control'
 
 export function Close(_folderID: string): CancellablePromise<void> {
   return done()
@@ -24,9 +24,9 @@ export function Open(_folderID: string): CancellablePromise<$models.FolderView> 
   return answer<$models.FolderView>('Catalog.Open', (f) => f.view)
 }
 
-/** The fixture's `quality`, as Models.Quality answers it. */
+/** The fixture's `quality`, as Models.Quality answers it (wireQuality). */
 export function QualityStatus(): CancellablePromise<events$0.Quality> {
-  return answer<events$0.Quality>('Catalog.QualityStatus', (f) => f.quality)
+  return answer<events$0.Quality>('Catalog.QualityStatus', (f) => wireQuality(f.quality))
 }
 
 /** The fixture's `ratings`. */

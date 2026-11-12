@@ -1,4 +1,5 @@
 // Library states 100–131 (spec §4.1, Layout A; 124–130 the toolbar's search, filter and order; 131 Processing).
+// 112 and 120, the compact model-download banner, are retired: nothing is downloaded any more.
 import { LibraryScreen } from '../../src/design/screens/library/LibraryScreen'
 import { LIBRARY_OVERLAYS } from '../../src/design/screens/library/props'
 import type { FolderSummary } from '../../src/design/types'
@@ -8,7 +9,6 @@ import {
   KYOTO,
   LISBON,
   FAROE,
-  model,
   photo,
   replace,
   scanAt,
@@ -34,7 +34,6 @@ const SUBJECT: Record<number, string> = {
   107: '[data-folder="lisbon"]',
   108: '[data-folder="scans"]',
   110: '[data-folder="long"]',
-  112: '[data-testid="model-banner"]',
   113: '[data-overlay="toast:removed-kyoto"]',
   114: '[data-overlay="toast:already-lisbon"]',
   115: '[data-overlay="toast:read-only-card"]',
@@ -45,7 +44,6 @@ const SUBJECT: Record<number, string> = {
   121: '[data-folder="one-photo"]',
   122: '[data-folder="one-video"]',
   111: '[aria-label="Loading the Library"]',
-  120: '[data-testid="model-banner"]',
   123: '[data-folder="lisbon"], [data-folder="dolomites"], [data-folder="kyoto"]',
   124: '[data-testid="filter-input"], [data-folder="lisbon"], [data-folder="faroe"]',
   125: '[data-testid="folders-empty"]',
@@ -185,10 +183,6 @@ export const scenarios: Scenario[] = [
   lib(109, 'Forty folders', { folders: FORTY }),
   lib(110, '80-Char name, long RTL/emoji path', { folders: [LONG_NAME, LISBON, DOLOMITES] }),
   lib(111, 'Loading', { folders: null }, 'missing design'),
-  lib(112, 'Compact model-download banner', {
-    folders: SIX,
-    models: [model('clip', 'downloading', 188_000_000), model('quality', 'queued')],
-  }),
   lib(
     113,
     '“Folder removed” toast',
@@ -217,10 +211,6 @@ export const scenarios: Scenario[] = [
   }),
   lib(118, 'Single folder', { folders: [DOLOMITES] }),
   lib(119, 'Folder with 0 photos', { folders: [EMPTY_CARD, DOLOMITES, KYOTO] }),
-  lib(120, 'Compact banner, download failed', {
-    folders: SIX,
-    models: [model('clip', 'failed', 96_000_000, 'The connection was reset'), model('quality', 'ready')],
-  }),
   lib(121, 'Folder with 1 photo', { folders: [ONE_PHOTO, LISBON] }),
   lib(122, 'Folder with 1 video', { folders: [ONE_VIDEO, LISBON] }),
   // Two folder jobs at once (the engine runs two): each row shows its own

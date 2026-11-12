@@ -53,26 +53,38 @@ export interface SettingsBody {
   hide_rejected_photos: boolean
   cross_device_merging: boolean
   quality_rating: boolean
-  // New in 2.0 (spec §4.2): off means CLIP is never downloaded and folders
-  // cluster by time only.
+  // New in 2.0: off means no feature prints are made and folders cluster by
+  // time only.
   visual_grouping: boolean
 }
 
 // Snapshot of the background quality worker.
 export type QualityState =
-  | 'disabled' | 'downloading' | 'download_failed' | 'waiting' | 'scoring' | 'idle' | 'error'
+  | 'disabled'
+  | 'waiting'
+  | 'scoring'
+  | 'idle'
+  /** @deprecated removed in phase B */
+  | 'downloading'
+  /** @deprecated removed in phase B */
+  | 'download_failed'
+  /** @deprecated removed in phase B */
+  | 'error'
 export interface QualityStatus {
   enabled: boolean
   state: QualityState
   // Keep polling while true: work is in flight or queued, or a scan is
   // running that will hand the worker photos.
   active: boolean
-  received: number // model download, bytes
-  size: number     // 0 while unknown
+  /** @deprecated removed in phase B */
+  received?: number
+  /** @deprecated removed in phase B */
+  size?: number
   done: number     // photos rated in the current pass
   total: number
   // Photos dealt with since choix started; only grows.
   rated: number
+  /** @deprecated removed in phase B */
   error?: string
   // The folder of the pass that done/total describe (the latest begun);
   // absent when no pass runs.
@@ -137,6 +149,7 @@ export interface FolderSummary {
   added_at?: number
 }
 
+/** @deprecated removed in phase B: nothing is downloaded and nothing renders it. */
 export interface ModelStatus {
   kind: 'clip' | 'quality'
   state: 'disabled' | 'queued' | 'downloading' | 'failed' | 'ready'

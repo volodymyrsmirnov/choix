@@ -1,10 +1,10 @@
-// Fixtures of the Library states 100–122 (prototype/scenarios/library.tsx).
+// Fixtures of the Library states 100–131 (prototype/scenarios/library.tsx).
 //
 // Each fixture is read off the approved scenario itself: the scenario's
 // render gives a LibraryScreen element, and its props (libraryProps with the
 // state's data) are what the prototype shows. The fixture hands the app the
 // same data the way Go would: the rows as Library.List answers them, the
-// models as Models.Status answers, the quality worker's snapshot when the
+// quality worker's snapshot when the
 // state shows one, and the state's toasts (seeded: the mock bindings cannot
 // answer AddFolders or OpenPicksFolder with the result that puts them up;
 // ../libraryCases.test.ts holds the app's own toasts to the same copy).
@@ -35,18 +35,17 @@ export function scenarioProps(list: Scenario[], n: number): LibraryProps {
 /** `value` as JSON data (keys whose value is undefined dropped), as Go's answer would be. */
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-/** The Library route with `p`'s data: Library.List, Models.Status, Models.Quality and the toasts. */
+/** The Library route with `p`'s data: Library.List, the quality worker (Models.Quality, Catalog.QualityStatus) and the toasts. */
 export function libraryFixture(p: LibraryProps, folders: FolderSummary[] | null = p.folders): ParityFixture {
   return plain({
     route: '#/',
     folders: folders ?? 'pending',
-    models: p.models,
     ...(p.quality ? { quality: p.quality } : {}),
     ...(p.toasts.length > 0 ? { toasts: p.toasts } : {}),
   })
 }
 
-/** The Library states' numbers (100–122). */
+/** The Library states' numbers (100–131). */
 const LIBRARY_STATES: number[] = scenarios.map((s) => s.n)
 
 export const LIBRARY: Record<number, ParityFixture> = Object.fromEntries(

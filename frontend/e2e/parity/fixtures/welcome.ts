@@ -1,21 +1,18 @@
-// Fixtures of the welcome and title-bar states 11–17 and 30–36
+// Fixtures of the welcome and title-bar states 30–37
 // (prototype/scenarios/welcome.tsx), read off the approved scenarios as the
 // Library's are (library.ts).
 //
-// 11–17: no folders and the state's models; 14 is also offline, which its
-// case does to the browser (cases.ts).
 // 30, 33–36: the scanning folder is a Library.List row with its run's
 // progress, as Go lists a folder being scanned. 31: the quality worker's
-// snapshot (Models.Quality).
+// snapshot (Models.Quality, Catalog.QualityStatus); 37: two passes.
 // 32: a run that stopped. Go lists only a scanning row's progress, so the
 // fixture lists the folder scanning, at the stopped run's last numbers; the
 // case then sends what Go sends when the job fails (scan:progress with
 // state `stopped`, then scan:state `error` with the row's text).
 // 40: the error screen, not the Library. Its fixture is the Library route
-// with no folders and ready models (what is under the error does not show)
+// with no folders (what is under the error does not show)
 // and the scenario's error text in `ui`, under the key the case names
 // (errorScreen.ts, cases.ts).
-import { MODELS_READY } from '../../../prototype/mock/data'
 import { RENDER_ERROR, scenarios } from '../../../prototype/scenarios/welcome'
 import type { FolderSummary } from '../../../src/design/types'
 import { ERROR_SCREEN_STATE, RENDER_ERROR_KEY } from '../errorScreen'
@@ -37,14 +34,13 @@ function beforeStop(): FolderSummary[] {
   })
 }
 
-/** The welcome group's Library-screen numbers (11–17, 30–36). */
+/** The welcome group's Library-screen numbers (30–37). */
 const WELCOME_STATES: number[] = scenarios.map((s) => s.n).filter((n) => n !== ERROR_SCREEN_STATE)
 
 /** The error screen's fixture (40). */
 const errorScreen: ParityFixture = {
   route: '#/',
   folders: [],
-  models: JSON.parse(JSON.stringify(MODELS_READY)),
   ui: { [RENDER_ERROR_KEY]: RENDER_ERROR },
 }
 

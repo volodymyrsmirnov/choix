@@ -28,8 +28,6 @@ const pass = (folder_id: string): QualityStatus => ({
   enabled: true,
   state: 'scoring',
   active: true,
-  received: 0,
-  size: 0,
   done: 108,
   total: 248,
   rated: 0,
@@ -83,12 +81,16 @@ test('Open Picks shows ⌘P', () => {
   expect(h).not.toContain('⇧⌘P')
 })
 
-test('visual grouping off by the user’s choice: no notice; the model’s download still explains itself', () => {
-  const notice = (grouping: FolderProps['grouping']) => page({ clusters: ONE, scan: null, quality: null, grouping }).includes('data-testid="notice-time-only"')
-  expect(notice('time-off')).toBe(false)
-  expect(notice('visual')).toBe(false)
-  expect(notice('time-downloading')).toBe(true)
-  expect(notice('time-failed')).toBe(true)
+test('no time-only notice for any grouping: off is the user’s choice, and nothing is downloaded any more', () => {
+  const html = (grouping: FolderProps['grouping']) => page({ clusters: ONE, scan: null, quality: null, grouping })
+  // The last two are what the app passed while it still downloaded a model
+  // (until phase B); the page ignores them too.
+  const all = ['visual', 'time-off', 'time-downloading', 'time-failed'] as unknown as FolderProps['grouping'][]
+  for (const g of all) {
+    expect(html(g), g).not.toContain('data-testid="notice-time-only"')
+    expect(html(g), g).not.toContain('Grouped by capture time only')
+    expect(html(g), g).not.toContain('download')
+  }
 })
 
 test('first scan: the bar shows no indicator, whatever the quality worker does', () => {

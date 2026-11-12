@@ -9,7 +9,7 @@ import { minutesTextToSeconds, secondsToMinutesText } from './validate'
  *  the form with these; nothing is written until Save. */
 export const DEFAULTS: SettingsBody = {
   bucket_size: 600,
-  similarity: 0.92,
+  similarity: 0.9,
   picks_dir: 'picks',
   advance_on_action: false,
   hide_rejected_photos: false,
@@ -68,20 +68,16 @@ export function saveNote(saved: SettingsBody | null, d: SettingsDraft, invalid: 
 
 /**
  * The line under the quality switch: what the worker is doing with the
- * *saved* setting (the switch may hold an unsaved edit). The model download
- * and its failure are shown by the model row above it, so they say nothing
- * here.
+ * *saved* setting (the switch may hold an unsaved edit).
  */
 export function qualityStatusText(q: QualityStatus | null): string {
   if (!q) return ''
-  if (!q.enabled) return 'Off: no model download, no ratings.'
+  if (!q.enabled) return 'Off: no ratings.'
   switch (q.state) {
     case 'waiting':
       return 'Waiting for the scan to finish before rating photos.'
     case 'scoring':
       return `Rating photos: ${q.done.toLocaleString('en-US')} of ${q.total.toLocaleString('en-US')}.`
-    case 'error':
-      return `Rating stopped: ${q.error ?? 'unknown error'}. Restart Choix to try again.`
     case 'idle':
       return 'Ratings are up to date.'
     default:

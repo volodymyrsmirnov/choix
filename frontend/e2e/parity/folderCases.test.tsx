@@ -1,4 +1,4 @@
-// The Folder cases (200–229) against the approved scenarios, without a
+// The Folder cases (200–231) against the approved scenarios, without a
 // browser:
 //   - the cases cover exactly the registered Folder states, each driven;
 //   - FOLDER_STEPS (cases.ts, which runs on Node and cannot import the
@@ -23,13 +23,14 @@ import { reclusterWithToast } from '../../src/app/folder/recluster'
 import { filterClusters } from '../../src/design/screens/folder/filter'
 import { FolderScreen } from '../../src/design/screens/folder/FolderScreen'
 import type { FolderProps } from '../../src/design/screens/folder/props'
-import type { FolderFilter, ModelStatus, QualityStatus, SettingsBody } from '../../src/design/types'
+import type { FolderFilter, QualityStatus, SettingsBody } from '../../src/design/types'
 import type { FolderView } from '../../bindings/github.com/volodymyrsmirnov/choix/internal/app/catalog/models'
 import { CASES, FOLDER_STATES, FOLDER_STEPS, type FolderSteps } from './cases'
 import { mediaPhoto } from './fixtures'
 import { FOLDER, FOLDER_MEDIA, folderScenarioProps, RECLUSTER_CALLS } from './fixtures/folder'
 import { MEDIA } from './fixtures/table'
 import { bindingError, type AppErrorCause, type ParityFixture } from './mock-bindings/control'
+import { shimStatus } from './mock-bindings/models/shim'
 
 const flush = async () => {
   for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0))
@@ -155,7 +156,8 @@ describe("the app's session and stores, fed the fixture, give the screen the sce
         row: summary.get().value,
         scan: scan.get().value?.[folderId],
         settings,
-        models: f.models as ModelStatus[],
+        // What Go's Models shim answers (the fixture has no models field).
+        models: shimStatus(),
         quality: (f.quality as QualityStatus | undefined) ?? null,
         filter,
         chosen: s.down ? (visible[s.down]?.id ?? null) : null,

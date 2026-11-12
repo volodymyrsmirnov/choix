@@ -2,8 +2,9 @@ import { expect, test } from 'bun:test'
 import { designRefProblem } from './designRef'
 import { scenarios } from './settings'
 
-test('settings holds exactly the inventory states 500–520', () => {
-  const want = Array.from({ length: 21 }, (_, i) => 500 + i)
+test('settings holds exactly the inventory states 500–520, without the retired 505, 506 and 514–517', () => {
+  const retired = [505, 506, 514, 515, 516, 517]
+  const want = Array.from({ length: 21 }, (_, i) => 500 + i).filter((n) => !retired.includes(n))
   expect(scenarios.map((s) => s.n).sort((a, b) => a - b)).toEqual(want)
   expect(scenarios.every((s) => s.group === 'settings')).toBe(true)
 })

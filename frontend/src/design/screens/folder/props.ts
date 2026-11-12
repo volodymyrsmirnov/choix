@@ -12,11 +12,16 @@ export type FolderMenu = 'device' | 'sort'
 
 /**
  * How the folder's clusters were formed: by look (`visual`), or by capture
- * time only because the CLIP model is still downloading, its download
- * failed, or visual grouping is off in Settings. The first two have a
- * notice; `time-off` has none: it is the user's own choice.
+ * time only because visual grouping is off in Settings (`time-off`). The
+ * page shows no notice for either: grouping by time is the user's choice.
  */
-export type FolderGrouping = 'visual' | 'time-downloading' | 'time-failed' | 'time-off'
+export type FolderGrouping =
+  | 'visual'
+  | 'time-off'
+  /** @deprecated removed in phase B: nothing is downloaded. */
+  | 'time-downloading'
+  /** @deprecated removed in phase B: nothing is downloaded. */
+  | 'time-failed'
 
 /**
  * The Folder page (spec §4.3): v1's Library cluster grid inside one folder,

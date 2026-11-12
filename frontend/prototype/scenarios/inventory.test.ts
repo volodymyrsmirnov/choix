@@ -2,6 +2,7 @@
 import { expect, test } from 'bun:test'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import retired from '../../../docs/design/retired.json'
 import type { Scenario } from '../registry'
 import { inventory, labelOf } from './inventory'
 
@@ -20,10 +21,14 @@ test('labels are written as the inventory writes them', () => {
   expect(labelOf('strip with `+N` overflow')).toBe('Strip with +N overflow')
 })
 
-test('every state is in the inventory, under the inventory’s label, and every inventory state exists', async () => {
+test('every state is in the inventory, under the inventory’s label, and every inventory state exists unless retired', async () => {
   const inv = inventory()
   const states = await allScenarios()
+  // The plan's inventory is a historical document: a state retired since
+  // (docs/design/retired.json) stays listed there.
+  const gone = new Set((retired as Array<number | { n: number }>).map((r) => (typeof r === 'number' ? r : r.n)))
   expect(states.length).toBeGreaterThan(140)
   for (const s of states) expect(`${s.n} ${s.label}`).toBe(`${s.n} ${inv.get(s.n)}`)
-  expect([...inv.keys()].sort((a, b) => a - b)).toEqual(states.map((s) => s.n).sort((a, b) => a - b))
+  for (const n of gone) expect([n, inv.has(n)]).toEqual([n, true])
+  expect([...inv.keys()].filter((n) => !gone.has(n)).sort((a, b) => a - b)).toEqual(states.map((s) => s.n).sort((a, b) => a - b))
 })

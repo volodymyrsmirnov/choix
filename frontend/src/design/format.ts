@@ -53,23 +53,6 @@ export function abbreviatePath(p: string, home: string): string {
 }
 
 /**
- * Decimal byte sizes, as Finder shows them: `'352 MB'`, `'1.5 GB'`. A value
- * that rounds up to 1,000 of a unit is shown in the next one (`999_999` →
- * `'1 MB'`, never `'1,000 KB'`).
- */
-export function bytes(n: number): string {
-  if (n < 1e3) return `${n} B`
-  if (Math.round(n / 1e3) < 1e3) return `${Math.round(n / 1e3)} KB`
-  if (Math.round(n / 1e6) < 1e3) return `${Math.round(n / 1e6)} MB`
-  return `${(n / 1e9).toLocaleString(LOCALE, { maximumFractionDigits: 1 })} GB`
-}
-
-/** Whole decimal megabytes, grouped, without the unit: `'137'` (download progress). */
-export function megabytes(n: number): string {
-  return Math.round(n / 1e6).toLocaleString(LOCALE)
-}
-
-/**
  * Binds the last two words with a no-break space so a wrapped text block
  * never ends on a single short word (spec §4.6). Texts of fewer than four
  * words are left alone; running it twice changes nothing.

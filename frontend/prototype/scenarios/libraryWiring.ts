@@ -2,23 +2,20 @@
 // and Library states are clickable. Not a scenario file (.ts, so
 // scenarios/index.ts does not collect it).
 //
-// Store keys: `selectedId`, `dropActive`, `removed` (ids), `model:<kind>`
-// (a state override), `libraryFilter` (the toolbar), and the overlay ids
+// Store keys: `selectedId`, `dropActive`, `removed` (ids), `libraryFilter`
+// (the toolbar), and the overlay ids
 // `folder-menu` and `remove-folder` (a folder id while open, false when
 // closed), `library-order-menu` and `library-show-menu` (true while open),
 // `toast:<id>`.
 import type { LibraryProps } from '../../src/design/screens/library/props'
 import { LIBRARY_OVERLAYS } from '../../src/design/screens/library/props'
 import { LIBRARY_FILTER } from '../../src/design/screens/library/filter'
-import type { FolderSummary, LibraryFilter, ModelStatus, QualityStatus, ScanProgress, ToastItem } from '../../src/design/types'
-import { MODELS_READY } from '../mock/data'
+import type { FolderSummary, LibraryFilter, QualityStatus, ToastItem } from '../../src/design/types'
 import type { ScenarioCtx } from '../registry'
 import { read, toastsOf } from '../store'
 
 export interface LibraryState {
   folders: FolderSummary[] | null
-  models?: ModelStatus[]
-  online?: boolean
   dropActive?: boolean
   toasts?: ToastItem[]
   selectedId?: string | null
@@ -43,10 +40,6 @@ export function libraryProps(ctx: ScenarioCtx, s: LibraryState): LibraryProps {
   const removed = read<string[]>(state, 'removed', [])
   const folders = s.folders && s.folders.filter((f) => !removed.includes(f.id))
   const name = (id: string) => s.folders?.find((f) => f.id === id)?.name ?? id
-  const models = (s.models ?? MODELS_READY).map((m) => {
-    const o = read<ModelStatus['state'] | null>(state, `model:${m.kind}`, null)
-    return o ? { ...m, state: o, ...(o === 'failed' ? {} : { error: undefined }) } : m
-  })
   const open = (key: string, dflt: string | null | undefined) => read<string | false | null>(state, key, dflt ?? null) || null
   const filter = read<LibraryFilter>(state, 'libraryFilter', { ...LIBRARY_FILTER, ...s.filter })
   const menuOpen = (key: string, dflt: boolean) => read<boolean>(state, key, dflt)
@@ -58,8 +51,6 @@ export function libraryProps(ctx: ScenarioCtx, s: LibraryState): LibraryProps {
 
   return {
     folders,
-    models,
-    online: s.online ?? true,
     dropActive: read(state, 'dropActive', s.dropActive ?? false),
     toasts: toastsOf(state, s.toasts),
     selectedId: read(state, 'selectedId', s.selectedId ?? null),
@@ -89,8 +80,6 @@ export function libraryProps(ctx: ScenarioCtx, s: LibraryState): LibraryProps {
       }),
     onSettings: () => go(GO.settings),
     onHelp: () => go(GO.shortcuts),
-    onRetryModel: (kind) => set({ [`model:${kind}`]: 'downloading' }),
-    onToggleModel: (kind, on) => set({ [`model:${kind}`]: on ? 'queued' : 'disabled' }),
     onUndoToast: (id) => set({ [`toast:${id}`]: false }),
     onDismissToast: (id) => set({ [`toast:${id}`]: false }),
   }

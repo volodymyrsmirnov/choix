@@ -396,7 +396,7 @@ function Inputs({ ctx }: { ctx: ScenarioCtx }) {
   const off = read(ctx, 'off', false)
   const ddOpen = read(ctx, 'gallery-dropdown', true)
   const camera = read(ctx, 'camera', '')
-  const sim = read(ctx, 'sim', 0.92)
+  const sim = read(ctx, 'sim', 0.9)
   const cameraLabel = CAMERAS.find((c) => c.value === camera)?.label ?? camera
   return (
     <Page title="Inputs and switches">
@@ -652,20 +652,16 @@ const quality = (q: Partial<QualityStatus>): QualityStatus => ({
   enabled: true,
   state: 'idle',
   active: true,
-  received: 0,
-  size: 0,
   done: 0,
   total: 0,
   rated: 0,
   ...q,
 })
 
+// The indicator draws a rating pass only; waiting for a scan draws nothing.
 const QUALITIES: { caption: string; status: QualityStatus }[] = [
-  { caption: 'Downloading', status: quality({ state: 'downloading', received: 88_000_000, size: 177_000_000 }) },
-  { caption: 'Downloading, size unknown', status: quality({ state: 'downloading' }) },
   { caption: 'Rating', status: quality({ state: 'scoring', done: 640, total: 2310 }) },
-  { caption: 'Download failed', status: quality({ state: 'download_failed', error: 'connection reset' }) },
-  { caption: 'Stopped', status: quality({ state: 'error', error: 'model failed to load' }) },
+  { caption: 'Rating, nearly done', status: quality({ state: 'scoring', done: 2297, total: 2310 }) },
 ]
 
 function Feedback() {
@@ -740,19 +736,22 @@ function Feedback() {
       </Section>
       <Section title="Banners">
         <div className="flex flex-col gap-3 max-w-[640px]">
-          <Banner tone="info" icon="info" title="Downloading the visual grouping model" body="Folders are grouped by time until it arrives.">
-            <ProgressRail className="w-full mt-2" label="Visual grouping model download" value={0.31} />
-          </Banner>
+          <Banner
+            tone="info"
+            icon="folder"
+            title="4 picks are missing from “picks”"
+            body="Their copies were moved or deleted outside Choix. The photos stay picked; Choix never copies them back on its own."
+            actions={
+              <Button variant="default" onClick={noop}>
+                Open Picks
+              </Button>
+            }
+          />
           <Banner
             tone="warn"
             icon="alert"
-            title="Grouped by time only"
-            body="Turn on visual grouping in Settings to group similar shots."
-            actions={
-              <Button variant="default" onClick={noop}>
-                Settings
-              </Button>
-            }
+            title="“Card A” is on a read-only drive"
+            body="Choix can show and review it, but cannot copy picks into it."
           />
           <Banner
             tone="error"
@@ -937,7 +936,7 @@ function TitleBars() {
             trailing={folderTrailing}
           />
         </Bar>
-        <Bar caption="Folder, quality model downloading">
+        <Bar caption="Folder, rating quality">
           <TitleBar
             alignGroup="titlebar-4"
             leading={back}

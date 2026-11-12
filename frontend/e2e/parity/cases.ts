@@ -85,7 +85,7 @@ export const GALLERY_STATES = [800, 801, 802, 803, 804, 805, 806, 807, 808, 809]
 export const NATIVE_SKIP = 'native surface'
 export const GALLERY_SKIP = 'component gallery: no app counterpart'
 
-// ── Welcome (11–17, 30–36) and Library (100–122) ───────────────────────────
+// ── Welcome (30–37) and Library (100–131) ──────────────────────────────────
 //
 // The fixtures (fixtures/welcome.ts, fixtures/library.ts) carry each state's
 // data as Go answers it. What the prototype passes as a prop and the app
@@ -94,7 +94,6 @@ export const GALLERY_SKIP = 'component gallery: no app counterpart'
 //     onFocus); where the state shows the selection without the focus, the
 //     focus then leaves the row, as when the user clicks elsewhere;
 //   - a row's hover or focus look (forceRow): a real hover or focus;
-//   - offline (14): the browser goes offline (navigator.onLine, `offline`);
 //   - a drag over the window (101): the class Wails' runtime puts on the
 //     drop target (#root) while files are over the window, which the
 //     container follows (library/windowSources.ts);
@@ -111,8 +110,6 @@ export const GALLERY_SKIP = 'component gallery: no app counterpart'
 
 /** What a welcome or Library state needs beyond its fixture; each runs after the load, in this order. */
 export interface LibrarySteps {
-  /** The browser goes offline. */
-  offline?: true
   /** The scanning folder's job fails, with this row text (Go's events). */
   stopRun?: string
   /** Files are dragged over the window. */
@@ -135,7 +132,6 @@ export interface LibrarySteps {
 
 /** The states that need more than their fixture. */
 export const LIBRARY_STEPS: Record<number, LibrarySteps> = {
-  14: { offline: true },
   32: { stopRun: 'Scan stopped. Rescan to finish it.' },
   101: { dragOver: true },
   103: { hover: 'dolomites' },
@@ -185,8 +181,6 @@ const hoverRow =
     await page.hover(rowButton(folderId))
   }
 
-const goOffline: Drive = (page) => page.context().setOffline(true)
-
 /** What Wails' runtime does to the drop target (#root) while files are dragged over the window. */
 const dragOverWindow: Drive = async (page) => {
   await page.evaluate(() => {
@@ -217,14 +211,14 @@ const inOrder =
   }
 
 /** The registered welcome and Library states drawn by the Library screen (the welcome group's 40 is the error screen, below). */
-export const WELCOME_STATES = [11, 12, 13, 14, 15, 16, 17, 30, 31, 32, 33, 34, 35, 36, 37]
-export const LIBRARY_STATES = Array.from({ length: 32 }, (_, i) => 100 + i)
+export const WELCOME_STATES = [30, 31, 32, 33, 34, 35, 36, 37]
+/** 100–131; 112 and 120 (the model-download banner) are retired. */
+export const LIBRARY_STATES = Array.from({ length: 32 }, (_, i) => 100 + i).filter((n) => n !== 112 && n !== 120)
 
 /** State `n`'s case: its fixture, then its steps (LIBRARY_STEPS). */
 export function libraryCase(n: number): ParityCase {
   const s = LIBRARY_STEPS[n] ?? {}
   const drive: Drive[] = [loadFixture(n)]
-  if (s.offline) drive.push(goOffline)
   if (s.stopRun !== undefined) drive.push(stopRun(n, s.stopRun))
   if (s.dragOver) drive.push(dragOverWindow)
   if (s.select !== undefined) drive.push(selectRow(s.select))
@@ -276,8 +270,8 @@ export const SHELL_CASES: ParityCase[] = [{ state: ERROR_SCREEN_STATE, drive: lo
 // ── Folder (200–231) ────────────────────────────────────────────────────────
 //
 // The fixtures (fixtures/folder.ts) carry each state's data as Go answers it:
-// the grid (Catalog.Open), the folder's Library row, the settings and models
-// that decide the grouping notice, the quality worker, the toasts of 222 and
+// the grid (Catalog.Open), the folder's Library row, the settings, the
+// quality worker, the toasts of 222 and
 // 223 (seeded, see the fixture's header), and how Catalog.Recluster answers
 // in 215 and 225. What the prototype passes as a prop and the app keeps as
 // the page's own state, or hears from Go later, is done here, the real way:
@@ -410,8 +404,8 @@ export function folderCase(n: number): ParityCase {
   return { state: n, drive: inOrder(drive) }
 }
 
-/** The registered Folder states. */
-export const FOLDER_STATES = Array.from({ length: 32 }, (_, i) => 200 + i)
+/** The registered Folder states: 200–231; 216 and 228 (the notices of a model download) are retired. */
+export const FOLDER_STATES = Array.from({ length: 32 }, (_, i) => 200 + i).filter((n) => n !== 216 && n !== 228)
 
 export const FOLDER_CASES: ParityCase[] = FOLDER_STATES.map(folderCase)
 
@@ -691,10 +685,10 @@ export const FOCUS_CASES: ParityCase[] = [...FOCUS_STATES, ...COMPARE_STATES].ma
 //
 // The fixtures (fixtures/settings.ts) carry each state's data as Go answers
 // it: the saved values (Settings.Get: pending in 510, refused with the
-// state's message in 511), both downloads and the quality worker
-// (Models.Status, Models.Quality), how Save and Retry answer (`calls`: kept
-// in flight in 504 and 515), the "Save failed" toast of 512 (seeded), Go's
-// events that bring 509's and 516's values, and the quality states' opening
+// state's message in 511), the quality worker (Models.Quality and
+// Catalog.QualityStatus), how Save answers (`calls`: kept in flight in 504),
+// the "Save failed" toast of 512 (seeded), Go's event that brings 509's
+// value, and the quality states' opening
 // scroll (`ui`, the one value with no real path). What the prototype passes
 // as a prop and the app keeps as the page's own state is done here, the
 // real way:
@@ -703,10 +697,9 @@ export const FOCUS_CASES: ParityCase[] = [...FOCUS_STATES, ...COMPARE_STATES].ma
 //   - the section: its sidebar item clicked; in the quality states, the
 //     opening scroll to the quality field reports the section it shows;
 //   - a save in flight: Save pressed; the leave prompt: Back pressed with
-//     unsaved edits (the router's guard holds the navigation); a retry in
-//     flight: the quality model's Retry pressed;
-//   - 509 and 516: Go's events (quality:status, models:progress), emitted
-//     once the page shows the values Go reported before them.
+//     unsaved edits (the router's guard holds the navigation);
+//   - 509: Go's event (quality:status), emitted once the page shows the
+//     value Go reported before it.
 // Controls are clicked with element.click() (no hover, no focus).
 // settingsCases.test.tsx holds SETTINGS_STEPS to the scenarios' props.
 
@@ -727,8 +720,6 @@ export interface SettingsSteps {
   save?: true
   /** Back is pressed, with unsaved edits: the leave prompt opens. */
   back?: true
-  /** The quality model's Retry is pressed (the fixture's `calls` keeps it in flight). */
-  retry?: true
 }
 
 export const SETTINGS_STEPS: Record<number, SettingsSteps> = {
@@ -738,7 +729,6 @@ export const SETTINGS_STEPS: Record<number, SettingsSteps> = {
   504: { bucket: '5', toggle: ['advance-toggle'], save: true },
   508: { bucket: '5', toggle: ['advance-toggle'], back: true },
   512: { bucket: '5', toggle: ['advance-toggle'] },
-  515: { retry: true },
   519: { section: 'behaviour' },
   520: { section: 'output' },
 }
@@ -757,14 +747,11 @@ const typeInto =
 
 /**
  * The page shows the value Go reported before `ev` (the bindings' answer):
- * the model's row for `models:progress`, the quality status line for
- * `quality:status`. Emitting earlier could race the load, whose answer
- * would then win.
+ * the quality status line for `quality:status`. Emitting earlier could race
+ * the load, whose answer would then win.
  */
 const beforeShown = async (page: Page, ev: { name: string; data: unknown }) => {
-  if (ev.name === 'models:progress') {
-    await page.locator(`#settings-model-${(ev.data as { kind: string }).kind}`).waitFor()
-  } else if (ev.name === 'quality:status') {
+  if (ev.name === 'quality:status') {
     await page.waitForFunction(() => (document.querySelector('[data-testid="quality-status"]')?.textContent ?? '') !== '')
   } else {
     throw new Error(`parity: no proof of the earlier value for ${ev.name}`)
@@ -806,17 +793,11 @@ export function settingsCase(n: number): ParityCase {
       await page.locator('[role="alertdialog"]').waitFor()
     })
   }
-  if (s.retry) {
-    drive.push(async (page) => {
-      await clickEl(page, '[data-testid="quality-retry"]')
-      await page.locator('[data-testid="quality-retry"][aria-busy="true"]').waitFor()
-    })
-  }
   return { state: n, drive: inOrder(drive) }
 }
 
-/** The registered Settings states. */
-export const SETTINGS_STATES = Array.from({ length: 21 }, (_, i) => 500 + i)
+/** The registered Settings states: 500–520; 505, 506 and 514–517 (the model downloads and the quality error) are retired. */
+export const SETTINGS_STATES = Array.from({ length: 21 }, (_, i) => 500 + i).filter((n) => ![505, 506, 514, 515, 516, 517].includes(n))
 
 export const SETTINGS_CASES: ParityCase[] = SETTINGS_STATES.map(settingsCase)
 

@@ -1,8 +1,8 @@
 // Shared mock data for every scenario group: the synthetic photos
-// (tools/make-mock-photos.ts), six invented shoots, and model states. Names,
+// (tools/make-mock-photos.ts), six invented shoots, and quality states. Names,
 // counts and dates are invented (the repository is public); nothing here
 // may come from the owner's mockup or library (mock/privacy.test.ts).
-import type { FolderSummary, ModelStatus, QualityStatus, ScanProgress } from '../../src/design/types'
+import type { FolderSummary, QualityStatus, ScanProgress } from '../../src/design/types'
 import times from './photos.json'
 
 const CAPTURED = times as Record<string, string>
@@ -109,24 +109,12 @@ export const scanning = (f: FolderSummary, progress: ScanProgress): FolderSummar
 export const replace = (list: FolderSummary[], ...next: FolderSummary[]): FolderSummary[] =>
   list.map((f) => next.find((n) => n.id === f.id) ?? f)
 
-// ── Models ──────────────────────────────────────────────────────────────────
-
-export const CLIP_SIZE = 352_000_000
-export const QUALITY_SIZE = 177_000_000
-
-export function model(kind: ModelStatus['kind'], state: ModelStatus['state'], received = 0, error?: string): ModelStatus {
-  const size = kind === 'clip' ? CLIP_SIZE : QUALITY_SIZE
-  return { kind, state, received: state === 'ready' ? size : received, size, ...(error ? { error } : {}) }
-}
-
-export const MODELS_READY = [model('clip', 'ready'), model('quality', 'ready')]
+// ── Quality ─────────────────────────────────────────────────────────────────
 
 export const quality = (q: Partial<QualityStatus>): QualityStatus => ({
   enabled: true,
   state: 'idle',
   active: true,
-  received: 0,
-  size: 0,
   done: 0,
   total: 0,
   rated: 0,

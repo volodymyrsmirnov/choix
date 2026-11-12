@@ -2,8 +2,9 @@
 //
 // runDirs() makes the run's temporary directory once per run — the runner
 // process creates it while loading the config and passes it to the workers
-// as CHOIX_E2E_TMP — with two data directories whose config.toml turns both
-// model settings off, so no model download is ever attempted. It runs when
+// as CHOIX_E2E_TMP — with two data directories whose config.toml turns
+// visual grouping off, so folders cluster by time only and the specs can
+// count the clusters a bucket size makes. It runs when
 // the config loads, not in the global setup proper, because Playwright
 // starts the webServer before globalSetup and the server reads config.toml
 // at start.
@@ -24,8 +25,8 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url))
 /** The repository root (go commands run there). */
 export const repoRoot = here('../..')
 
-/** The config.toml of every data directory: both model settings off. */
-const CONFIG_TOML = 'visual_grouping = false\nquality_rating = false\n'
+/** The config.toml of every data directory: visual grouping off (time-only clusters, which catalog.e2e.ts counts). */
+const CONFIG_TOML = 'visual_grouping = false\n'
 
 export interface RunDirs {
   /** The run's temporary directory; everything below lives in it. */

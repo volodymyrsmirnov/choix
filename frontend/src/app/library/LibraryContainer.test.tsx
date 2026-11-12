@@ -95,7 +95,8 @@ async function shellWith(rows: FolderRowData[], models: ModelStatus[] = READY, q
     toasts,
     scan: createScanStore({ list, on: bus.on }),
     models: createModelsStore({ status: () => Promise.resolve(models), on: bus.on }),
-    quality: createQualityStore({ quality: () => Promise.resolve(quality), on: bus.on }),
+    // As Go sends the snapshot (received and size stay in it, at 0, until phase B).
+    quality: createQualityStore({ quality: () => Promise.resolve({ received: 0, size: 0, ...quality }), on: bus.on }),
     settings: createSettingsStore({ get: () => Promise.resolve(BODY) }),
     library: createLibraryStore({ list, on: bus.on, toasts }),
     sheet: flag(),
@@ -143,7 +144,7 @@ describe('LibraryContainer', () => {
     timeline.shell.toasts.push({ tone: 'info', title: 'Hello' })
     expectTitleBarUncovered(render(timeline.shell))
 
-    // Welcome (no folders, a model still to come), drop zone, loading.
+    // No folders (whatever the models say), drop zone, loading.
     expectTitleBarUncovered(render((await shellWith([], [model('clip', 'downloading'), model('quality', 'queued')])).shell))
     expectTitleBarUncovered(render((await shellWith([])).shell))
     const loading = await shellWith([])
@@ -167,9 +168,12 @@ describe('LibraryContainer', () => {
     expect(rowA).toContain('aria-current="true"')
     expect(html.slice(html.indexOf('data-folder="b"'))).not.toContain('aria-current="true"')
 
-    // No folders and a model downloading: the welcome panel.
+    // No folders: the drop zone, even with a model reported downloading
+    // (Go's shim never reports one; the design ignores the models).
     const welcome = await shellWith([], [model('clip', 'downloading'), model('quality', 'queued')])
-    expect(render(welcome.shell)).toContain('Welcome to Choix')
+    const welcomeHtml = render(welcome.shell)
+    expect(welcomeHtml).toContain('data-drop-zone')
+    expect(welcomeHtml).not.toContain('Welcome to Choix')
 
     // No folders, every model ready: the drop zone.
     const empty = await shellWith([])
@@ -177,9 +181,9 @@ describe('LibraryContainer', () => {
     expect(emptyHtml).toContain('data-drop-zone')
     expect(emptyHtml).not.toContain('Welcome to Choix')
 
-    // Folders and a download: the compact banner.
+    // Folders and a download reported: no banner (nothing is downloaded any more).
     const banner = await shellWith([row('a', 'Harbour walk')], [model('clip', 'downloading'), model('quality', 'ready')])
-    expect(render(banner.shell)).toContain('data-testid="model-banner"')
+    expect(render(banner.shell)).not.toContain('data-testid="model-banner"')
 
     // A rating pass in its folder's row (not in the bar: no duplicate status).
     const scoring = await shellWith([row('a', 'Harbour walk')], READY, {
