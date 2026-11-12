@@ -207,6 +207,41 @@ func (r *FilesRepo) CountAnalyzedMissingEmbedding() (int, error) {
 	return n, nil
 }
 
+// missingPrint selects the 'analyzed' files that are pending for a print
+// id (the single parameter): no ai_signals row, or a row whose
+// vision_print_id is NULL or another id. A row stamped with the id but no
+// print (Vision could not make one) is not pending.
+const missingPrint = `scan_status = 'analyzed'
+		   AND id NOT IN (SELECT file_id FROM ai_signals WHERE vision_print_id = ?)`
+
+// BumpAnalyzedMissingPrint rewinds every 'analyzed' file pending for
+// printID back to 'thumbed' (the analyze stage's input status) and clears
+// its error, so the next pipeline pass makes its print. Returns the number
+// of rows rewound.
+func (r *FilesRepo) BumpAnalyzedMissingPrint(printID string) (int64, error) {
+	res, err := r.db.ExecContext(context.Background(), `
+		UPDATE files
+		   SET scan_status = 'thumbed', error = NULL
+		 WHERE `+missingPrint, printID)
+	if err != nil {
+		return 0, fmt.Errorf("BumpAnalyzedMissingPrint: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// CountAnalyzedMissingPrint returns how many 'analyzed' files are pending
+// for printID: exactly the rows BumpAnalyzedMissingPrint would rewind.
+func (r *FilesRepo) CountAnalyzedMissingPrint(printID string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM files WHERE `+missingPrint, printID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("CountAnalyzedMissingPrint: %w", err)
+	}
+	return n, nil
+}
+
 // CountByStatus returns the number of files at the given scan_status.
 // Used by the pipeline to stabilize progress denominators.
 func (r *FilesRepo) CountByStatus(status string) (int, error) {
@@ -399,15 +434,38 @@ func (r *FilesRepo) UpsertOnRescan(f File, run int64) (id int64, inserted bool, 
 		}
 		return existing.ID, false, nil
 	}
-	// Modified — reset scan_status, refresh metadata fields.
-	_, err = r.db.ExecContext(context.Background(),
-		`UPDATE files SET size=?, mtime=?, content_hash=?, kind=?, format=?, scan_status='discovered', error=NULL,
-		        quality_raw=NULL, quality_model=NULL, seen_run=? WHERE id=?`,
-		f.Size, f.Mtime, f.ContentHash, f.Kind, f.Format, run, existing.ID)
-	if err != nil {
+	// Modified — reset scan_status, refresh metadata fields, and drop what
+	// was derived from the old bytes: the quality rating and the feature
+	// print. Both updates commit together or not at all.
+	if err := r.resetChanged(f, run, existing.ID); err != nil {
 		return 0, false, fmt.Errorf("UpsertOnRescan: update %s: %w", f.Path, err)
 	}
 	return existing.ID, false, nil
+}
+
+// resetChanged rewrites the row id of a file whose content changed and
+// clears its rating and its stored print, in one transaction.
+func (r *FilesRepo) resetChanged(f File, run, id int64) error {
+	ctx := context.Background()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE files SET size=?, mtime=?, content_hash=?, kind=?, format=?, scan_status='discovered', error=NULL,
+		        quality_raw=NULL, quality_model=NULL, seen_run=? WHERE id=?`,
+		f.Size, f.Mtime, f.ContentHash, f.Kind, f.Format, run, id); err != nil {
+		return fmt.Errorf("reset file: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE ai_signals SET vision_print = NULL, vision_print_id = NULL WHERE file_id = ?`, id); err != nil {
+		return fmt.Errorf("clear print: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // RecordDiscoveryFailure records that the walk of generation run found the
