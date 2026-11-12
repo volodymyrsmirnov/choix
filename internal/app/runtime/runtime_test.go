@@ -274,6 +274,48 @@ func TestRuntime_QualityOffStopsScoringAtOnce(t *testing.T) {
 	}
 }
 
+// A new folder's clusters are published before its quality pass: while the
+// first photo is being rated, the Library row already has its counts and
+// previews (still "scanning"), and the open folder has had its folder:changed
+// "clusters".
+func TestRuntime_ClustersShowWhileRatingRuns(t *testing.T) {
+	h := newHarness(t)
+	h.setConfig(t, func(c *config.Config) { c.QualityRating = true })
+	release := h.inf.holdCalls()
+	defer release()
+	root := h.folder(t, "Trip", 3, 512, 512)
+	r := h.start(t)
+	id := h.add(t, r, root)
+	receive(t, "a quality crop in flight", h.inf.entered)
+
+	waitFor(t, "the Library row's counts and previews during the rating pass", func() bool {
+		s := summary(t, r, id)
+		return s.Photos == 3 && s.Clusters > 0 && len(s.Previews) > 0
+	})
+	if s := summary(t, r, id); s.State != "scanning" {
+		t.Fatalf("row state during the rating pass = %q; want scanning", s.State)
+	}
+	clusters := func() int {
+		n := 0
+		for _, d := range h.em.all(events.FolderChanged) {
+			if ev, ok := d.(events.FolderChangedEvent); ok && ev.FolderID == id && ev.Reason == "clusters" {
+				n++
+			}
+		}
+		return n
+	}
+	waitFor(t, `folder:changed "clusters" during the rating pass`, func() bool { return clusters() == 1 })
+
+	release()
+	waitReady(t, r, id)
+	if n := clusters(); n != 1 {
+		t.Fatalf(`folder:changed "clusters" = %d; want 1 (the pass changes no cluster)`, n)
+	}
+	if n := countRows(t, openState(t, root), `SELECT COUNT(*) FROM files WHERE quality_raw IS NOT NULL`); n != 3 {
+		t.Fatalf("rated photos = %d; want 3", n)
+	}
+}
+
 // Review Focus 1: a drive unplugged while its folder scans.
 func TestRuntime_UnplugAndReplug(t *testing.T) {
 	h := newHarness(t)

@@ -176,6 +176,26 @@ func (h *jobTestHarness) folderChanged(id, reason string) int {
 	return n
 }
 
+// folderReasons returns the reasons of the folder's folder:changed events,
+// oldest first.
+func (h *jobTestHarness) folderReasons(id string) []string {
+	var out []string
+	for _, ev := range h.rec.Events(events.FolderChanged) {
+		if e, ok := ev.(events.FolderChangedEvent); ok && e.FolderID == id {
+			out = append(out, e.Reason)
+		}
+	}
+	return out
+}
+
+// jobWith returns a Job over the harness, rating through tracker (may be
+// nil), whose AfterJob is afterJob instead of the harness's counter.
+func (h *jobTestHarness) jobWith(tracker QualityRun, afterJob func(context.Context, *Session)) *Job {
+	j := h.job(tracker)
+	j.o.AfterJob = afterJob
+	return j
+}
+
 // jobTestRow is one files row as the job tests look at it.
 type jobTestRow struct {
 	status, err string
@@ -491,6 +511,13 @@ func TestJob_CancelDuringNativeCallReturnsWithinOneSecond(t *testing.T) {
 	if n := jobTestCountStatus(h.rows(t, id), "failed"); n != 0 {
 		t.Fatalf("failed rows = %d; want none (cancellation is not a file failure)", n)
 	}
+	// Cancelled before its clusters were final: nothing was published.
+	if n := h.afterJob.Load(); n != 0 {
+		t.Fatalf("AfterJob called %d times for a job cancelled mid-scan; want 0", n)
+	}
+	if n := h.folderChanged(id, "clusters"); n != 0 {
+		t.Fatalf("folder:changed clusters = %d for a job cancelled mid-scan; want 0", n)
+	}
 }
 
 func TestJob_FolderVanishesMidScan(t *testing.T) {
@@ -557,11 +584,13 @@ func TestJob_FolderVanishesDuringQualityPass(t *testing.T) {
 	if o, msg := h.run(context.Background(), j, id, JobFull); o != Suspended {
 		t.Fatalf("Run = %v %q; want Suspended", o, msg)
 	}
-	if n := h.afterJob.Load(); n != 0 {
-		t.Fatalf("AfterJob called %d times for a suspended job; want 0", n)
+	// The clusters were final, and published, before the pass began; the
+	// suspension does not publish them again.
+	if n := h.afterJob.Load(); n != 1 {
+		t.Fatalf("AfterJob called %d times; want 1, before the pass", n)
 	}
-	if n := h.folderChanged(id, "clusters"); n != 0 {
-		t.Fatalf("folder:changed clusters = %d for a suspended job; want 0", n)
+	if n := h.folderChanged(id, "clusters"); n != 1 {
+		t.Fatalf("folder:changed clusters = %d; want 1, before the pass", n)
 	}
 	// The pass stopped at the next photo instead of stamping the others as
 	// never ratable because their previews could not be read.
@@ -965,7 +994,9 @@ func TestJob_RatingsEventsAreThrottled(t *testing.T) {
 		step time.Duration // how far the clock moves at each reading
 		want int
 	}{
-		{"same second", 0, 1},
+		// The first photo's event, then one after the pass for the two
+		// held back (no "clusters" event follows the pass to carry them).
+		{"same second", 0, 2},
 		{"a second apart", time.Second, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -990,6 +1021,9 @@ func TestJob_RatingsEventsAreThrottled(t *testing.T) {
 			}
 			if n := h.folderChanged(id, "ratings"); n != tc.want {
 				t.Fatalf("folder:changed ratings = %d; want %d", n, tc.want)
+			}
+			if got := h.folderReasons(id); got[len(got)-1] != "ratings" {
+				t.Fatalf("folder:changed reasons = %v; want the last rating announced last", got)
 			}
 		})
 	}
@@ -1190,8 +1224,8 @@ func TestJob_FolderBackBeforeEndIsStillSuspended(t *testing.T) {
 	if o, msg := h.run(context.Background(), j, id, JobFull); o != Suspended {
 		t.Fatalf("Run = %v %q; want Suspended", o, msg)
 	}
-	if n := h.afterJob.Load(); n != 0 {
-		t.Fatalf("AfterJob called %d times; want 0", n)
+	if n := h.afterJob.Load(); n != 1 {
+		t.Fatalf("AfterJob called %d times; want 1, before the pass", n)
 	}
 	s, release := h.acquire(t, id)
 	defer release()
@@ -1223,6 +1257,141 @@ func TestJob_QualityOffOrModelMissingSkipsPass(t *testing.T) {
 			defer tracker.mu.Unlock()
 			if tracker.begun != 0 || inf.calls.Load() != 0 {
 				t.Fatalf("Begin called %d times, model run %d times; want no pass", tracker.begun, inf.calls.Load())
+			}
+			// Without a pass the job publishes its clusters once, at its end:
+			// one refresh, one grid reload, no ratings.
+			if n := h.afterJob.Load(); n != 1 {
+				t.Fatalf("AfterJob called %d times; want 1", n)
+			}
+			if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
+				t.Fatalf("folder:changed reasons = %v; want [clusters]", got)
+			}
+		})
+	}
+}
+
+// The folder's clusters are final before the quality pass: the job refreshes
+// the Library's statistics and previews and then emits folder:changed
+// "clusters" before the first photo is rated, so an open folder shows its
+// grid while the ratings are computed. The pass ends with a "ratings" event,
+// not a second grid reload or refresh.
+func TestJob_ClustersPublishedBeforeTheRatingPass(t *testing.T) {
+	models := &jobTestModels{}
+	models.set(local.ModelQuality, true)
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: &jobTestInferer{}}, models)
+	id, root := h.folder(t, "early")
+	jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg", "c.jpg")
+
+	var (
+		refreshes     atomic.Int64
+		eventsAtFirst atomic.Int64 // folder:changed clusters already sent when AfterJob ran
+	)
+	j := h.jobWith(&jobTestTracker{}, func(context.Context, *Session) {
+		if refreshes.Add(1) == 1 {
+			eventsAtFirst.Store(int64(h.folderChanged(id, "clusters")))
+		}
+	})
+	// The rating gate: the first photo is held until the test releases it.
+	entered, gate := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	defer release()
+	var first sync.Once
+	j.scoreHook = func() {
+		first.Do(func() {
+			close(entered)
+			<-gate
+		})
+	}
+
+	done := make(chan Outcome, 1)
+	go func() {
+		o, _ := h.run(context.Background(), j, id, JobFull)
+		done <- o
+	}()
+	select {
+	case <-entered:
+	case <-time.After(sessionTestTimeout):
+		t.Fatal("the rating pass never reached its first photo")
+	}
+
+	// Held at the first photo: the clusters are already published.
+	if n := refreshes.Load(); n != 1 {
+		t.Fatalf("stats and previews refreshed %d times before the rating gate; want 1", n)
+	}
+	if n := eventsAtFirst.Load(); n != 0 {
+		t.Fatalf("folder:changed clusters sent before the refresh = %d; want the refresh first", n)
+	}
+	if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
+		t.Fatalf("folder:changed reasons before the rating gate = %v; want [clusters]", got)
+	}
+
+	release()
+	select {
+	case o := <-done:
+		if o != Done {
+			t.Fatalf("Run = %v; want Done", o)
+		}
+	case <-time.After(sessionTestTimeout):
+		t.Fatal("the job did not return")
+	}
+	if n := refreshes.Load(); n != 1 {
+		t.Fatalf("stats and previews refreshed %d times; want 1 (the pass changes neither)", n)
+	}
+	got := h.folderReasons(id)
+	if n := h.folderChanged(id, "clusters"); n != 1 {
+		t.Fatalf("folder:changed reasons = %v; want one clusters (the pass changes no cluster)", got)
+	}
+	if len(got) < 2 || got[0] != "clusters" || got[len(got)-1] != "ratings" {
+		t.Fatalf("folder:changed reasons = %v; want clusters first and the pass's ratings last", got)
+	}
+}
+
+// A job cancelled while it publishes its clusters (preemption, quit) stops
+// before the rating pass when one is due — the publication is not the end of
+// that job — and finishes when none is, as the last step always did. Either
+// way the end-of-job path runs once.
+func TestJob_CancelledWhilePublishingClusters(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		quality bool
+		want    Outcome
+	}{
+		{"a rating pass due", true, Stopped},
+		{"no rating pass", false, Done},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			models := &jobTestModels{}
+			models.set(local.ModelQuality, true)
+			stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+			inf := &jobTestInferer{}
+			h := newJobTestHarness(t, sessionTestOptions{stills: stills, inferer: inf}, models)
+			h.settings.set(func(c *config.Config) { c.QualityRating = tc.quality })
+			id, root := h.folder(t, "preempted")
+			jobTestWriteShots(t, stills, root, 512, 512, time.Second, "a.jpg", "b.jpg")
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var refreshes atomic.Int64
+			tracker := &jobTestTracker{}
+			j := h.jobWith(tracker, func(context.Context, *Session) {
+				refreshes.Add(1)
+				cancel()
+			})
+
+			if o, msg := h.run(ctx, j, id, JobFull); o != tc.want {
+				t.Fatalf("Run = %v %q; want %v", o, msg, tc.want)
+			}
+			if n := refreshes.Load(); n != 1 {
+				t.Fatalf("AfterJob called %d times; want 1", n)
+			}
+			if got := h.folderReasons(id); !slices.Equal(got, []string{"clusters"}) {
+				t.Fatalf("folder:changed reasons = %v; want [clusters]", got)
+			}
+			tracker.mu.Lock()
+			defer tracker.mu.Unlock()
+			if tracker.begun != 0 || inf.calls.Load() != 0 {
+				t.Fatalf("Begin called %d times, model run %d times; want no pass after the cancellation", tracker.begun, inf.calls.Load())
 			}
 		})
 	}

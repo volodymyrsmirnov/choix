@@ -72,7 +72,7 @@ verdicts and archive-independent measurements only.
    it. (An original that already held them from earlier v1 runs is checked to be unchanged; the test logs how many.)
 
 The report — per folder: files by format, failed, clusters, wall time per stage (from each stage's `starting` to its
-`done` progress event), the time after the pipeline (CLIP backfill, quality rating, preview strip), the whole job
+`done` progress event), the time after the pipeline (CLIP backfill, preview strip, quality rating), the whole job
 (`scanning` to `ready`), files per second, and the process's peak RSS so far — is printed to stdout and written to
 `$TMPDIR/choix-uat/report.md`. That is the only file the test writes outside its temporary directories, and it is
 written safely: the temporary directory is resolved first, a `choix-uat` that is a symbolic link (or lies inside the

@@ -115,8 +115,11 @@ marked **[call]** where it matters.
   other folder "Waiting to scan" through a long quality pass].** A job is
   everything one folder needs: the pipeline pass (discover → cluster,
   resuming from each file's status), then CLIP backfill for files without
-  embeddings (plus a re-cluster if any were added), then quality rating
-  when that setting is on. A job is queued when a folder is added, opened
+  embeddings (plus a re-cluster if any were added), then the refresh of
+  the folder's cached stats and preview strip and the `folder:changed`
+  "clusters" announcement (so the folder can be reviewed while it is
+  rated), then quality rating when that setting is on, announced by
+  `folder:changed` "ratings". A job is queued when a folder is added, opened
   or rescanned, and for every reachable folder when the CLIP model finishes
   downloading. FIFO, up to `session.DefaultSlots` (2) jobs at once, each on
   a different folder, so each folder's `state.db` keeps a single writer.

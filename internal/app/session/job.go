@@ -1,7 +1,7 @@
 // The folder job: everything one folder needs, run by the Queue — a few
 // folders at a time, never one folder twice at once — the pipeline pass, the
-// CLIP backfill, the quality-rating pass and the refresh of the folder's
-// cached stats and previews.
+// CLIP backfill, the refresh of the folder's cached stats and previews once
+// its clusters are final, and the quality-rating pass.
 
 package session
 
@@ -51,8 +51,11 @@ type JobOptions struct {
 	Quality QualityRun
 	// Emit receives folder:changed. nil: no events.
 	Emit *events.Coalescer
-	// AfterJob runs last, after the work of a job that did not stop: the
-	// refresh of the folder's cached stats and previews. nil: nothing.
+	// AfterJob refreshes the folder's cached stats and previews. It runs once
+	// per job that reaches it, as soon as the folder's clusters are final for
+	// the job — before the quality pass, which changes neither — under the
+	// session's context, so its native calls are counted in the session's
+	// Inflight. nil: nothing.
 	AfterJob func(ctx context.Context, s *Session)
 }
 
@@ -80,9 +83,14 @@ var errJobFolderGone = errors.New("session: the folder's directory is gone")
 //     ready, files analyzed without an embedding are rewound and analyzed
 //     again, which reclusters.
 //  4. EnsureClustered, for a setting changed after the cluster stage.
-//  5. The quality-rating pass, while quality_rating is on and its model is
-//     ready.
-//  6. AfterJob, then folder:changed "clusters".
+//  5. The clusters are final: AfterJob, then folder:changed "clusters", so
+//     the open folder shows its grid and the Library row its counts and
+//     previews while the ratings are computed. Without a quality pass to
+//     come, this is the job's last step.
+//  6. The quality-rating pass, while quality_rating is on and its model is
+//     ready. It writes only ratings: its photos are announced by
+//     folder:changed "ratings", the last one as the pass ends, and nothing
+//     published in step 5 is refreshed or announced again.
 //
 // A broken file never fails the job: the pipeline marks it failed and goes
 // on. Run is safe for concurrent use.
@@ -138,7 +146,7 @@ func (j *Job) Run(ctx context.Context, folderID string, kind JobKind, report fun
 	return Done, ""
 }
 
-// run does steps 2 to 6 on s.
+// run does steps 2 to 6 on s (see Job).
 func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(events.Progress, string)) error {
 	sctx := s.Context(ctx)
 	p, progress := s.NewPipeline(j.o.Settings)
@@ -179,23 +187,31 @@ func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(eve
 		return err
 	}
 
-	// 5. Quality rating.
-	if err := j.rate(ctx, s); err != nil {
-		return err
-	}
-	if err := jobBetween(ctx, s); err != nil {
-		return err
-	}
-
-	// 6. Stats and previews, then tell the folder view. The work is done:
-	// a cancellation during AfterJob no longer stops the job. AfterJob's
-	// native calls, if any, are counted in the session's Inflight.
+	// 5. The clusters are final: stats and previews, then tell the folder
+	// view, before the quality pass. The pipeline's last progress is
+	// delivered first. AfterJob's native calls, if any, are counted in the
+	// session's Inflight.
 	stop()
 	if j.o.AfterJob != nil {
 		j.o.AfterJob(sctx, s)
 	}
 	j.emit(s.FolderID, jobReasonClusters)
-	return nil
+	if !j.rating() {
+		// No pass to come: the work is done, and a cancellation during
+		// AfterJob no longer stops the job.
+		return nil
+	}
+	// A pass is to come: this was not the job's end, so a cancellation
+	// (preemption, quit) or a folder gone meanwhile still stops it here.
+	if err := jobBetween(ctx, s); err != nil {
+		return err
+	}
+
+	// 6. Quality rating.
+	if err := j.rate(ctx, s); err != nil {
+		return err
+	}
+	return jobBetween(ctx, s)
 }
 
 // backfillEmbeddings rewinds the files analyzed without a CLIP embedding and
@@ -230,8 +246,12 @@ func (j *Job) backfillEmbeddings(ctx context.Context, s *Session, p *pipeline.Pi
 // scorer's guard while reading its preview. That is the one error rate
 // returns (wrapping errJobFolderGone or pipeline.ErrFolderUnavailable), so
 // the job is suspended even if the folder is back by the time it returns.
+//
+// The photos rated are announced by folder:changed "ratings", throttled; the
+// growth held back by the throttle is announced as the pass ends, unless the
+// folder was found unreachable.
 func (j *Job) rate(ctx context.Context, s *Session) error {
-	if !j.o.Settings().QualityRating || !j.ready(local.ModelQuality) {
+	if !j.rating() {
 		return nil
 	}
 	passCtx, progress, end := ctx, func(int, int) {}, func(int, error) {}
@@ -249,12 +269,13 @@ func (j *Job) rate(ctx context.Context, s *Session) error {
 	passCtx, cancel := context.WithCancelCause(passCtx)
 	defer cancel(nil)
 
+	notify, flush := j.ratingsNotifier(s.FolderID)
 	sc := &jobScorer{
 		Scorer:  s.Scorer(),
 		enabled: func() bool { return j.o.Settings().QualityRating },
 		root:    s.Root,
 		stop:    cancel,
-		rated:   j.ratingsNotifier(s.FolderID),
+		rated:   notify,
 		hook:    j.scoreHook,
 	}
 	pass := &quality.Pass{
@@ -268,6 +289,9 @@ func (j *Job) rate(ctx context.Context, s *Session) error {
 	switch {
 	case errors.Is(cause, errJobFolderGone), errors.Is(cause, pipeline.ErrFolderUnavailable):
 		return fmt.Errorf("session: quality rating: %w", cause)
+	}
+	flush()
+	switch {
 	case err == nil, ctx.Err() != nil:
 	case passCtx.Err() != nil:
 		slog.Info("session: quality rating pass stopped", "folder", s.FolderID, "rated", rated, "cause", cause)
@@ -326,21 +350,37 @@ func (sc *jobScorer) Score(ctx context.Context, item store.QualityItem) error {
 }
 
 // ratingsNotifier returns the func a pass calls each time the photos it
-// dealt with grow: it emits folder:changed "ratings" at once, then at most
-// once per jobRatingsInterval. The folder:changed "clusters" event that ends
-// the job carries the growth of the last interval. Not safe for concurrent
-// use (a pass is sequential).
-func (j *Job) ratingsNotifier(folderID string) func() {
+// dealt with grow, rated, and flush, called once the pass has returned.
+// rated emits folder:changed "ratings" at once, then at most once per
+// jobRatingsInterval; flush emits one more when rated held a growth back
+// since its last event (the folder's clusters were announced before the
+// pass, so no later event carries it). Neither is safe for concurrent use
+// (a pass is sequential, and flush follows it).
+func (j *Job) ratingsNotifier(folderID string) (rated, flush func()) {
 	var last time.Time
-	first := true
-	return func() {
+	first, pending := true, false
+	rated = func() {
 		now := j.now()
 		if !first && now.Sub(last) < jobRatingsInterval {
+			pending = true
 			return
 		}
-		first, last = false, now
+		first, last, pending = false, now, false
 		j.emit(folderID, jobReasonRatings)
 	}
+	flush = func() {
+		if pending {
+			pending = false
+			j.emit(folderID, jobReasonRatings)
+		}
+	}
+	return rated, flush
+}
+
+// rating reports whether a quality-rating pass is due: quality_rating is on
+// and its model is ready.
+func (j *Job) rating() bool {
+	return j.o.Settings().QualityRating && j.ready(local.ModelQuality)
 }
 
 // ready reports whether the model of kind is ready.

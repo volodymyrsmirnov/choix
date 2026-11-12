@@ -89,7 +89,7 @@ internal/app/runtime      composition root: builds every core, connects them, ow
 
 **Wails stays at the edge.** Only `cmd/choix` and the three design-gated packages `internal/app/{menu,dialogs,window}` import Wails, and only those three build native UI (`internal/app/nativeui_test.go`). The engine, the platform layer and every other service package do not.
 
-**A folder job is everything one folder needs**, run by `session.Queue` up to two folders at a time (`session.DefaultSlots`), never one folder twice at once: the pipeline pass, then the CLIP backfill for files without an embedding (and a re-cluster if any were added), then the quality-rating pass, then a refresh of the folder's cached stats and preview strip in `library.db`. The pipeline stages run in order, advancing each file's `scan_status`:
+**A folder job is everything one folder needs**, run by `session.Queue` up to two folders at a time (`session.DefaultSlots`), never one folder twice at once: the pipeline pass, then the CLIP backfill for files without an embedding (and a re-cluster if any were added), then the refresh of the folder's cached stats and preview strip in `library.db` and the `folder:changed` "clusters" announcement, so the folder can be reviewed while it is rated, then the quality-rating pass, which changes neither and is announced by `folder:changed` "ratings". The pipeline stages run in order, advancing each file's `scan_status`:
 
 ```
 discover → metadata → thumb → analyze → cluster
@@ -314,7 +314,7 @@ Spec and research: `docs/plans/2026-11-11-quality-rating.md`.
 - **Licence:** CC BY-NC-SA 4.0 (non-commercial). Never bundled or redistributed; `build/quality-model/export.py` reproduces the ONNX file.
 - **Scoring recipe** (`internal/ai/local/quality.go`): tier-2 preview → long side ≤ 1600 px and ≤ the original's (never scaled up; short side < 384 px ⇒ unrated) → five native-resolution 384 px crops (centre + quadrant centres) → mean of the three best. Changing the model or the recipe **must** bump `QualityScorerID`: rows stamped with another id become pending and their old scores are hidden.
 - **Storage:** `files.quality_raw` (NULL = unrated) and `files.quality_model` (scorer id), migration 005. The 0–10 value is computed only in `local.QualityDisplay`: recalibrate there, never rescore. Only "this photo can never be rated" is stamped with a NULL score; cancellation, a disabled setting, inference or database errors leave the row pending. A changed file loses its rating in `UpsertOnRescan`.
-- **Runtime:** the rating pass (`quality.Pass`, `internal/quality/pass.go`) is a step of every folder job, after the CLIP backfill, run when `quality_rating` is on and the model is ready. Switching the setting off cancels the pass in flight. A photo that cannot be rated keeps `scan_status='analyzed'`; a missing rating is not a file failure.
+- **Runtime:** the rating pass (`quality.Pass`, `internal/quality/pass.go`) is the last step of every folder job, after the stats and preview refresh and the "clusters" announcement, run when `quality_rating` is on and the model is ready. Switching the setting off cancels the pass in flight. A photo that cannot be rated keeps `scan_status='analyzed'`; a missing rating is not a file failure.
 - **API:** `Models.Quality` returns the status snapshot and `quality:status` carries every change, so nothing polls. New ratings arrive as `folder:changed` with reason `ratings`, and the folder store then refetches `Catalog.Ratings`.
 
 ---
