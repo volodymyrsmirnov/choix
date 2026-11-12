@@ -5,6 +5,10 @@ list points to; nothing here replaces them.
 
 ## Once: set up signing
 
+The secrets were in place for 2.0.0, the first release. Repeat a step only
+when what it sets up changes, for example a renewed certificate or a new API
+key or token.
+
 1. Get the certificates, the notary credentials and the App Store items listed
    in [`docs/release/signing-checklist.md`](release/signing-checklist.md).
 2. Add the six repository secrets listed there under "Release workflow (CI)":
@@ -33,8 +37,8 @@ list points to; nothing here replaces them.
    suffix: `v2.0.0-beta.1` does not trigger a release) and push the tag:
 
    ```bash
-   git tag v2.0.0
-   git push origin v2.0.0
+   git tag v<version>
+   git push origin v<version>
    ```
 
 2. The Release workflow (`.github/workflows/release.yml`) runs `gate` (the tag

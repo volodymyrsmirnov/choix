@@ -69,9 +69,10 @@ Taskfile uses `git describe`, which is fine for a rehearsal.
 Signed ad hoc, the hardened runtime's library validation refuses the bundled ONNX Runtime library ("mapping process
 and mapped file (non-platform) have different Team IDs", spike S6), so `sign:dev` signs without `--options runtime`,
 while `sign:developer-id` uses `--options runtime --timestamp` with a real identity, under which the library and the
-app share a Team ID. The hardened, Developer ID–signed build has not been run yet: it is verified in the signing
-session with the owner (check that `CHOIX_SELFCHECK=1 bin/Choix.app/Contents/MacOS/Choix` reports `"sandboxed":true`
-and `"onnxRuntime":"1.25.0"`). In both tasks the library is signed before the app that seals it.
+app share a Team ID. The release workflow has built, notarized and published the hardened, Developer ID–signed
+build since 2.0.0, and `verify:release` checks its signature and tickets. The workflow does not launch it, so after a
+release check that `CHOIX_SELFCHECK=1 /Applications/Choix.app/Contents/MacOS/Choix` reports `"sandboxed":true` and
+`"onnxRuntime":"1.25.0"` on the installed app. In both tasks the library is signed before the app that seals it.
 
 ## Release workflow (CI)
 
