@@ -11,12 +11,16 @@
 #  4. build, test, lint and package — with every task they call — never
 #     read a signing variable, and build, test and lint compile
 #     (`task --dry`) without one.
-#  5. verify:release and notarize:dmg, run against a fake bin/ with stubs
-#     of spctl, xcrun and codesign first on PATH: the Gatekeeper check fails
-#     closed (only "assessments enabled" with an accepted, notarized
-#     Developer ID verdict, or an explicit "assessments disabled" with a
-#     valid stapled ticket, passes), and no line of their output carries
-#     the stubbed signer name or Team ID.
+#  5. verify:release, notarize and notarize:dmg, run against a fake bin/
+#     with stubs of spctl, xcrun and codesign first on PATH that print, at
+#     each verbosity and output format, only what the real tools print
+#     there: the Gatekeeper check fails closed (only "assessments enabled"
+#     with an accepted, notarized Developer ID verdict, or an explicit
+#     "assessments disabled" with a valid stapled ticket, passes);
+#     notarize and notarize:dmg accept a Developer ID signed file and
+#     refuse an ad hoc, unsigned or otherwise signed one before submitting
+#     anything; and no line of their output carries the stubbed signer name
+#     or Team ID.
 #  6. In a fresh `git worktree` of HEAD (no frontend/dist) `task lint`,
 #     `task bindings:check` and `task test -- -run TestNone` succeed: the
 #     frontend:bootstrap dependency works, and nothing writes v1's
@@ -197,6 +201,22 @@ trap 'exit 1' HUP INT TERM
 # STUB_* variables say, and every answer that the real tools print with the
 # signer carries it (spctl's origin=, codesign's Authority= and
 # TeamIdentifier=, the notary submission and log).
+#
+# Each stub prints only what the real tool prints for the same flags
+# (checked against real signed and notarized apps and disk images): a stub
+# that printed more would hide a Taskfile reading a line its flags never
+# get. The first release run failed on exactly that: notarize read
+# Authority= from `codesign -dv`, which prints no certificate chain.
+#   codesign -d: Executable= at any verbosity; Identifier=, Format=,
+#     Signature=adhoc (ad hoc) and TeamIdentifier= from verbosity 1;
+#     Authority= (the chain, leaf first) only from verbosity 2 (-dvv,
+#     -d -vv, --verbose=2). Unsigned: "code object is not signed at all",
+#     exit 1. STUB_SIGNATURE: devid (default), other (an Apple Development
+#     leaf), adhoc or none.
+#   spctl --assess: nothing without -v; "<file>: <verdict>" and source=
+#     from -v; origin= (the signer) only from -vv.
+#   xcrun notarytool submit: JSON only with --output-format json, and a
+#     status only with --wait (STUB_NOTARY_STATUS, default Invalid).
 st="$tmp/stubbed"
 mkdir -p "$st/bin/Choix.app" "$st/stubs"
 cp "$taskfile" "$st/Taskfile.yml"
@@ -213,10 +233,26 @@ case $1 in
 	exit "${STUB_GK_CODE:-0}"
 	;;
 --assess)
-	for f; do :; done
-	echo "$f: $STUB_VERDICT" >&2
-	echo "source=$STUB_SOURCE" >&2
-	echo "origin=$STUB_IDENT" >&2
+	v=0
+	for a; do
+		case $a in
+		--verbose) v=$((v + 1)) ;;
+		--verbose=*) v=${a#--verbose=} ;;
+		--*) ;;
+		-v*)
+			n=$(printf '%s' "${a#-}" | tr -cd v)
+			v=$((v + ${#n}))
+			;;
+		esac
+		f=$a
+	done
+	if [ "$v" -ge 1 ]; then
+		echo "$f: $STUB_VERDICT" >&2
+		echo "source=$STUB_SOURCE" >&2
+	fi
+	if [ "$v" -ge 2 ]; then
+		echo "origin=$STUB_IDENT" >&2
+	fi
 	[ "$STUB_VERDICT" = accepted ] || exit 3
 	;;
 esac
@@ -234,7 +270,26 @@ case "$1 $2" in
 	fi
 	;;
 "stapler staple") echo "The staple and validate action worked!" ;;
-"notarytool submit") echo "{\"id\":\"stub-id\",\"message\":\"signed by $STUB_IDENT\",\"status\":\"Invalid\"}" ;;
+"notarytool submit")
+	json=no wait=no prev=
+	for a; do
+		if [ "$prev" = --output-format ] && [ "$a" = json ]; then json=yes; fi
+		if [ "$a" = --wait ]; then wait=yes; fi
+		prev=$a
+	done
+	status=${STUB_NOTARY_STATUS:-Invalid}
+	if [ "$json" = no ]; then
+		echo "Conducting pre-submission checks and initiating connection to the Apple notary service..."
+		echo "  id: stub-id"
+		if [ "$wait" = yes ]; then echo "  status: $status"; fi
+	elif [ "$wait" = yes ]; then
+		echo "{\"id\":\"stub-id\",\"message\":\"signed by $STUB_IDENT\",\"status\":\"$status\"}"
+	else
+		echo "{\"id\":\"stub-id\",\"message\":\"Successfully uploaded file\"}"
+	fi
+	# Exits 0 whatever the status, so notarize:submit must read the
+	# status: an exit status alone would let an Invalid submission pass.
+	;;
 "notarytool log") printf '{\n  "teamId": "%s",\n  "issues": [{"message": "signed by %s"}]\n}\n' "$STUB_TEAM" "$STUB_IDENT" ;;
 *)
 	echo "xcrun stub: unexpected $*" >&2
@@ -244,16 +299,53 @@ esac
 STUB
 cat >"$st/stubs/codesign" <<'STUB'
 #!/bin/sh
-case " $* " in
-*" -dv "*)
-	echo "Authority=$STUB_IDENT" >&2
-	echo "TeamIdentifier=$STUB_TEAM" >&2
-	;;
-*)
-	for f; do :; done
+display=no v=0
+for a; do
+	case $a in
+	--display) display=yes ;;
+	--verbose) v=$((v + 1)) ;;
+	--verbose=*) v=${a#--verbose=} ;;
+	--* | -) ;;
+	-*)
+		case $a in *d*) display=yes ;; esac
+		n=$(printf '%s' "${a#-}" | tr -cd v)
+		v=$((v + ${#n}))
+		;;
+	esac
+	f=$a
+done
+if [ "$display" = no ]; then
 	echo "$f: valid on disk" >&2
-	;;
-esac
+	exit 0
+fi
+sig=${STUB_SIGNATURE:-devid}
+if [ "$sig" = none ]; then
+	echo "$f: code object is not signed at all" >&2
+	exit 1
+fi
+echo "Executable=$f" >&2
+[ "$v" -ge 1 ] || exit 0
+echo "Identifier=stub.identifier" >&2
+echo "Format=generic" >&2
+if [ "$sig" = adhoc ]; then
+	echo "Signature=adhoc" >&2
+	echo "TeamIdentifier=not set" >&2
+	exit 0
+fi
+if [ "$v" -ge 2 ]; then
+	case $sig in
+	devid)
+		echo "Authority=$STUB_IDENT" >&2
+		echo "Authority=Developer ID Certification Authority" >&2
+		;;
+	*)
+		echo "Authority=Apple Development: ${STUB_IDENT#*: }" >&2
+		echo "Authority=Apple Worldwide Developer Relations Certification Authority" >&2
+		;;
+	esac
+	echo "Authority=Apple Root CA" >&2
+fi
+echo "TeamIdentifier=$STUB_TEAM" >&2
 STUB
 chmod +x "$st/stubs/spctl" "$st/stubs/xcrun" "$st/stubs/codesign"
 
@@ -310,6 +402,45 @@ gatekeeper fail "disabled, no stapled ticket" STUB_GK_OUT='assessments disabled'
 gatekeeper fail "spctl --status error" STUB_GK_OUT='spctl: internal error' STUB_GK_CODE=1
 gatekeeper fail "spctl --status fails silently" STUB_GK_OUT= STUB_GK_CODE=1
 gatekeeper fail "unknown spctl --status answer" STUB_GK_OUT='assessments maybe'
+
+# The stubs themselves: no certificate chain below verbosity 2, no origin=
+# below -vv, so a Taskfile that asks for too little cannot pass.
+stub_out=$(env STUB_IDENT="$ident" STUB_TEAM="$ident_team" "$st/stubs/codesign" -dv "$st/bin/Choix.app" 2>&1)
+case $stub_out in *Authority=*) fail "the codesign stub prints Authority= at -dv, which the real codesign does not" ;; esac
+stub_out=$(env STUB_IDENT="$ident" STUB_TEAM="$ident_team" "$st/stubs/codesign" -dvv "$st/bin/Choix.app" 2>&1)
+case $stub_out in *"Authority=$ident"*) ;; *) fail "the codesign stub prints no Authority= at -dvv" ;; esac
+stub_out=$(env STUB_IDENT="$ident" STUB_VERDICT=accepted STUB_SOURCE=x "$st/stubs/spctl" --assess --type exec -v "$st/bin/Choix.app" 2>&1)
+case $stub_out in *origin=*) fail "the spctl stub prints origin= at -v, which the real spctl does not" ;; esac
+
+# notarize and notarize:dmg: a Developer ID signed file passes the
+# precondition and, with an accepted submission, is notarized and stapled.
+for t in notarize notarize:dmg; do
+	stubbed "$t" CHOIX_NOTARY_PROFILE=stub-profile STUB_NOTARY_STATUS=Accepted
+	[ "$code" = 0 ] || fail "$t of a Developer ID signed file with an accepted submission: exit status $code, want 0:
+$out"
+	case $out in *'The staple and validate action worked!'*) ;; *) fail "$t did not staple:
+$out" ;; esac
+done
+
+# refused <task> <file> <msg> <signature>: the precondition refuses a file
+# without a Developer ID authority, before any command (nothing submitted).
+refused() {
+	t=$1 file=$2 msg=$3 sig=$4
+	stubbed "$t" CHOIX_NOTARY_PROFILE=stub-profile STUB_NOTARY_STATUS=Accepted STUB_SIGNATURE="$sig"
+	[ "$code" != 0 ] || fail "$t of a $sig signed $file exited 0:
+$out"
+	case $out in *"$file is not signed with a Developer ID; $msg"*) ;; *) fail "$t of a $sig signed $file: no refusal message:
+$out" ;; esac
+	while IFS= read -r line; do
+		case $line in "task: ["*) fail "$t of a $sig signed $file ran a command: $line" ;; esac
+	done <<EOF
+$out
+EOF
+}
+for sig in adhoc none other; do
+	refused notarize bin/Choix.app 'run task sign:developer-id first' "$sig"
+	refused notarize:dmg bin/Choix-9.9.9-arm64.dmg 'run task dmg with CHOIX_SIGN_IDENTITY set' "$sig"
+done
 
 # A rejected notarization prints the submission and the notary log, which
 # both carry the signer in the stubs: stubbed() checks they are redacted.
