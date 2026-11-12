@@ -28,6 +28,21 @@ func TestModelStorePathAndHas(t *testing.T) {
 	}
 }
 
+// TestKnownModelSizes pins the exact byte length of each model file. The
+// values were read from local copies whose SHA-256 equals the pinned hash;
+// they change only together with the URL and SHA256.
+func TestKnownModelSizes(t *testing.T) {
+	want := map[ModelKind]int64{
+		ModelCLIP:    351686194,
+		ModelQuality: 176803037,
+	}
+	for kind, size := range want {
+		if got := KnownModels[kind].Size; got != size {
+			t.Errorf("KnownModels[%s].Size = %d, want %d", kind, got, size)
+		}
+	}
+}
+
 func TestKnownCLIPModelIsPinned(t *testing.T) {
 	m, ok := KnownModels[ModelCLIP]
 	if !ok {

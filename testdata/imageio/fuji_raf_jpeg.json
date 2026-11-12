@@ -1,0 +1,22 @@
+{
+  "PixelHeight": 2944,
+  "PixelWidth": 4416,
+  "{Exif}": {
+    "BodySerialNumber": "TESTSERIAL01",
+    "DateTimeDigitized": "2026:01:02 03:04:05",
+    "DateTimeOriginal": "2026:01:02 03:04:05",
+    "ExposureTime": 0.0006666666666666666,
+    "FNumber": 5.6,
+    "FocalLength": 23,
+    "ISOSpeedRatings": [
+      500
+    ],
+    "PixelXDimension": 4416,
+    "PixelYDimension": 2944
+  },
+  "{TIFF}": {
+    "DateTime": "2026:01:02 03:04:05",
+    "Make": "FUJIFILM",
+    "Model": "X100VI"
+  }
+}

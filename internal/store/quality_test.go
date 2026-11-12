@@ -115,7 +115,7 @@ func TestUpsertOnRescanClearsQualityWhenContentChanges(t *testing.T) {
 	}
 
 	// Unchanged rescan keeps the rating.
-	if _, _, err := s.Files().UpsertOnRescan(File{Path: "a.jpg", Size: 1, Mtime: 1, ContentHash: "h1", Kind: "photo", Format: "jpeg", ScanStatus: "discovered"}); err != nil {
+	if _, _, err := s.Files().UpsertOnRescan(File{Path: "a.jpg", Size: 1, Mtime: 1, ContentHash: "h1", Kind: "photo", Format: "jpeg", ScanStatus: "discovered"}, 1); err != nil {
 		t.Fatal(err)
 	}
 	var raw sql.NullFloat64
@@ -132,7 +132,7 @@ func TestUpsertOnRescanClearsQualityWhenContentChanges(t *testing.T) {
 	}
 
 	// Changed bytes drop it.
-	if _, _, err := s.Files().UpsertOnRescan(File{Path: "a.jpg", Size: 2, Mtime: 2, ContentHash: "h2", Kind: "photo", Format: "jpeg", ScanStatus: "discovered"}); err != nil {
+	if _, _, err := s.Files().UpsertOnRescan(File{Path: "a.jpg", Size: 2, Mtime: 2, ContentHash: "h2", Kind: "photo", Format: "jpeg", ScanStatus: "discovered"}, 1); err != nil {
 		t.Fatal(err)
 	}
 	read()

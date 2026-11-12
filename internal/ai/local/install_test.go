@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,8 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/volodymyrsmirnov/choix/internal/deps"
 )
 
 // modelBytes is a deterministic stand-in for a model file, large enough to
@@ -107,7 +106,7 @@ func TestDownloadChecksumMismatchLeavesNothingBehind(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
 		t.Fatalf("err = %v, want a sha256 mismatch", err)
 	}
-	if inst.ModelStore.Has(ModelQuality) {
+	if inst.Has(ModelQuality) {
 		t.Fatal("a file with the wrong checksum must never become the model")
 	}
 	if _, statErr := os.Stat(inst.Path(ModelQuality) + ".part"); !errors.Is(statErr, os.ErrNotExist) {
@@ -197,6 +196,140 @@ func TestDownloadDiscardsStalePartOn416(t *testing.T) {
 	assertInstalled(t, inst, body)
 }
 
+// A response longer than the pinned size is cut off one byte past it and
+// fails, instead of filling the disk until the SHA-256 check runs. The part
+// file is removed as for a checksum mismatch. Covers a fresh download (200)
+// and a resumed one (206).
+func TestDownloadLargerThanPinnedSizeIsCutOffAndRemoved(t *testing.T) {
+	body := modelBytes()
+	const extra = 4 << 20 // far more than the model: a wrong or hostile response
+	const have = 120_000
+	cases := []struct {
+		name    string
+		part    []byte
+		handler http.HandlerFunc
+	}{
+		{
+			name: "fresh",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(body)
+				_, _ = w.Write(make([]byte, extra))
+			},
+		},
+		{
+			name: "resumed",
+			part: body[:have],
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Range", "bytes 120000-*/*")
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write(body[have:])
+				_, _ = w.Write(make([]byte, extra))
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			t.Cleanup(srv.Close)
+			inst := testInstaller(t, srv.URL, body)
+			m := inst.Models[ModelQuality]
+			m.Size = int64(len(body))
+			inst.Models[ModelQuality] = m
+			part := inst.Path(ModelQuality) + ".part"
+			if tc.part != nil {
+				if err := os.WriteFile(part, tc.part, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var maxRecv int64
+			err := inst.Download(context.Background(), ModelQuality, func(recv, _ int64) { maxRecv = max(maxRecv, recv) })
+			if err == nil || !strings.Contains(err.Error(), "larger than the pinned size") {
+				t.Fatalf("err = %v, want a larger-than-the-pinned-size error", err)
+			}
+			if maxRecv > m.Size+1 {
+				t.Fatalf("wrote %d bytes to the part file, want at most the pinned size + 1 (%d)", maxRecv, m.Size+1)
+			}
+			if inst.Has(ModelQuality) {
+				t.Fatal("an oversized download must never become the model")
+			}
+			if _, statErr := os.Stat(part); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatal("an oversized part file must be deleted so the next attempt starts clean")
+			}
+		})
+	}
+}
+
+// failingBody delivers data and returns errBodyBroken together with the read
+// that reaches failAt bytes, as a connection that breaks mid-read does.
+type failingBody struct {
+	data   []byte
+	off    int
+	failAt int
+}
+
+var errBodyBroken = errors.New("connection reset mid-body")
+
+func (b *failingBody) Read(p []byte) (int, error) {
+	n := copy(p, b.data[b.off:])
+	b.off += n
+	if b.off >= b.failAt {
+		return n, errBodyBroken
+	}
+	return n, nil
+}
+
+func (*failingBody) Close() error { return nil }
+
+// bodyTransport answers every request with 200 and body, without a network.
+type bodyTransport struct{ body io.ReadCloser }
+
+func (t bodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: http.Header{},
+		Body: t.body, ContentLength: -1, Request: req}, nil
+}
+
+// A read error that arrives together with bytes past the pinned size is the
+// oversize failure, and the part file goes; an error below the size keeps
+// the part file for a resume, as before.
+func TestDownloadBodyErrorAroundThePinnedSize(t *testing.T) {
+	body := modelBytes()
+	size := int64(len(body))
+	t.Run("past the size", func(t *testing.T) {
+		data := append(append([]byte{}, body...), make([]byte, 64<<10)...)
+		inst := testInstaller(t, "http://choix.invalid/model.onnx", body)
+		m := inst.Models[ModelQuality]
+		m.Size = size
+		inst.Models[ModelQuality] = m
+		inst.HTTPClient = &http.Client{Transport: bodyTransport{&failingBody{data: data, failAt: int(size) + 1}}}
+
+		err := inst.Download(context.Background(), ModelQuality, nil)
+		if err == nil || !strings.Contains(err.Error(), "larger than the pinned size") {
+			t.Fatalf("err = %v, want a larger-than-the-pinned-size error", err)
+		}
+		if _, statErr := os.Stat(inst.Path(ModelQuality) + ".part"); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatal("an oversized part file must be deleted even when the read also failed")
+		}
+	})
+	t.Run("below the size", func(t *testing.T) {
+		const got = 200_000
+		inst := testInstaller(t, "http://choix.invalid/model.onnx", body)
+		m := inst.Models[ModelQuality]
+		m.Size = size
+		inst.Models[ModelQuality] = m
+		inst.HTTPClient = &http.Client{Transport: bodyTransport{&failingBody{data: body[:got], failAt: got}}}
+
+		err := inst.Download(context.Background(), ModelQuality, nil)
+		if !errors.Is(err, errBodyBroken) {
+			t.Fatalf("err = %v, want the body's read error", err)
+		}
+		st, statErr := os.Stat(inst.Path(ModelQuality) + ".part")
+		if statErr != nil || st.Size() != got {
+			t.Fatalf("part file should be kept with %d bytes for a resume: %v, %v", got, st, statErr)
+		}
+	})
+}
+
 // stallingServer sends the first half of body, then blocks until release is
 // closed.
 func stallingServer(t *testing.T, body []byte, release chan struct{}) *httptest.Server {
@@ -251,7 +384,7 @@ func TestDownloadCancellationIsPromptAndKeepsPart(t *testing.T) {
 	if err != nil || st.Size() == 0 {
 		t.Fatalf("part file should be kept for a later resume: %v", err)
 	}
-	if inst.ModelStore.Has(ModelQuality) {
+	if inst.Has(ModelQuality) {
 		t.Fatal("a cancelled download must not install anything")
 	}
 }
@@ -358,25 +491,10 @@ func TestDownloadLockWaitHonoursCancellation(t *testing.T) {
 	}
 }
 
-func TestInstallStreamsProgressAndClosesChannel(t *testing.T) {
-	body := modelBytes()
-	var reqs atomic.Int32
-	var rng atomic.Value
-	srv := rangeServer(t, body, &reqs, &rng)
-	inst := testInstaller(t, srv.URL, body)
-
-	ch := make(chan deps.ProgressEvent, 64)
-	if err := inst.Install(context.Background(), ModelQuality, ch); err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	var stages []string
-	for ev := range ch { // terminates only if Install closed the channel
-		stages = append(stages, ev.Stage)
-	}
-	if len(stages) == 0 || stages[len(stages)-1] != "done" {
-		t.Fatalf("stages = %v, want them to end with done", stages)
-	}
-	assertInstalled(t, inst, body)
+// With Has(ctx, kind) (bool, error) gone, the embedded *ModelStore's Has is
+// promoted, so the Installer is all a downloader needs.
+func TestInstaller_HasIsModelStoreHas(t *testing.T) {
+	var _ interface{ Has(ModelKind) bool } = (*Installer)(nil)
 }
 
 func TestKnownQualityModelIsPinned(t *testing.T) {

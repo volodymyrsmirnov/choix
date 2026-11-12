@@ -1,0 +1,131 @@
+/* Design tokens: the only file allowed to hold literal colours, font sizes,
+   radii, shadows, masks and durations (enforced by tools/lint-design.ts).
+   Colours, radii and shadows are v1's values (internal/ui/web/tailwind.config.js). */
+
+:root {
+  /* Families */
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Surfaces, darkest to lightest */
+  --color-bg-0: oklch(0.16 0.004 240);
+  --color-bg-1: oklch(0.19 0.004 240);
+  --color-bg-2: oklch(0.22 0.005 240);
+  --color-bg-3: oklch(0.26 0.006 240);
+  --color-bg-4: oklch(0.31 0.007 240);
+  --color-bg-5: oklch(0.38 0.008 240);
+
+  /* Text. fg-3 is the faintest tier but still carries readable 11px labels,
+     so it clears WCAG AA (4.5:1) on the panel backgrounds: 5.15:1 on bg-2
+     and 4.62:1 on bg-3. fg-0 > fg-1 > fg-2 > fg-3 stay evenly spaced.
+     Re-check the ratios if any of these lightnesses change. */
+  --color-fg-0: oklch(0.97 0.003 240);
+  --color-fg-1: oklch(0.82 0.005 240);
+  --color-fg-2: oklch(0.73 0.006 240);
+  --color-fg-3: oklch(0.64 0.006 240);
+
+  /* Hairlines */
+  --color-line-1: oklch(0.28 0.005 240 / 0.9);
+  --color-line-2: oklch(0.34 0.006 240 / 0.9);
+
+  /* Pick (green) */
+  --color-pick: oklch(0.72 0.18 145);
+  --color-pick-hover: oklch(0.78 0.18 145);
+  --color-pick-ink: oklch(0.18 0.04 145);
+  --color-pick-bg: oklch(0.72 0.18 145 / 0.14);
+
+  /* Reject (red) */
+  --color-reject: oklch(0.66 0.20 25);
+  --color-reject-ink: oklch(0.16 0.06 25);
+  --color-reject-bg: oklch(0.66 0.20 25 / 0.14);
+
+  /* Selection (blue): the current item's look (components/current.ts) */
+  --color-sel: oklch(0.72 0.13 235);
+  --color-sel-bg: oklch(0.72 0.13 235 / 0.18);
+  --color-sel-focus: oklch(0.72 0.13 235 / 0.45);
+
+  /* Warning (amber): v1's warn toast tone */
+  --color-warn: oklch(0.85 0.14 90);
+
+  /* Alpha surfaces, each from a v1 inline style */
+  --color-reject-badge: oklch(0.66 0.20 25 / 0.95); /* "Reject" label on a thumbnail */
+  --color-scrim: oklch(0 0 0 / 0.65);               /* quality badge, video mark */
+  --color-backdrop: oklch(0 0 0 / 0.55);            /* behind a sheet or prompt */
+  --color-toast: oklch(0.22 0.005 240 / 0.96);
+  --color-panel: oklch(0.20 0.005 240 / 0.92);      /* Focus info panel */
+  /* Focus stage chips over the photo (position, zoom, Info, compare pane
+     labels, the cluster-done pill): v1's inline oklch(0 0 0 / 0.5) with a
+     white/5 edge (white/15 on hover) and white/10 rules between parts. */
+  --color-chip: oklch(0 0 0 / 0.5);
+  --color-chip-line: oklch(1 0 0 / 0.05);
+  --color-chip-line-hover: oklch(1 0 0 / 0.15);
+  --color-chip-rule: oklch(1 0 0 / 0.1);
+  --color-kbd: oklch(1 0 0 / 0.05);
+  --color-kbd-in-btn: oklch(1 0 0 / 0.06);
+  --color-spinner-track: oklch(0.72 0.18 145 / 0.18);
+
+  /* Image placeholder stripes (v1 .imgph) */
+  --color-imgph-a: oklch(0.30 0.005 240);
+  --color-imgph-b: oklch(0.27 0.005 240);
+
+  /* Empty-state art (v1 Empty.tsx) */
+  --color-art-from: oklch(0.30 0.04 145);
+  --color-art-to: oklch(0.25 0.03 230);
+
+  /* Font sizes, named by their pixel size */
+  --text-9: 9px;
+  --text-10: 10px;
+  --text-11: 11px;
+  --text-12: 12px;
+  --text-13: 13px;
+  --text-14: 14px;
+  --text-15: 15px;
+  --text-17: 17px;
+  --text-18: 18px;
+  --text-20: 20px;
+  --text-22: 22px;
+  --text-30: 30px;
+
+  /* Line heights carried by three sizes, as v1's text-xs / text-sm / text-3xl
+     did; every other size inherits, as v1's text-[Npx] did. */
+  --leading-12: 16px;
+  --leading-14: 20px;
+  --leading-30: 36px;
+
+  --tracking-tightish: -0.005em;
+
+  /* Radii. --radius-full is v1's scrollbar thumb (styles.css). */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-full: 999px;
+
+  /* Shadows */
+  --shadow-pop: 0 8px 24px oklch(0 0 0 / 0.5), inset 0 1px 0 0 oklch(1 0 0 / 0.05);
+  --shadow-pick-glow: 0 0 0 3px oklch(0.72 0.18 145 / 0.14), 0 4px 16px oklch(0.72 0.18 145 / 0.18);
+  --shadow-pick-ring: 0 0 0 3px var(--color-pick-bg);   /* focused text input */
+  --shadow-sel-ring: 0 0 0 3px var(--color-sel-bg);     /* the current item */
+  --shadow-sel-focus: 0 0 0 3px var(--color-sel-focus); /* the current item, keyboard-focused */
+  /* The current photo that is picked or rejected: its mark's edge, a dark
+     hairline, then a blue ring, so both colours read. */
+  --shadow-sel-mark: 0 0 0 1px var(--color-bg-1), 0 0 0 3px var(--color-sel);
+  --shadow-sel-mark-focus: 0 0 0 1px var(--color-bg-1), 0 0 0 3px var(--color-sel), 0 0 0 6px var(--color-sel-focus);
+  --shadow-dot-pick: 0 0 8px var(--color-pick);
+  --shadow-menu-focus: inset 2px 0 0 var(--color-pick); /* focused menu item */
+  --shadow-art: 0 0 32px oklch(0.72 0.18 145 / 0.25);
+
+  /* Masks: the opaque stop of a mask-image gradient */
+  --mask-opaque: #000;
+
+  /* Durations. --dur-instant is v1's reduced-motion collapse (not 0, so
+     transitionend / animationend still fire); --dur-pulse is the slow
+     reduced-motion "still working" pulse. */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --dur-instant: 0.01ms;
+  --dur-pulse: 2s;
+  --dur-spin: 1s;    /* one spinner turn */
+  --dur-indet: 1.2s; /* one sweep of the indeterminate rail */
+}

@@ -2,6 +2,8 @@ package local
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
@@ -45,7 +48,7 @@ func TestAnalyzerWritesRowEvenWithoutCLIPModel(t *testing.T) {
 	fileID := insertFile(t, s, "Day1/IMG.jpg")
 
 	models := NewModelStore(filepath.Join(tmp, "models")) // empty -> no models present
-	a := NewAnalyzer(s, models)
+	a := NewAnalyzer(s, NewSessions(models, SessionOptions{}))
 
 	if err := a.Analyze(context.Background(), fileID, thumbPath); err != nil {
 		t.Fatalf("Analyze: %v", err)
@@ -75,8 +78,7 @@ func TestAnalyzerWritesRowEvenWithoutCLIPModel(t *testing.T) {
 func newStoreForTest(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "test.db") + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	s, err := store.Open(dsn)
+	s, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -104,8 +106,7 @@ func TestAnalyzeLoadImageFailureMarksFailed(t *testing.T) {
 	s := newStoreForTest(t)
 	fileID := insertFile(t, s, "Day1/IMG_missing.jpg")
 
-	models := NewModelStore(filepath.Join(tmp, "models")) // empty -> no CLIP model
-	a := NewAnalyzer(s, models)
+	a := NewAnalyzer(s, nil)
 
 	// Pass a non-existent thumb path to force a loadImage failure.
 	err := a.Analyze(context.Background(), fileID, filepath.Join(tmp, "nonexistent.jpg"))
@@ -122,5 +123,134 @@ func TestAnalyzeLoadImageFailureMarksFailed(t *testing.T) {
 	}
 	if !f.ErrMsg.Valid || f.ErrMsg.String == "" {
 		t.Errorf("error = %+v, want non-empty", f.ErrMsg)
+	}
+}
+
+// A thumbnail that cannot be loaded while the folder is unreachable is not
+// the file's failure: the guard keeps the row pending.
+func TestAnalyzer_FailureGuard(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		guard      func() bool
+		wantStatus string
+	}{
+		{"folder reachable", func() bool { return true }, "failed"},
+		{"folder gone", func() bool { return false }, "thumbed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStoreForTest(t)
+			fileID := insertFile(t, s, "a.jpg") // 'thumbed'
+			a := NewAnalyzer(s, nil)
+			a.FailureGuard = tc.guard
+			err := a.Analyze(context.Background(), fileID, filepath.Join(t.TempDir(), "nonexistent.jpg"))
+			if err == nil {
+				t.Fatal("Analyze with a missing thumb must return an error")
+			}
+			if got, want := errors.Is(err, pipeline.ErrFolderUnavailable), tc.wantStatus == "thumbed"; got != want {
+				t.Fatalf("Analyze = %v; ErrFolderUnavailable %v, want %v", err, got, want)
+			}
+			f, err := s.Files().GetByID(fileID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.ScanStatus != tc.wantStatus {
+				t.Errorf("scan_status = %q (error %q), want %q", f.ScanStatus, f.ErrMsg.String, tc.wantStatus)
+			}
+		})
+	}
+}
+
+// fakeEmbedder returns a fixed embedding or error and counts its calls.
+type fakeEmbedder struct {
+	emb   []float32
+	err   error
+	calls int
+}
+
+func (f *fakeEmbedder) Embed(image.Image) ([]float32, error) {
+	f.calls++
+	return f.emb, f.err
+}
+
+// assertAnalyzedWithoutEmbedding checks the file reached analyzed with no
+// error text and an ai_signals row whose clip_embedding is NULL.
+func assertAnalyzedWithoutEmbedding(t *testing.T, s *store.Store, fileID int64) {
+	t.Helper()
+	row, err := s.AISignals().GetByFileID(fileID)
+	if err != nil {
+		t.Fatalf("GetByFileID: %v", err)
+	}
+	if row.ClipEmbedding != nil {
+		t.Errorf("clip_embedding = %d bytes, want NULL", len(row.ClipEmbedding))
+	}
+	f, err := s.Files().GetByID(fileID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if f.ScanStatus != "analyzed" {
+		t.Errorf("scan_status = %q, want analyzed", f.ScanStatus)
+	}
+	if f.ErrMsg.Valid && f.ErrMsg.String != "" {
+		t.Errorf("error = %q, want none", f.ErrMsg.String)
+	}
+}
+
+func TestAnalyzer_NilEmbedderWritesNullEmbedding(t *testing.T) {
+	thumbPath := filepath.Join(t.TempDir(), "thumb.jpg")
+	writeJPEG(t, thumbPath, color.RGBA{10, 20, 30, 255})
+	s := newStoreForTest(t)
+	fileID := insertFile(t, s, "Day1/A.jpg")
+
+	if err := NewAnalyzer(s, nil).Analyze(context.Background(), fileID, thumbPath); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	assertAnalyzedWithoutEmbedding(t, s, fileID)
+}
+
+func TestAnalyzer_ModelMissingLeavesFileAnalyzed(t *testing.T) {
+	thumbPath := filepath.Join(t.TempDir(), "thumb.jpg")
+	writeJPEG(t, thumbPath, color.RGBA{10, 20, 30, 255})
+	s := newStoreForTest(t)
+	fileID := insertFile(t, s, "Day1/B.jpg")
+
+	emb := &fakeEmbedder{err: fmt.Errorf("clip: %w", ErrModelMissing)}
+	if err := NewAnalyzer(s, emb).Analyze(context.Background(), fileID, thumbPath); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if emb.calls != 1 {
+		t.Fatalf("Embed calls = %d, want 1", emb.calls)
+	}
+	assertAnalyzedWithoutEmbedding(t, s, fileID)
+}
+
+// Any other embedder failure is treated the same way: the file is analyzed
+// without an embedding, as in v1.
+func TestAnalyzer_EmbedErrorLeavesFileAnalyzed(t *testing.T) {
+	thumbPath := filepath.Join(t.TempDir(), "thumb.jpg")
+	writeJPEG(t, thumbPath, color.RGBA{10, 20, 30, 255})
+	s := newStoreForTest(t)
+	fileID := insertFile(t, s, "Day1/C.jpg")
+
+	if err := NewAnalyzer(s, &fakeEmbedder{err: errors.New("inference exploded")}).Analyze(context.Background(), fileID, thumbPath); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	assertAnalyzedWithoutEmbedding(t, s, fileID)
+}
+
+func TestAnalyzer_StoresEmbedding(t *testing.T) {
+	thumbPath := filepath.Join(t.TempDir(), "thumb.jpg")
+	writeJPEG(t, thumbPath, color.RGBA{10, 20, 30, 255})
+	s := newStoreForTest(t)
+	fileID := insertFile(t, s, "Day1/D.jpg")
+
+	if err := NewAnalyzer(s, &fakeEmbedder{emb: []float32{1, 0}}).Analyze(context.Background(), fileID, thumbPath); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	row, err := s.AISignals().GetByFileID(fileID)
+	if err != nil {
+		t.Fatalf("GetByFileID: %v", err)
+	}
+	if want := float32sToBytes([]float32{1, 0}); string(row.ClipEmbedding) != string(want) {
+		t.Errorf("clip_embedding = %v, want %v", row.ClipEmbedding, want)
 	}
 }

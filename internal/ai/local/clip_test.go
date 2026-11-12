@@ -26,7 +26,7 @@ func TestCLIPEmbedShapeAndNorm(t *testing.T) {
 	if !store.Has(ModelCLIP) {
 		t.Skipf("clip model not installed at %s", store.Path(ModelCLIP))
 	}
-	sess, err := NewSession(store.Path(ModelCLIP))
+	sess, err := NewSession(store.Path(ModelCLIP), false)
 	if err != nil {
 		t.Skipf("ONNX runtime unavailable: %v", err)
 	}

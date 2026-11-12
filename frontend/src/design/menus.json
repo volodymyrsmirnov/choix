@@ -1,0 +1,107 @@
+{
+  "menus": [
+    {
+      "id": "app",
+      "title": "Choix",
+      "items": [
+        { "role": "about", "label": "About Choix" },
+        { "separator": true },
+        { "id": "settings", "label": "Settings…", "accelerator": "CmdOrCtrl+,", "enabledIn": ["library", "folder", "focus", "compare"] },
+        { "separator": true },
+        { "role": "hide", "label": "Hide Choix" },
+        { "separator": true },
+        { "role": "quit", "label": "Quit Choix" }
+      ]
+    },
+    {
+      "id": "file",
+      "title": "File",
+      "items": [
+        { "id": "add-folder", "label": "Add Folder…", "accelerator": "CmdOrCtrl+O", "enabledIn": ["library", "folder", "focus", "compare"] },
+        { "separator": true },
+        { "id": "open-picks", "label": "Open Picks Folder", "accelerator": "CmdOrCtrl+P", "enabledIn": ["library", "folder", "focus", "compare"], "needsSelection": true },
+        { "id": "reveal-folder", "label": "Reveal Folder in Finder", "accelerator": "CmdOrCtrl+Shift+R", "enabledIn": ["library", "folder", "focus", "compare"], "needsSelection": true },
+        { "id": "rescan-folder", "label": "Rescan Folder", "accelerator": "CmdOrCtrl+R", "enabledIn": ["library", "folder"], "needsSelection": true },
+        { "separator": true },
+        { "id": "remove-folder", "label": "Remove Folder from Library…", "accelerator": "CmdOrCtrl+Backspace", "enabledIn": ["library"], "needsSelection": true },
+        { "separator": true },
+        { "role": "closeWindow", "label": "Close Window" }
+      ]
+    },
+    {
+      "id": "edit",
+      "title": "Edit",
+      "items": [
+        { "id": "undo", "label": "Undo Pick/Reject", "accelerator": "CmdOrCtrl+Z", "enabledIn": ["folder", "focus", "compare"] },
+        { "separator": true },
+        { "role": "cut", "label": "Cut" },
+        { "role": "copy", "label": "Copy" },
+        { "role": "paste", "label": "Paste" },
+        { "role": "selectAll", "label": "Select All" },
+        { "separator": true },
+        { "id": "find", "label": "Find…", "accelerator": "CmdOrCtrl+F", "enabledIn": ["library", "folder"] }
+      ]
+    },
+    {
+      "id": "photo",
+      "title": "Photo",
+      "items": [
+        { "id": "pick", "label": "Pick", "display": "Space", "enabledIn": ["focus", "compare"] },
+        { "id": "reject", "label": "Reject", "display": "X", "enabledIn": ["focus", "compare"] },
+        { "separator": true },
+        { "id": "next-photo", "label": "Next Photo", "display": "→", "enabledIn": ["focus"] },
+        { "id": "prev-photo", "label": "Previous Photo", "display": "←", "enabledIn": ["focus"] },
+        { "separator": true },
+        { "id": "next-cluster", "label": "Next Cluster", "display": "↩", "enabledIn": ["focus", "compare"] },
+        { "id": "prev-cluster", "label": "Previous Cluster", "display": "⇧↩", "enabledIn": ["focus", "compare"] },
+        { "separator": true },
+        { "id": "open-focus", "label": "Open in Focus", "display": "F", "enabledIn": ["folder"], "needsSelection": true }
+      ]
+    },
+    {
+      "id": "view",
+      "title": "View",
+      "items": [
+        { "id": "back", "label": "Back", "accelerator": "CmdOrCtrl+[", "enabledIn": ["folder", "focus", "compare", "settings"] },
+        { "separator": true },
+        { "id": "compare", "label": "Compare", "display": "C", "enabledIn": ["focus", "compare"] },
+        { "id": "pixel-peep", "label": "Pixel-Peep", "display": "Z", "enabledIn": ["focus"] },
+        { "id": "info-panel", "label": "Info Panel", "display": "I", "enabledIn": ["focus"] },
+        { "separator": true },
+        { "id": "zoom-in", "label": "Zoom In", "accelerator": "CmdOrCtrl+Plus", "enabledIn": ["focus", "compare"] },
+        { "id": "zoom-out", "label": "Zoom Out", "accelerator": "CmdOrCtrl+-", "enabledIn": ["focus", "compare"] },
+        { "id": "zoom-fit", "label": "Zoom to Fit", "accelerator": "CmdOrCtrl+0", "enabledIn": ["focus", "compare"] },
+        { "separator": true },
+        { "role": "toggleFullscreen", "label": "Enter Full Screen" }
+      ]
+    },
+    {
+      "id": "window",
+      "title": "Window",
+      "items": [
+        { "role": "minimize", "label": "Minimize" },
+        { "role": "zoom", "label": "Zoom" }
+      ]
+    },
+    {
+      "id": "help",
+      "title": "Help",
+      "items": [
+        { "id": "shortcuts", "label": "Keyboard Shortcuts", "display": "?", "enabledIn": ["library", "folder", "focus", "compare", "settings"] },
+        { "separator": true },
+        { "id": "github", "label": "Choix on GitHub", "enabledIn": ["library", "folder", "focus", "compare", "settings"] }
+      ]
+    }
+  ],
+  "context": {
+    "folder-row": [
+      { "id": "open-folder", "label": "Open", "enabledIn": ["library"], "hiddenWhen": ["offline"] },
+      { "id": "open-picks", "label": "Open Picks Folder", "enabledIn": ["library"], "hiddenWhen": ["offline"] },
+      { "id": "reveal-folder", "label": "Reveal in Finder", "enabledIn": ["library"], "hiddenWhen": ["offline"] },
+      { "separator": true },
+      { "id": "rescan-folder", "label": "Rescan", "enabledIn": ["library"], "hiddenWhen": ["offline", "scanning"] },
+      { "separator": true },
+      { "id": "remove-folder", "label": "Remove from Library…", "enabledIn": ["library"] }
+    ]
+  }
+}

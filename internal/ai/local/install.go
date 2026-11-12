@@ -14,15 +14,13 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/volodymyrsmirnov/choix/internal/deps"
 )
 
 // Installer wraps a ModelStore with the network behavior model downloads
 // need: a resumable streamed download into the model cache, SHA-256
 // verification before the file is put in place, and progress callbacks.
-// Construct via NewInstaller; the embedded *ModelStore exposes Has/Path so
-// callers can reuse the same value as the firstrun.ModelStore detector input.
+// Construct via NewInstaller; the embedded *ModelStore's Has and Path are
+// promoted, so Has(kind) bool and Download are the whole download API.
 type Installer struct {
 	*ModelStore
 	HTTPClient *http.Client // nil → http.DefaultClient
@@ -41,13 +39,6 @@ func NewInstaller(dir string) *Installer {
 	return &Installer{ModelStore: NewModelStore(dir)}
 }
 
-// Has implements firstrun.ModelStore. ModelStore.Has is filesystem-only,
-// so the context is unused — the wrapper exists solely to match the
-// interface signature the first-run wizard expects.
-func (i *Installer) Has(_ context.Context, kind ModelKind) (bool, error) {
-	return i.ModelStore.Has(kind), nil
-}
-
 func (i *Installer) model(kind ModelKind) (Model, bool) {
 	if i.Models != nil {
 		m, ok := i.Models[kind]
@@ -61,8 +52,7 @@ func (i *Installer) model(kind ModelKind) (Model, bool) {
 const lockPollInterval = 500 * time.Millisecond
 
 // Download fetches the pinned model file for kind unless it is already
-// installed. It is the single download implementation (the first-run
-// wizard's Install and the automatic quality-model download both use it):
+// installed. It is the single download implementation:
 //
 //   - Bytes are written to "<file>.part". A later call resumes it with an
 //     HTTP Range request, so an interrupted 180 MB download does not start
@@ -70,6 +60,8 @@ const lockPollInterval = 500 * time.Millisecond
 //   - The SHA-256 of the complete file is checked before the rename; on a
 //     mismatch the part file is deleted and an error is returned, so a
 //     wrong or truncated file never becomes the model.
+//   - The body is read only up to the pinned size; a longer response fails
+//     and its part file is deleted, as for a mismatch.
 //   - The data is fsynced before the atomic rename into place.
 //   - An advisory lock on "<file>.lock" keeps two choix processes from
 //     writing the same part file. The second one waits, then finds the model
@@ -79,7 +71,7 @@ const lockPollInterval = 500 * time.Millisecond
 // onProgress (may be nil) receives the bytes on disk so far and the expected
 // total (0 when the server did not say), at most a few times per second.
 func (i *Installer) Download(ctx context.Context, kind ModelKind, onProgress func(received, total int64)) error {
-	if i.ModelStore.Has(kind) {
+	if i.Has(kind) {
 		return nil
 	}
 	m, ok := i.model(kind)
@@ -97,7 +89,7 @@ func (i *Installer) Download(ctx context.Context, kind ModelKind, onProgress fun
 	}
 	defer unlock()
 	// Another process may have completed the download while we waited.
-	if i.ModelStore.Has(kind) {
+	if i.Has(kind) {
 		return nil
 	}
 
@@ -192,7 +184,20 @@ func (i *Installer) fetch(ctx context.Context, m Model, dest string, onProgress 
 	}
 	pw := &progressWriter{received: have, total: total, report: onProgress, watchdog: watchdog, stall: stall}
 	pw.emit()
-	if _, err := io.Copy(io.MultiWriter(f, hasher, pw), resp.Body); err != nil {
+	// Read at most one byte past the pinned size: a wrong or hostile response
+	// must not fill the disk before the SHA-256 check runs. A part file that
+	// is already longer than the model leaves a negative limit, which reads
+	// nothing and fails the same way. The size is checked before the copy
+	// error: a read can return bytes and an error together, and an oversized
+	// part file must go whatever the error was.
+	n, err := io.Copy(io.MultiWriter(f, hasher, pw), io.LimitReader(resp.Body, m.Size-have+1))
+	if have+n > m.Size {
+		_ = f.Close()
+		_ = os.Remove(part)
+		return false, fmt.Errorf("GET %s: response is larger than the pinned size of %d bytes", m.URL, m.Size)
+	}
+	if err != nil {
+		// At or below the pinned size: the part file is kept for a resume.
 		_ = f.Close()
 		return false, fmt.Errorf("download body: %w", downloadErr(ctx, err))
 	}
@@ -313,42 +318,5 @@ func (p *progressWriter) emit() {
 	p.last = time.Now()
 	if p.report != nil {
 		p.report(p.received, p.total)
-	}
-}
-
-// Install implements firstrun.ModelInstaller on top of Download, publishing
-// deps.ProgressEvent values to ch as bytes arrive. ch is always closed
-// before Install returns so callers can range over it without risking a
-// leak. Returns nil on success even if ch is buffered and the reader hasn't
-// drained it yet.
-func (i *Installer) Install(ctx context.Context, kind ModelKind, ch chan<- deps.ProgressEvent) error {
-	defer close(ch)
-
-	if i.ModelStore.Has(kind) {
-		send(ch, deps.ProgressEvent{Stage: "verify", PercentDone: 1, Message: "already installed"})
-		return nil
-	}
-	err := i.Download(ctx, kind, func(received, total int64) {
-		pct := 0.0
-		if total > 0 {
-			pct = min(float64(received)/float64(total), 1)
-		}
-		send(ch, deps.ProgressEvent{Stage: "fetch", PercentDone: pct})
-	})
-	if err != nil {
-		return err
-	}
-	send(ch, deps.ProgressEvent{Stage: "verify", PercentDone: 1, Message: "checksum verified"})
-	send(ch, deps.ProgressEvent{Stage: "done", PercentDone: 1})
-	return nil
-}
-
-// send pushes ev onto ch without blocking. The wizard's progress channel
-// is small and the SSE writer drains it asynchronously, so dropping is
-// preferable to stalling the download on a slow client.
-func send(ch chan<- deps.ProgressEvent, ev deps.ProgressEvent) {
-	select {
-	case ch <- ev:
-	default:
 	}
 }

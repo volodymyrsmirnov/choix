@@ -8,7 +8,7 @@ import (
 
 // TestMain redirects the config-file path at process start so tests
 // that forget to call stubConfigDir cannot ever reach the real
-// ~/.choix/config.toml. The per-test stub still wins (Cleanup restores
+// config.toml in the app's data directory. The per-test stub still wins (Cleanup restores
 // configFilePathFunc), but if it is missing the fallback is still a
 // temp file, not the user's home.
 func TestMain(m *testing.M) {

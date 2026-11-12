@@ -1,0 +1,10 @@
+{
+  "remove-folder": {
+    "title": "Remove “{name}” from Choix?",
+    "message": "Your photos, the picks folder and Choix’s data inside the folder stay on disk.",
+    "buttons": [
+      { "label": "Remove", "role": "default" },
+      { "label": "Cancel", "role": "cancel" }
+    ]
+  }
+}

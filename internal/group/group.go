@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -23,6 +24,9 @@ type Grouper struct {
 	bucketSec   int64
 	threshold   float64
 	crossDevice bool
+	// noEmbeddings is the inverse of SetUseEmbeddings, so the zero value
+	// means "use them" (the default).
+	noEmbeddings atomic.Bool
 }
 
 // NewGrouper constructs a Grouper. bucketSec is the time-bucket width in seconds
@@ -33,6 +37,14 @@ type Grouper struct {
 func NewGrouper(s *store.Store, bucketSec int64, threshold float64, crossDevice bool) *Grouper {
 	return &Grouper{s: s, bucketSec: bucketSec, threshold: threshold, crossDevice: crossDevice}
 }
+
+// SetUseEmbeddings switches visual sub-clustering. Off, every file is
+// treated as having no embedding, so clusters are the time buckets alone
+// (and cross-device mode, which needs embeddings, falls back to per-device
+// grouping). On is the default. It applies from the next rebuild.
+func (g *Grouper) SetUseEmbeddings(on bool) { g.noEmbeddings.Store(!on) }
+
+func (g *Grouper) useEmbeddings() bool { return !g.noEmbeddings.Load() }
 
 // RebuildBucket recomputes clusters for the given (device_key, time_bucket).
 // The delete of old clusters and the insert of new ones happen inside a single
@@ -55,7 +67,12 @@ func (g *Grouper) RebuildBucket(ctx context.Context, deviceKey string, timeBucke
 	// signal saying these are different scenes we trust the bucket.
 	embeds := make(map[int64][]float32, len(files))
 	noEmb := make([]int64, 0)
+	useEmb := g.useEmbeddings()
 	for _, f := range files {
+		if !useEmb {
+			noEmb = append(noEmb, f.ID)
+			continue
+		}
 		sig, err := g.s.AISignals().GetByFileID(f.ID)
 		if err != nil || sig.Embedding == nil {
 			noEmb = append(noEmb, f.ID)
@@ -117,26 +134,62 @@ type runFile struct {
 //
 // Picks live in a separate table and are unaffected by this rebuild.
 func (g *Grouper) RebuildAll(ctx context.Context) error {
+	return g.RebuildAllProgress(ctx, nil)
+}
+
+// clusterProgress counts the files a rebuild has placed in clusters.
+type clusterProgress struct {
+	fn          func(done, total int) // nil: nothing is reported
+	done, total int
+}
+
+// add reports n more files clustered.
+func (p *clusterProgress) add(n int) {
+	if p.fn == nil {
+		return
+	}
+	p.done += n
+	p.fn(p.done, p.total)
+}
+
+// RebuildAllProgress is RebuildAll reporting its progress in files: progress
+// (nil: none) is called with 0 of the analyzed files once they are listed,
+// then after each bucket (a device's time bucket, or a bucket of the merged
+// timeline) has been sub-clustered, with the files placed so far; the last
+// call has done == total, before the clusters are written in one
+// transaction. Files, not buckets, because the total is known before any
+// bucket is cut and a bucket's cost grows with its files. It is called on
+// the caller's goroutine.
+func (g *Grouper) RebuildAllProgress(ctx context.Context, progress func(done, total int)) error {
 	start := time.Now()
+	useEmb := g.useEmbeddings()
 	slog.Info("cluster rebuild start",
 		"bucket_sec", g.bucketSec,
 		"threshold", g.threshold,
 		"cross_device", g.crossDevice,
+		"use_embeddings", useEmb,
 	)
 	files, err := g.s.Files().ListAllAnalyzed()
 	if err != nil {
 		slog.Warn("cluster rebuild failed", "phase", "list_files", "err", err)
 		return fmt.Errorf("list analyzed files: %w", err)
 	}
+	prog := &clusterProgress{fn: progress, total: len(files)}
+	prog.add(0)
 	if len(files) == 0 {
 		slog.Info("cluster rebuild done", "files", 0, "embeddings", 0, "mode", "empty", "elapsed_ms", time.Since(start).Milliseconds())
 		return g.s.WriteClusters(ctx, nil)
 	}
 
-	embeds, err := g.s.AISignals().AllEmbeddings()
-	if err != nil {
-		slog.Warn("cluster rebuild failed", "phase", "load_embeddings", "err", err)
-		return fmt.Errorf("load embeddings: %w", err)
+	// With embeddings off every file counts as having none: an empty map
+	// leaves only the time buckets (and short-circuits cross-device mode).
+	embeds := map[int64][]float32{}
+	if useEmb {
+		embeds, err = g.s.AISignals().AllEmbeddings()
+		if err != nil {
+			slog.Warn("cluster rebuild failed", "phase", "load_embeddings", "err", err)
+			return fmt.Errorf("load embeddings: %w", err)
+		}
 	}
 
 	// Cross-device mode requires at least one embedding to anchor the
@@ -145,9 +198,9 @@ func (g *Grouper) RebuildAll(ctx context.Context) error {
 	mode := "per_device"
 	if g.crossDevice && len(embeds) > 0 {
 		mode = "cross_device"
-		err = g.rebuildAllCrossDevice(ctx, files, embeds)
+		err = g.rebuildAllCrossDevice(ctx, files, embeds, prog)
 	} else {
-		err = g.rebuildAllPerDevice(ctx, files, embeds)
+		err = g.rebuildAllPerDevice(ctx, files, embeds, prog)
 	}
 	if err != nil {
 		slog.Warn("cluster rebuild failed", "phase", "rebuild", "mode", mode, "err", err)
@@ -163,7 +216,7 @@ func (g *Grouper) RebuildAll(ctx context.Context) error {
 }
 
 // rebuildAllPerDevice is the original, device-partitioned path.
-func (g *Grouper) rebuildAllPerDevice(ctx context.Context, files []store.File, embeds map[int64][]float32) error {
+func (g *Grouper) rebuildAllPerDevice(ctx context.Context, files []store.File, embeds map[int64][]float32, prog *clusterProgress) error {
 	byDevice := map[string][]runFile{}
 	deviceOrder := []string{}
 	for _, f := range files {
@@ -186,6 +239,7 @@ func (g *Grouper) rebuildAllPerDevice(ctx context.Context, files []store.File, e
 				Members:    members,
 			})
 		}
+		prog.add(len(ids))
 	}
 
 	for _, dev := range deviceOrder {
@@ -246,7 +300,7 @@ func (g *Grouper) rebuildAllPerDevice(ctx context.Context, files []store.File, e
 // MergedDeviceKey. Files without embeddings stay anchored to their own
 // device's timeline so we never claim two cameras shot the same scene
 // when we have no visual evidence.
-func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File, embeds map[int64][]float32) error {
+func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File, embeds map[int64][]float32, prog *clusterProgress) error {
 	skew := EstimateSkew(files, embeds)
 
 	deviceFor := make(map[int64]string, len(files))
@@ -319,6 +373,7 @@ func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File,
 				Members:    group,
 			})
 		}
+		prog.add(len(members))
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -381,6 +436,7 @@ func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File,
 				TimeBucket: start,
 				Members:    ids,
 			})
+			prog.add(len(ids))
 			ids = nil
 		}
 		for _, f := range seq {
@@ -415,6 +471,9 @@ func (g *Grouper) rebuildAllCrossDevice(ctx context.Context, files []store.File,
 				TimeBucket: sql.NullInt64{},
 				Members:    []int64{id},
 			})
+		}
+		if len(ids) > 0 {
+			prog.add(len(ids))
 		}
 	}
 

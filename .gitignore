@@ -1,11 +1,16 @@
 .superpowers/
 
 # build artifacts
-/choix
 /dist/
 *.test
 *.out
-internal/ui/web/dist/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-prototype/
+frontend/.design/
+frontend/e2e/harness/dist/
+bin/
+.tmp/
 
 # choix's own output when it is run against a folder inside the repo:
 # per-folder state + thumbnail cache, and pick copies at the scan root.

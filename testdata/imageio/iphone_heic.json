@@ -1,0 +1,27 @@
+{
+  "PixelHeight": 600,
+  "PixelWidth": 800,
+  "{Exif}": {
+    "DateTimeDigitized": "2026:01:02 03:04:05",
+    "DateTimeOriginal": "2026:01:02 03:04:05",
+    "ExposureTime": 0.004,
+    "FNumber": 1.78,
+    "FocalLength": 6.86,
+    "ISOSpeedRatings": [
+      64
+    ],
+    "PixelXDimension": 800,
+    "PixelYDimension": 600
+  },
+  "{GPS}": {
+    "Latitude": 10.5,
+    "LatitudeRef": "N",
+    "Longitude": 20.25,
+    "LongitudeRef": "E"
+  },
+  "{TIFF}": {
+    "DateTime": "2026:01:02 03:04:05",
+    "Make": "Apple",
+    "Model": "iPhone 15 Pro"
+  }
+}

@@ -1,88 +1,40 @@
+//go:build darwin
+
 package thumb
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/volodymyrsmirnov/choix/internal/meta"
-	"github.com/volodymyrsmirnov/choix/internal/scanner"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
+	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 )
 
-func TestIntegrationScanMetaThumb(t *testing.T) {
-	et, ff := requireTools(t)
+// The sizing contract holds on the real ImageIO, not only on the fake: a
+// plain JPEG is bounded by its long side, a RAF's embedded JPEG by width.
+func TestBuild_RealImageIOSizing(t *testing.T) {
+	e := newBuildEnv(t)
+	e.b.Stills = imageio.New()
+	e.b.Video = avmedia.New()
 
-	fixtures := []struct{ src, rel string }{
-		{"jpeg-with-exif.jpg", "Day1/IMG_0001.jpg"},
-		{"sample.heic", "Day1/IMG_0002.HEIC"},
-		{"tiny.raf", "Day1/IMG_0003.RAF"},
-		{"no-exif.jpg", "Day1/IMG_0004.jpg"},
-		{"trimmed.mov", "Day1/CLIP_0005.MOV"},
+	jpg := e.add("Day1/IMG_0001.jpg", "photo", platformtest.MakeJPEG(t, 500, 1000))
+	raf := e.add("Day1/DSCF0002.RAF", "photo", fixture(t, platformtest.MakeRAF(t, platformtest.MakeJPEG(t, 500, 1000))))
+	dng := e.add("Day1/IMG_0003.DNG", "photo", fixture(t, platformtest.MakeDNG(t, platformtest.DNGOptions{
+		RawStrip: []byte("raw"),
+		Previews: []platformtest.DNGPreview{{JPEG: platformtest.MakeJPEG(t, 500, 1000), Width: 500, Height: 1000}},
+	})))
+	notJPEG := e.add("Day1/fake.jpg", "photo", []byte("this is not a JPEG"))
+	for _, id := range []int64{jpg, raf, dng, notJPEG} {
+		_ = e.build(id)
 	}
 
-	root := t.TempDir()
-	for _, f := range fixtures {
-		src := fixturePath(t, f.src)
-		copyFile(t, src, filepath.Join(root, f.rel))
+	e.wantStatus(jpg, "thumbed")
+	e.wantSize(jpg, TierThumb, 128, 256)
+	e.wantSize(jpg, TierPreview, 500, 1000)
+	for _, id := range []int64{raf, dng} {
+		e.wantStatus(id, "thumbed")
+		e.wantSize(id, TierThumb, 256, 512)
+		e.wantSize(id, TierPreview, 500, 1000)
 	}
-
-	s := newTestStoreInThumb(t)
-
-	// Stage 1: scan.
-	sc := scanner.New(root, s)
-	if _, err := sc.Scan(context.Background()); err != nil {
-		t.Fatalf("scanner.Scan: %v", err)
-	}
-
-	// Stage 2: metadata.
-	mb := meta.NewExtractor(et, s, root)
-	if _, err := mb.ProcessByStatus(context.Background(), "discovered", 100); err != nil {
-		t.Fatalf("meta.ProcessByStatus: %v", err)
-	}
-
-	// Stage 3: thumb.
-	b := &Builder{ScanRoot: root, ExifTool: et, Ffmpeg: ff, Store: s}
-	n, err := b.BuildByStatus(context.Background(), "metadata", 100)
-	if err != nil {
-		t.Fatalf("thumb.BuildByStatus: %v", err)
-	}
-	if n != len(fixtures) {
-		t.Fatalf("processed = %d, want %d", n, len(fixtures))
-	}
-
-	// Assert: every file is thumbed and has its expected caches/rows.
-	for _, f := range fixtures {
-		row, err := s.Files().GetByPath(f.rel)
-		if err != nil {
-			t.Fatalf("GetByPath %s: %v", f.rel, err)
-		}
-		if row.ScanStatus != "thumbed" {
-			t.Errorf("%s status = %q, want thumbed (err=%v)", f.rel, row.ScanStatus, row.ErrMsg)
-			continue
-		}
-
-		// Tier-1 thumbnail always present.
-		if _, err := os.Stat(CachePath(root, row.ID, TierThumb)); err != nil {
-			t.Errorf("%s: missing tier-1 thumb: %v", f.rel, err)
-		}
-		if _, err := s.Thumbs().Get(row.ID, TierThumb); err != nil {
-			t.Errorf("%s: missing thumbs row tier-1: %v", f.rel, err)
-		}
-
-		switch row.Kind {
-		case "photo":
-			if _, err := os.Stat(CachePath(root, row.ID, TierPreview)); err != nil {
-				t.Errorf("%s: missing tier-2 preview: %v", f.rel, err)
-			}
-			if _, err := s.Thumbs().Get(row.ID, TierPreview); err != nil {
-				t.Errorf("%s: missing thumbs row tier-2: %v", f.rel, err)
-			}
-		case "video":
-			entries, err := os.ReadDir(KeyframesDir(root, row.ID))
-			if err != nil || len(entries) == 0 {
-				t.Errorf("%s: missing keyframes dir or empty: err=%v", f.rel, err)
-			}
-		}
-	}
+	e.wantFailed(notJPEG, "")
 }

@@ -1,136 +1,105 @@
 package thumb
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
-	"github.com/volodymyrsmirnov/choix/internal/deps"
+	"github.com/volodymyrsmirnov/choix/internal/platform"
+	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 )
 
-func requireFfmpeg(t *testing.T) *deps.Runner {
-	t.Helper()
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not on PATH; skipping")
-	}
-	return deps.NewRunner("ffmpeg")
+// distinctFrames is a platform.Video whose frames all differ: frame i is a
+// (40+i)×30 JPEG. It records what it returned.
+type distinctFrames struct {
+	platformtest.Video
+	t      testing.TB
+	frames []platform.Image
 }
 
-// generateTestVideo creates a 2-second synthetic test video using ffmpeg's
-// lavfi testsrc source and writes it to dst. Skips the test if ffmpeg is
-// unavailable.
-func generateTestVideo(t *testing.T, dst string) {
-	t.Helper()
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not on PATH; skipping")
+func (d *distinctFrames) Frames(ctx context.Context, path string, fractions []float64) ([]platform.Image, error) {
+	if !slices.Equal(fractions, KeyframeFractions) {
+		return nil, fmt.Errorf("fractions %v; want KeyframeFractions", fractions)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	d.frames = nil
+	for i := range fractions {
+		w := 40 + i
+		d.frames = append(d.frames, platform.Image{JPEG: platformtest.MakeJPEG(d.t, w, 30), Width: w, Height: 30})
 	}
-	cmd := exec.Command("ffmpeg",
-		"-y", "-loglevel", "error",
-		"-f", "lavfi",
-		"-i", "testsrc=duration=2:size=320x240:rate=10",
-		"-pix_fmt", "yuv420p",
-		dst,
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("generate test video: %v\n%s", err, out)
-	}
+	return d.frames, nil
 }
 
-func TestBuildVideoKeyframes(t *testing.T) {
-	ff := requireFfmpeg(t)
+func TestBuild_VideoWritesKeyframesAndTiers(t *testing.T) {
+	e := newBuildEnv(t)
+	video := &distinctFrames{t: t}
+	e.b.Video = video
+	id := e.add("Day1/CLIP.MOV", "video", []byte("not decoded by the fake"))
+	e.mustBuild(id)
 
-	// Prefer a checked-in fixture (trimmed.mov) but fall back to a
-	// synthetically generated video so the test still runs on CI where
-	// binary fixtures are absent. fixturePath skips if the file is missing,
-	// so we only use it when it exists.
-	var src string
-	fixtureAbs, _ := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "trimmed.mov"))
-	if _, err := os.Stat(fixtureAbs); err == nil {
-		src = fixtureAbs
-	} else {
-		// Generate a synthetic 2-second video into a temp dir.
-		tmp := t.TempDir()
-		src = filepath.Join(tmp, "test.mov")
-		generateTestVideo(t, src)
-	}
-
-	out := t.TempDir()
-	pattern := filepath.Join(out, "%d.jpg")
-
-	paths, err := BuildVideoKeyframes(context.Background(), ff, src, pattern)
+	e.wantStatus(id, "thumbed")
+	entries, err := os.ReadDir(KeyframesDir(e.root, id))
 	if err != nil {
-		t.Fatalf("BuildVideoKeyframes: %v", err)
+		t.Fatalf("read keyframes: %v", err)
 	}
-	if len(paths) != 5 {
-		t.Fatalf("got %d keyframes, want 5", len(paths))
+	var names []string
+	for _, ent := range entries {
+		names = append(names, ent.Name())
 	}
-	for i, p := range paths {
-		if !filepath.IsAbs(p) {
-			t.Errorf("path[%d] = %q is not absolute", i, p)
-		}
-		info, err := os.Stat(p)
+	if want := []string{"1.jpg", "2.jpg", "3.jpg", "4.jpg", "5.jpg"}; !slices.Equal(names, want) {
+		t.Fatalf("keyframes = %v; want %v", names, want)
+	}
+	// Each file holds its own full-size frame, in order.
+	for i, f := range video.frames {
+		got, err := os.ReadFile(filepath.Join(KeyframesDir(e.root, id), fmt.Sprintf("%d.jpg", i+1)))
 		if err != nil {
-			t.Fatalf("stat %s: %v", p, err)
+			t.Fatalf("read keyframe %d: %v", i+1, err)
 		}
-		if info.Size() == 0 {
-			t.Errorf("keyframe %s is empty", p)
+		if !bytes.Equal(got, f.JPEG) {
+			t.Fatalf("keyframe %d.jpg is not frame %d (%dx%d)", i+1, i+1, f.Width, f.Height)
 		}
+	}
+	// Both tiers come from frame 1 (40x30, under both limits).
+	e.wantSize(id, TierThumb, 40, 30)
+	e.wantSize(id, TierPreview, 40, 30)
+	for _, tier := range []string{TierThumb, TierPreview} {
+		th, err := e.st.Thumbs().Get(id, tier)
+		if err != nil {
+			t.Fatalf("Thumbs.Get(%s): %v", tier, err)
+		}
+		if want := fmt.Sprintf(".choix/thumbs/%02x/%d-%s.jpg", id%256, id, tier); th.RelPath != want {
+			t.Fatalf("%s rel_path = %q; want %q", tier, th.RelPath, want)
+		}
+		e.thumbSize(id, tier)
 	}
 }
 
-// TestBuildVideoKeyframesNoDuplicatesFromPriorRun verifies that a second call
-// to BuildVideoKeyframes does not mix frames from a prior run. A fresh temp
-// dir is created each time, so stale frames can never appear.
-func TestBuildVideoKeyframesNoDuplicatesFromPriorRun(t *testing.T) {
-	ff := requireFfmpeg(t)
+func TestBuild_VideoTiersScaleByWidth(t *testing.T) {
+	e := newBuildEnv(t)
+	id := e.add("CLIP.MOV", "video", []byte("x"))
+	e.video.Props = map[string]map[string]any{e.abs("CLIP.MOV"): {"PixelWidth": 500, "PixelHeight": 1000}}
+	e.mustBuild(id)
 
-	tmp := t.TempDir()
-	src := filepath.Join(tmp, "test.mov")
-	generateTestVideo(t, src)
+	e.wantCalls(dataCall(256, platform.FitWidth), dataCall(1600, platform.FitWidth))
+	e.wantSize(id, TierThumb, 256, 512)
+	e.wantSize(id, TierPreview, 500, 1000)
+}
 
-	// Simulate a shared parent directory (mirrors how KeyframesDir works).
-	parent := t.TempDir()
+func TestBuild_VideoWithoutTrackIsFailed(t *testing.T) {
+	e := newBuildEnv(t)
+	id := e.add("audio.mov", "video", []byte("x"))
+	e.video.Fail = map[string]error{e.abs("audio.mov"): platform.ErrNoVideoTrack}
+	if err := e.build(id); err == nil {
+		t.Fatal("Build of a video without a track: want an error")
+	}
+	e.wantFailed(id, "no video track")
+}
 
-	// First extraction.
-	pattern1 := filepath.Join(parent, "run1", "%d.jpg")
-	if err := os.MkdirAll(filepath.Dir(pattern1), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	paths1, err := BuildVideoKeyframes(context.Background(), ff, src, pattern1)
-	if err != nil {
-		t.Fatalf("first extraction: %v", err)
-	}
-	if len(paths1) != 5 {
-		t.Fatalf("first extraction: got %d frames, want 5", len(paths1))
-	}
-
-	// Second extraction into the same parent.
-	pattern2 := filepath.Join(parent, "run2", "%d.jpg")
-	if err := os.MkdirAll(filepath.Dir(pattern2), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	paths2, err := BuildVideoKeyframes(context.Background(), ff, src, pattern2)
-	if err != nil {
-		t.Fatalf("second extraction: %v", err)
-	}
-	if len(paths2) != 5 {
-		t.Fatalf("second extraction: got %d frames, want 5", len(paths2))
-	}
-
-	// The two sets of paths must be disjoint — no frame from run1 should
-	// appear in run2, confirming that each call uses its own fresh temp dir.
-	set1 := make(map[string]struct{}, len(paths1))
-	for _, p := range paths1 {
-		set1[p] = struct{}{}
-	}
-	for _, p := range paths2 {
-		if _, dup := set1[p]; dup {
-			t.Errorf("path %q appears in both extractions (stale dir reuse)", p)
-		}
+func TestKeyframeFractions(t *testing.T) {
+	if want := []float64{0, 0.25, 0.5, 0.75, 0.95}; !slices.Equal(KeyframeFractions, want) {
+		t.Fatalf("KeyframeFractions = %v; want %v", KeyframeFractions, want)
 	}
 }

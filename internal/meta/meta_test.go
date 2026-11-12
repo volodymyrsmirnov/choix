@@ -1,25 +1,21 @@
 package meta
 
 import (
-	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"os/exec"
+	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "test.db") + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	s, err := store.Open(dsn)
+	s, err := store.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -27,94 +23,42 @@ func newTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-func TestExtractorProcess(t *testing.T) {
-	exiftoolPath, err := exec.LookPath("exiftool")
-	if err != nil {
-		t.Skip("exiftool not installed")
+// An extraction interrupted by cancellation — the run's context is done, or
+// the error wraps a context error — is not a failure of the file: the row
+// keeps its status so the next run picks it up again.
+func TestRecordFailureSkipsCancellation(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	cases := []struct {
+		name  string
+		ctx   context.Context
+		cause error
+	}{
+		{"cancelled ctx", cancelled, errors.New("exiftool: signal: killed")},
+		{"wrapped Canceled, live ctx", context.Background(), fmt.Errorf("exiftool: %w", context.Canceled)},
+		{"wrapped DeadlineExceeded, live ctx", context.Background(), fmt.Errorf("exiftool: %w", context.DeadlineExceeded)},
 	}
-
-	s := newTestStore(t)
-	abs, err := filepath.Abs("../../testdata/exif/sample.jpg")
-	if err != nil {
-		t.Fatalf("abs: %v", err)
-	}
-	id, err := s.Files().Insert(store.File{
-		Path: "sample.jpg", Size: 1, Mtime: time.Now().Unix(),
-		ContentHash: "deadbeef", Kind: "photo", Format: "jpeg", ScanStatus: "discovered",
-	})
-	if err != nil {
-		t.Fatalf("Insert: %v", err)
-	}
-
-	// Empty root: Process is given an absolute path directly, no join needed.
-	ext := NewExtractor(New(exiftoolPath), s, "")
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := ext.Process(ctx, id, abs); err != nil {
-		t.Fatalf("Process: %v", err)
-	}
-
-	got, err := s.Files().GetByID(id)
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
-	}
-	if got.ScanStatus != "metadata" {
-		t.Errorf("ScanStatus: got %q want metadata", got.ScanStatus)
-	}
-	if len(got.RawExif) == 0 {
-		t.Error("RawExif: empty")
-	}
-
-	// raw_exif is gzipped JSON; verify it decompresses to a non-empty array.
-	zr, err := gzip.NewReader(strings.NewReader(string(got.RawExif)))
-	if err != nil {
-		t.Fatalf("gzip.NewReader: %v", err)
-	}
-	plain, err := io.ReadAll(zr)
-	if err != nil {
-		t.Fatalf("read gzip: %v", err)
-	}
-	var records []map[string]any
-	if err := json.Unmarshal(plain, &records); err != nil {
-		t.Fatalf("unmarshal raw_exif: %v (payload: %s)", err, plain)
-	}
-	if len(records) == 0 {
-		t.Error("raw_exif decoded to empty array")
-	}
-}
-
-func TestExtractorProcessMissingFile(t *testing.T) {
-	exiftoolPath, err := exec.LookPath("exiftool")
-	if err != nil {
-		t.Skip("exiftool not installed")
-	}
-
-	s := newTestStore(t)
-	id, err := s.Files().Insert(store.File{
-		Path: "ghost.jpg", Size: 1, Mtime: time.Now().Unix(),
-		ContentHash: "h", Kind: "photo", Format: "jpeg", ScanStatus: "discovered",
-	})
-	if err != nil {
-		t.Fatalf("Insert: %v", err)
-	}
-
-	ext := NewExtractor(New(exiftoolPath), s, "")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	err = ext.Process(ctx, id, "/nonexistent/path/that/does/not/exist.jpg")
-	if err == nil {
-		t.Fatal("Process: expected error, got nil")
-	}
-
-	got, gerr := s.Files().GetByID(id)
-	if gerr != nil {
-		t.Fatalf("GetByID: %v", gerr)
-	}
-	if got.ScanStatus != "failed" {
-		t.Errorf("ScanStatus: got %q want failed", got.ScanStatus)
-	}
-	if !got.ErrMsg.Valid || got.ErrMsg.String == "" {
-		t.Errorf("ErrMsg: got %+v want non-empty", got.ErrMsg)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			id, err := s.Files().Insert(store.File{
+				Path: "a.jpg", Size: 1, Mtime: 1, ContentHash: "h", Kind: "photo", Format: "jpeg", ScanStatus: "discovered",
+			})
+			if err != nil {
+				t.Fatalf("Insert: %v", err)
+			}
+			ext := &Extractor{store: s}
+			if err := ext.recordFailure(tc.ctx, id, tc.cause); !errors.Is(err, tc.cause) {
+				t.Fatalf("recordFailure = %v, want the cause", err)
+			}
+			got, err := s.Files().GetByID(id)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if got.ScanStatus != "discovered" || got.ErrMsg.Valid {
+				t.Fatalf("scan_status=%q error=%+v; want 'discovered' and no error", got.ScanStatus, got.ErrMsg)
+			}
+		})
 	}
 }
 
@@ -179,16 +123,12 @@ func TestRecordFailurePreservesExistingEXIF(t *testing.T) {
 }
 
 func TestExtractorProcessByStatus(t *testing.T) {
-	exiftoolPath, err := exec.LookPath("exiftool")
-	if err != nil {
-		t.Skip("exiftool not installed")
-	}
-
 	s := newTestStore(t)
 	abs, err := filepath.Abs("../../testdata/exif/sample.jpg")
 	if err != nil {
 		t.Fatalf("abs: %v", err)
 	}
+	stills := &platformtest.Stills{Props: map[string]map[string]any{abs: loadDict(t, "imageio", "iphone_heic.json")}}
 
 	// Insert three rows; one points at a real file, two at missing paths.
 	// We expect 1 success and 2 failures, all to be drained in a single batch.
@@ -211,7 +151,7 @@ func TestExtractorProcessByStatus(t *testing.T) {
 
 	// Empty root: this test stores absolute paths in the `path` column, so
 	// joining root + path is a no-op (filepath.Join("", abs) == abs).
-	ext := NewExtractor(New(exiftoolPath), s, "")
+	ext := NewExtractor(&NativeReader{Stills: stills, Video: &platformtest.Video{}}, s, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

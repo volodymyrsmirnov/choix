@@ -92,6 +92,13 @@ func (l *storeIDLister) ListByStatus(ctx context.Context, status string, limit i
 	return l.st.Files().IDsByStatus(status, limit)
 }
 
+func (l *storeIDLister) CountByStatus(ctx context.Context, status string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return l.st.Files().CountByStatus(status)
+}
+
 // ---------------------------------------------------------------------------
 // Corpus helpers.
 // ---------------------------------------------------------------------------
@@ -238,8 +245,7 @@ func TestSmoke_100FileCorpus(t *testing.T) {
 	if err := os.MkdirAll(dbDir, 0o750); err != nil { //nolint:gosec // temp dir
 		t.Fatal(err)
 	}
-	dsn := "file:" + filepath.Join(dbDir, "state.db") + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	st, err := store.Open(dsn)
+	st, err := store.Open(filepath.Join(dbDir, "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

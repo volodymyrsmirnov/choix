@@ -1,0 +1,601 @@
+version: '3'
+
+# Frontend and design-gate tasks; the Go build, packaging and signing tasks are in the block below.
+
+tasks:
+  frontend:install:
+    desc: Install the frontend dependencies from bun.lock
+    dir: frontend
+    cmds:
+      - bun install --frozen-lockfile
+
+  design:dev:
+    desc: Run the design prototype with hot reload on http://localhost:8811 (for editing; reviews and approvals use design:build + design:serve)
+    dir: frontend
+    cmds:
+      - bun run proto:dev
+
+  design:build:
+    desc: Build the design prototype into frontend/dist-prototype/, stamped with its source digest (build.json, served at /__build.json)
+    dir: frontend
+    cmds:
+      - bun run proto:build
+
+  design:serve:
+    desc: Serve the built prototype on http://127.0.0.1:8811 (pass -- --port N to change)
+    dir: frontend
+    cmds:
+      - bun run proto:serve {{.CLI_ARGS}}
+
+  design:check-states:
+    desc: 'Rebuild the prototype, then check every state × size × browser; screenshots under frontend/.design/screenshots/ (pass -- --grep <group> for one group)'
+    dir: frontend
+    cmds:
+      - bun run design:check-states {{.CLI_ARGS}}
+
+  design:flows:
+    desc: 'Rebuild the prototype, then click through each group''s flows and check every overlay is opened and closed (pass -- --grep <group> for one group)'
+    dir: frontend
+    cmds:
+      - bun run design:flows {{.CLI_ARGS}}
+
+  design:selftest:
+    desc: Rebuild the prototype and the fixture page, then self-test the state checks and the flow runner against the broken fixtures (Chromium and WebKit)
+    dir: frontend
+    cmds:
+      - bun run design:selftest {{.CLI_ARGS}}
+
+  design:snapshot:
+    desc: 'Rebuild the prototype and fingerprint every state into docs/design/state-hashes.json (pass -- --check to compare only, -- --states 100-122,300 for some)'
+    dir: frontend
+    cmds:
+      - bun run design:snapshot {{.CLI_ARGS}}
+
+  design:snapshot:verify:
+    desc: Re-run the snapshot and fail if the committed file changes by a byte
+    dir: frontend
+    cmds:
+      - bun run design:snapshot && git diff --exit-code -- ../docs/design/state-hashes.json
+
+  design:snapshot:linux:
+    desc: Check docs/design/state-hashes.json in the pinned Playwright Linux image, against the committed HEAD (needs Docker)
+    vars:
+      PLAYWRIGHT:
+        sh: node -p "require('./frontend/package.json').devDependencies['@playwright/test']"
+      HEAD:
+        sh: git rev-parse HEAD
+      GIT_COMMON_DIR:
+        sh: git rev-parse --path-format=absolute --git-common-dir
+    cmds:
+      - >-
+        docker run --rm -v "{{.GIT_COMMON_DIR}}":/src.git:ro mcr.microsoft.com/playwright:v{{.PLAYWRIGHT}}-noble
+        bash -lc "apt-get update -qq && apt-get install -y -qq python3 git unzip && npm i -g bun
+        && git clone -q /src.git /tmp/w && cd /tmp/w && git checkout -q {{.HEAD}}
+        && cd frontend && bun install --frozen-lockfile && bun run design:snapshot --check"
+
+  design:inventory:
+    desc: Write docs/design/inventory.md (every state with its number, label, group and design reference) from the prototype's scenarios
+    dir: frontend
+    cmds:
+      - bun tools/state-inventory.ts
+
+  design:inventory:check:
+    desc: Exit 1 when docs/design/inventory.md is not what design:inventory would write (bun test checks the same)
+    dir: frontend
+    cmds:
+      - bun tools/state-inventory.ts --check
+
+  design:check:
+    desc: 'The design gate, merge mode: exit 1 on findings (pass -- --branch B --base R --json)'
+    cmds:
+      - python3 tools/design/gate.py check --mode merge {{.CLI_ARGS}}
+
+  design:status:
+    desc: Every prototype state with its review link and approval status, and the merge-check findings
+    cmds:
+      - python3 tools/design/gate.py status {{.CLI_ARGS}}
+
+  design:init:
+    desc: '(Owner only, in a terminal) Create docs/design/approvers.txt and an empty approval ledger'
+    interactive: true
+    cmds:
+      - python3 tools/design/gate.py init {{.CLI_ARGS}}
+
+  design:approve:
+    desc: '(Owner only, in a terminal) Approve states: -- 100-122 300, -- all, -- --note TEXT, -- --retire N…'
+    interactive: true
+    cmds:
+      - python3 tools/design/gate.py approve {{.CLI_ARGS}}
+
+  design:confirm-no-ui:
+    desc: "(Owner only, in a terminal) Confirm this branch's gated changes do not change the UI"
+    interactive: true
+    cmds:
+      - python3 tools/design/gate.py confirm-no-ui {{.CLI_ARGS}}
+
+  parity:app:
+    desc: 'Build the app on the mock bindings (frontend/.design/dist-parity/) and serve it on http://127.0.0.1:8801 for parity (APP_PORT=N to change)'
+    dir: frontend
+    vars:
+      APP_PORT: '{{.APP_PORT | default "8801"}}'
+    cmds:
+      - bun run build:parity
+      - node e2e/parity/serve-app.mjs --port {{.APP_PORT}}
+
+  parity:
+    desc: 'App ↔ prototype parity: build both, serve the prototype on 127.0.0.1:8811 and the app on :8801, run the parity project, stop both (pass -- --grep <group> for one group; APP_PORT=N PROTO_PORT=N for other ports)'
+    dir: frontend
+    vars:
+      APP_PORT: '{{.APP_PORT | default "8801"}}'
+      PROTO_PORT: '{{.PROTO_PORT | default "8811"}}'
+    cmds:
+      # e2e/parity/run.mjs runs design:build's and parity:app's builds, starts
+      # the servers of design:serve and parity:app itself (so it owns their
+      # pids and always stops them), refuses ports already in use, and exits
+      # with Playwright's status.
+      - node e2e/parity/run.mjs --app-port {{.APP_PORT}} --proto-port {{.PROTO_PORT}} -- {{.CLI_ARGS}}
+
+  test:frontend:
+    desc: Unit tests, type check and design lint for the frontend
+    dir: frontend
+    cmds:
+      - bun run test
+      - bun run check
+      - bun run lint:design
+
+  # ===========================================================================
+  # Desktop app (backend plan, Task 47): tools, bindings, dev, build, package,
+  # signing, Go tests and lint. Everything from here to the end of `tasks:`
+  # is this block; the tasks above belong to the UI track.
+  #
+  # Every Go command (go, golangci-lint, wails3) runs with the environment
+  # anchored at `tools` (&go-env): arm64 only, deployment target macOS 14.0.
+  # CGO_CFLAGS and CGO_LDFLAGS keep Go's default "-O2 -g"; the bare
+  # -mmacosx-version-min would build every cgo package unoptimised.
+  #
+  # The signing variables (CHOIX_SIGN_IDENTITY, CHOIX_NOTARY_PROFILE,
+  # CHOIX_MAS_*, CHOIX_TEAM_ID) are read only by sign:developer-id, notarize,
+  # dmg, notarize:dmg and package:mas; build, test, lint and package never
+  # need one. See docs/release/signing-checklist.md. A signing task checks
+  # its variables in a dynamic variable (CHECK_VARS), not a precondition:
+  # Task exits 201 on a failed precondition, and a missing variable must
+  # exit 1. The release workflow runs exactly these tasks, so a release can
+  # be rehearsed locally with the same two variables set:
+  #   task package sign:developer-id notarize dmg notarize:dmg verify:release VERSION=X.Y.Z
+  # ===========================================================================
+
+  tools:
+    desc: Install wails3 (WAILS_VERSION) with go install; check that golangci-lint and bun are installed
+    env: &go-env
+      GOOS: darwin
+      GOARCH: arm64
+      CGO_ENABLED: '1'
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      CGO_CFLAGS: -O2 -g -mmacosx-version-min=14.0
+      CGO_LDFLAGS: -O2 -g -mmacosx-version-min=14.0
+    cmds:
+      - go install github.com/wailsapp/wails/v3/cmd/wails3@{{.WAILS_VERSION}}
+      - cmd: |
+          got='no wails3 on PATH'
+          if command -v wails3 >/dev/null; then
+            got=$(wails3 version 2>&1 || true) # it prints the version on stderr
+          fi
+          if [ "$got" != "{{.WAILS_VERSION}}" ]; then
+            bin=$(go env GOBIN)
+            echo "tools: wails3 version is '$got', want {{.WAILS_VERSION}}; put ${bin:-$(go env GOPATH)/bin} first on PATH" >&2
+            exit 1
+          fi
+      - cmd: |
+          command -v golangci-lint >/dev/null || { echo "tools: golangci-lint is not installed (brew install golangci-lint)" >&2; exit 1; }
+      - cmd: |
+          command -v bun >/dev/null || { echo "tools: bun is not installed (brew install oven-sh/bun/bun)" >&2; exit 1; }
+
+  deps:onnxruntime:
+    desc: Fetch the pinned ONNX Runtime library into build/.tools/onnxruntime (build time only, SHA-256 verified, skipped when up to date)
+    cmds:
+      - sh build/onnxruntime/fetch.sh
+
+  frontend:bootstrap:
+    desc: Write the placeholder page the Go embed needs, when missing (frontend/dist from build/frontend-stub)
+    cmds:
+      - cmd: |
+          test -f frontend/dist/index.html || { mkdir -p frontend/dist && cp build/frontend-stub/index.html frontend/dist/index.html; }
+
+  frontend:dist:
+    desc: Build the app UI into frontend/dist when frontend/index.html exists (installing the frontend dependencies first); until then frontend/dist keeps the stub page
+    cmds:
+      - task: frontend:bootstrap
+      - task: frontend:install
+        if: test -f frontend/index.html
+      - cmd: |
+          if [ -f frontend/index.html ]; then
+            cd frontend && bun run build
+          else
+            echo "frontend:dist: no frontend/index.html yet (design gate); frontend/dist keeps the stub page"
+          fi
+
+  bindings:
+    desc: Regenerate the committed TypeScript bindings in frontend/bindings from ./cmd/choix
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      - wails3 generate bindings -ts -d frontend/bindings ./cmd/choix
+
+  bindings:check:
+    desc: Regenerate the bindings and fail when frontend/bindings differs from what is committed
+    cmds:
+      - task: bindings
+      - git diff --exit-code -- frontend/bindings
+      - cmd: |
+          new=$(git ls-files --others --exclude-standard -- frontend/bindings)
+          if [ -n "$new" ]; then
+            echo "bindings:check: generated files that are not committed:" >&2
+            echo "$new" >&2
+            exit 1
+          fi
+
+  dev:
+    desc: Run the app with hot reload (wails3 dev -config build/config.yml)
+    preconditions:
+      - sh: test -f frontend/index.html
+        msg: the app UI is not built yet (design gate); use task run:server
+    env: *go-env
+    cmds:
+      - wails3 dev -config build/config.yml
+
+  dev:frontend:
+    desc: The Vite dev server for wails3 dev (http://127.0.0.1:9245)
+    dir: frontend
+    cmds:
+      - bun run dev
+
+  dev:run:
+    desc: Run the app against the Vite dev server, with the fetched ONNX Runtime library (wails3 dev starts it)
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      - FRONTEND_DEVSERVER_URL=http://127.0.0.1:9245 CHOIX_ONNXRUNTIME_DYLIB="{{.ROOT_DIR}}/{{.ORT_DYLIB}}" go run ./cmd/choix
+
+  run:server:
+    desc: Run the server build (no window, test-support bindings) with its data in .tmp/data
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      - CHOIX_DATA_DIR="{{.ROOT_DIR}}/.tmp/data" go run -tags server ./cmd/choix
+
+  uat:
+    desc: 'The headless run over clones of a real corpus (docs/release/uat.md): needs CHOIX_UAT_ROOT, skips without it; hours on a full archive (pass -- -limit N for N files a folder)'
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      - cmd: |
+          set -e
+          if [ -f "{{.ORT_DYLIB}}" ]; then export CHOIX_ONNXRUNTIME_DYLIB="{{.ROOT_DIR}}/{{.ORT_DYLIB}}"; fi
+          go test -tags uat -timeout 4h -run TestUAT -v ./internal/e2e/ {{.CLI_ARGS}}
+
+  build:
+    desc: Build bin/Choix (production, version-stamped) and check that it is arm64 only
+    deps: [frontend:dist, deps:onnxruntime]
+    env: *go-env
+    cmds:
+      - >-
+        go build -tags production -trimpath -buildvcs=false
+        -ldflags "-s -w
+        -X github.com/volodymyrsmirnov/choix/internal/buildinfo.Version={{.VERSION}}
+        -X github.com/volodymyrsmirnov/choix/internal/buildinfo.Commit={{.COMMIT}}"
+        -o bin/Choix ./cmd/choix
+      - cmd: |
+          archs=$(lipo -archs bin/Choix)
+          if [ "$archs" != arm64 ]; then
+            echo "build: bin/Choix is built for '$archs', want arm64" >&2
+            exit 1
+          fi
+
+  package:
+    desc: Build, assemble bin/Choix.app (build/darwin/bundle.sh) and sign it ad hoc (sign:dev)
+    cmds:
+      - task: build
+      - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.VERSION}} --build {{.BUILD}} --dylib {{.ORT_DYLIB}}
+      - task: sign:dev
+
+  sign:dev:
+    desc: 'Sign bin/Choix.app ad hoc for local runs: sandboxed, without the hardened runtime (spike S6)'
+    preconditions:
+      - sh: test -d bin/Choix.app
+        msg: no bin/Choix.app; run task package
+    cmds:
+      # Signed ad hoc, the hardened runtime's library validation refuses the
+      # bundled ONNX Runtime ("different Team IDs", spike S6), so there is no
+      # --options runtime here; sign:developer-id adds it. The library is
+      # signed before the app that seals it.
+      - codesign --force --sign - bin/Choix.app/Contents/Frameworks/libonnxruntime.dylib
+      - codesign --force --sign - --entitlements build/darwin/entitlements.plist bin/Choix.app
+      - codesign --verify --strict bin/Choix.app
+
+  sign:developer-id:
+    desc: 'Sign bin/Choix.app with the Developer ID identity in CHOIX_SIGN_IDENTITY: hardened runtime, secure timestamp'
+    vars:
+      CHECK_VARS:
+        sh: |
+          [ -n "${CHOIX_SIGN_IDENTITY:-}" ] || { echo "sign:developer-id needs CHOIX_SIGN_IDENTITY (the Developer ID Application signing identity, as security find-identity -v -p codesigning lists it). See docs/release/signing-checklist.md." >&2; exit 1; }
+    preconditions:
+      - sh: test -d bin/Choix.app
+        msg: no bin/Choix.app; run task package
+    cmds:
+      - codesign --force --sign "$CHOIX_SIGN_IDENTITY" --options runtime --timestamp bin/Choix.app/Contents/Frameworks/libonnxruntime.dylib
+      - codesign --force --sign "$CHOIX_SIGN_IDENTITY" --options runtime --timestamp --entitlements build/darwin/entitlements.plist bin/Choix.app
+      - codesign --verify --strict bin/Choix.app
+
+  notarize:
+    desc: Notarize bin/Choix.app with the notarytool keychain profile in CHOIX_NOTARY_PROFILE, then staple the ticket
+    vars:
+      CHECK_VARS:
+        sh: |
+          [ -n "${CHOIX_NOTARY_PROFILE:-}" ] || { echo "notarize needs CHOIX_NOTARY_PROFILE (the name of a notarytool keychain profile, created with xcrun notarytool store-credentials). See docs/release/signing-checklist.md." >&2; exit 1; }
+    preconditions:
+      - sh: test -d bin/Choix.app
+        msg: no bin/Choix.app; run task package, then task sign:developer-id
+      - sh: codesign -dv bin/Choix.app 2>&1 | grep -q '^Authority=Developer ID Application:'
+        msg: bin/Choix.app is not signed with a Developer ID; run task sign:developer-id first
+    cmds:
+      - rm -f bin/Choix-notarize.zip
+      - ditto -c -k --keepParent bin/Choix.app bin/Choix-notarize.zip
+      - task: notarize:submit
+        vars: {FILE: bin/Choix-notarize.zip}
+      - rm -f bin/Choix-notarize.zip
+      - xcrun stapler staple bin/Choix.app
+
+  # Submits FILE with the keychain profile and waits. Success is notarytool
+  # exiting 0 with the JSON status "Accepted"; otherwise the notary log of
+  # the submission (when it has an id) is printed and the task fails. What
+  # is printed goes through redact: no signer name or Team ID in the log.
+  # (Task stops a script at a failing command, so failures are caught
+  # with ||.)
+  notarize:submit:
+    internal: true
+    cmds:
+      - cmd: |
+          redact() {
+            sed -E -e '/^[[:space:]]*"?(origin|Authority|TeamIdentifier|teamId|teamIdentifier)"?[[:space:]]*[=:]/d' \
+              -e 's/(Developer ID [A-Za-z]+|Apple Development|Apple Distribution|Mac Developer|3rd Party Mac Developer [A-Za-z]+): [^"]*/\1: <redacted>/g'
+          }
+          code=0
+          out=$(xcrun notarytool submit "{{.FILE}}" --wait --timeout 1h --output-format json --keychain-profile "$CHOIX_NOTARY_PROFILE") || code=$?
+          printf '%s\n' "$out" | redact
+          status=$(printf '%s' "$out" | plutil -extract status raw -o - - 2>/dev/null) || status=
+          if [ "$code" != 0 ] || [ "$status" != Accepted ]; then
+            id=$(printf '%s' "$out" | plutil -extract id raw -o - - 2>/dev/null) || id=
+            if [ -n "$id" ]; then
+              xcrun notarytool log "$id" --keychain-profile "$CHOIX_NOTARY_PROFILE" 2>&1 | redact || true
+            fi
+            echo "notarize: Apple did not accept {{.FILE}} (notarytool exit status $code, status ${status:-unknown}); see the output above" >&2
+            exit 1
+          fi
+
+  dmg:
+    desc: 'Make bin/Choix-<VERSION>-arm64.dmg holding bin/Choix.app and an Applications link (checked by mounting it), signed when CHOIX_SIGN_IDENTITY is set'
+    vars:
+      DMG: bin/Choix-{{.VERSION}}-arm64.dmg
+    preconditions:
+      - sh: test -d bin/Choix.app
+        msg: no bin/Choix.app; run task package (for a release, then sign:developer-id and notarize)
+    cmds:
+      # The image's root: the app (ditto keeps its signature, stapled ticket
+      # and symlinks) and a link to /Applications to drag it onto.
+      - rm -rf bin/dmg-root
+      - mkdir -p bin/dmg-root
+      - ditto bin/Choix.app bin/dmg-root/Choix.app
+      - ln -s /Applications bin/dmg-root/Applications
+      - hdiutil create -volname Choix -srcfolder bin/dmg-root -ov -format UDZO "{{.DMG}}"
+      - rm -rf bin/dmg-root
+      - cmd: |
+          mnt=$(mktemp -d "${TMPDIR:-/tmp}/choix-dmg.XXXXXX") || exit 1
+          if ! hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "{{.DMG}}" >/dev/null; then
+            rmdir "$mnt"
+            echo "dmg: {{.DMG}} does not mount" >&2
+            exit 1
+          fi
+          ok=yes
+          if [ ! -d "$mnt/Choix.app" ]; then
+            echo "dmg: {{.DMG}} holds no Choix.app" >&2
+            ok=no
+          elif ! codesign --verify --strict "$mnt/Choix.app"; then
+            echo "dmg: the Choix.app in {{.DMG}} does not pass codesign --verify --strict" >&2
+            ok=no
+          fi
+          if [ "$(readlink "$mnt/Applications")" != /Applications ]; then
+            echo "dmg: {{.DMG}} holds no Applications link to /Applications" >&2
+            ok=no
+          fi
+          hdiutil detach "$mnt" >/dev/null || hdiutil detach -force "$mnt" >/dev/null
+          rmdir "$mnt" 2>/dev/null || true
+          [ "$ok" = yes ]
+      - cmd: |
+          if [ -n "${CHOIX_SIGN_IDENTITY:-}" ]; then
+            codesign --force --sign "$CHOIX_SIGN_IDENTITY" --timestamp "{{.DMG}}"
+          else
+            echo "dmg: CHOIX_SIGN_IDENTITY is not set; the disk image is not signed"
+          fi
+
+  notarize:dmg:
+    desc: Notarize bin/Choix-<VERSION>-arm64.dmg (signed by task dmg) with the notarytool keychain profile in CHOIX_NOTARY_PROFILE, then staple the ticket
+    vars:
+      CHECK_VARS:
+        sh: |
+          [ -n "${CHOIX_NOTARY_PROFILE:-}" ] || { echo "notarize:dmg needs CHOIX_NOTARY_PROFILE (the name of a notarytool keychain profile, created with xcrun notarytool store-credentials). See docs/release/signing-checklist.md." >&2; exit 1; }
+      DMG: bin/Choix-{{.VERSION}}-arm64.dmg
+    preconditions:
+      - sh: test -f "{{.DMG}}"
+        msg: no {{.DMG}}; run task dmg with CHOIX_SIGN_IDENTITY set
+      - sh: codesign -dv "{{.DMG}}" 2>&1 | grep -q '^Authority=Developer ID Application:'
+        msg: '{{.DMG}} is not signed with a Developer ID; run task dmg with CHOIX_SIGN_IDENTITY set'
+    cmds:
+      - task: notarize:submit
+        vars: {FILE: '{{.DMG}}'}
+      - xcrun stapler staple "{{.DMG}}"
+
+  verify:release:
+    desc: 'Check bin/Choix.app and bin/Choix-<VERSION>-arm64.dmg as Gatekeeper will (codesign --strict, spctl accepting notarized Developer ID, stapler validate); the release workflow fails unless they pass'
+    vars:
+      DMG: bin/Choix-{{.VERSION}}-arm64.dmg
+    preconditions:
+      - sh: test -d bin/Choix.app
+        msg: no bin/Choix.app; run task package, sign:developer-id and notarize
+      - sh: test -f "{{.DMG}}"
+        msg: no {{.DMG}}; run task dmg and notarize:dmg
+    cmds:
+      - codesign --verify --deep --strict --verbose=2 bin/Choix.app
+      - task: verify:gatekeeper
+        vars: {FILE: bin/Choix.app, TYPE: exec}
+      - xcrun stapler validate bin/Choix.app
+      - codesign --verify --strict --verbose=2 "{{.DMG}}"
+      - task: verify:gatekeeper
+        vars: {FILE: '{{.DMG}}', TYPE: 'open --context context:primary-signature'}
+      - xcrun stapler validate "{{.DMG}}"
+
+  # spctl --assess --type TYPE on FILE, failing closed on spctl --status:
+  #   "assessments enabled": the verdict must be "accepted" with
+  #     source=Notarized Developer ID;
+  #   "assessments disabled" (spctl --master-disable, as on some CI images;
+  #     spctl then accepts anything): a warning, and FILE's stapled ticket
+  #     must pass stapler validate;
+  #   anything else, or a failing spctl --status: the task fails.
+  # Only the verdict line and source= are printed: spctl's origin= line
+  # names the signer and its Team ID, and the release log is public.
+  verify:gatekeeper:
+    internal: true
+    cmds:
+      - cmd: |
+          redact() {
+            sed -E -e '/^[[:space:]]*"?(origin|Authority|TeamIdentifier|teamId|teamIdentifier)"?[[:space:]]*[=:]/d' \
+              -e 's/(Developer ID [A-Za-z]+|Apple Development|Apple Distribution|Mac Developer|3rd Party Mac Developer [A-Za-z]+): [^"]*/\1: <redacted>/g'
+          }
+          fail() {
+            echo "verify:release: $*" >&2
+            exit 1
+          }
+          gk_code=0
+          gk=$(spctl --status 2>&1) || gk_code=$?
+          case $gk in
+          "assessments enabled")
+            [ "$gk_code" = 0 ] || fail "spctl --status said assessments enabled but exited $gk_code"
+            mode=enabled
+            ;;
+          "assessments disabled") mode=disabled ;;
+          *) fail "spctl --status gave no recognised answer (exit status $gk_code): $(printf '%s\n' "$gk" | redact)" ;;
+          esac
+          code=0
+          out=$(spctl --assess --type {{.TYPE}} -vv "{{.FILE}}" 2>&1) || code=$?
+          printf '%s\n' "$out" | redact | sed -n -E -e '/: (accepted|rejected)/p' -e '/^source=/p'
+          source=$(printf '%s\n' "$out" | sed -n 's/^source=//p')
+          accepted=no
+          if [ "$code" = 0 ] && printf '%s\n' "$out" | grep -q ': accepted'; then accepted=yes; fi
+          if [ "$mode" = enabled ]; then
+            [ "$accepted" = yes ] || fail "Gatekeeper rejects {{.FILE}} (spctl exit status $code)"
+            [ "$source" = "Notarized Developer ID" ] || fail "Gatekeeper accepts {{.FILE}}, but its source is '$source', not a notarized Developer ID"
+          else
+            echo "verify:release: Gatekeeper assessments are disabled on this Mac, so spctl accepts anything; the stapled ticket of {{.FILE}} is the notarization check" >&2
+            [ "$code" = 0 ] || fail "Gatekeeper rejects {{.FILE}} even with assessments disabled (spctl exit status $code)"
+            xcrun stapler validate "{{.FILE}}" || fail "{{.FILE}} has no valid stapled notarization ticket"
+          fi
+
+  package:mas:
+    desc: Build, bundle and sign Choix.app for the Mac App Store and write bin/Choix-<VERSION>.pkg
+    vars:
+      CHECK_VARS:
+        sh: |
+          [ -n "${CHOIX_MAS_APP_IDENTITY:-}" ] || { echo "package:mas needs CHOIX_MAS_APP_IDENTITY (the Apple Distribution signing identity for Mac App Store apps). See docs/release/signing-checklist.md." >&2; exit 1; }
+          [ -n "${CHOIX_MAS_INSTALLER_IDENTITY:-}" ] || { echo "package:mas needs CHOIX_MAS_INSTALLER_IDENTITY (the Mac Installer Distribution signing identity). See docs/release/signing-checklist.md." >&2; exit 1; }
+          [ -n "${CHOIX_MAS_PROFILE:-}" ] || { echo "package:mas needs CHOIX_MAS_PROFILE (the path of the Mac App Store provisioning profile for com.github.volodymyrsmirnov.choix). See docs/release/signing-checklist.md." >&2; exit 1; }
+          [ -n "${CHOIX_TEAM_ID:-}" ] || { echo "package:mas needs CHOIX_TEAM_ID (the 10-character Apple Developer Team ID). See docs/release/signing-checklist.md." >&2; exit 1; }
+      # App Store Connect needs a numeric CFBundleShortVersionString: the
+      # last release tag, without its "v" and git describe's suffix.
+      MAS_VERSION:
+        sh: echo '{{.VERSION}}' | sed -e 's/^v//' -e 's/-.*$//'
+    preconditions:
+      - sh: test -f "$CHOIX_MAS_PROFILE"
+        msg: 'package:mas: CHOIX_MAS_PROFILE is not a file'
+      - sh: printf '%s' "$CHOIX_TEAM_ID" | grep -Eqx '[A-Z0-9]{10}'
+        msg: 'package:mas: CHOIX_TEAM_ID must be the 10-character Team ID (capital letters and digits)'
+      - sh: printf '%s' '{{.MAS_VERSION}}' | grep -Eqx '[0-9]+(\.[0-9]+){0,2}'
+        msg: 'package:mas needs a release tag vX.Y.Z at or before HEAD for a numeric version; git describe gave {{.VERSION}}'
+    cmds:
+      - task: build
+      - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.MAS_VERSION}} --build {{.BUILD}} --dylib {{.ORT_DYLIB}}
+      - cp "$CHOIX_MAS_PROFILE" bin/Choix.app/Contents/embedded.provisionprofile
+      # [{][{] rather than two literal braces, which Task would read as a template.
+      - sed -e "s/[{][{]TEAM_ID[}][}]/$CHOIX_TEAM_ID/g" build/darwin/entitlements.mas.plist.tmpl > bin/entitlements.mas.plist
+      - plutil -lint -s bin/entitlements.mas.plist
+      - codesign --force --sign "$CHOIX_MAS_APP_IDENTITY" bin/Choix.app/Contents/Frameworks/libonnxruntime.dylib
+      - codesign --force --sign "$CHOIX_MAS_APP_IDENTITY" --entitlements bin/entitlements.mas.plist bin/Choix.app
+      - codesign --verify --strict bin/Choix.app
+      - productbuild --component bin/Choix.app /Applications --sign "$CHOIX_MAS_INSTALLER_IDENTITY" bin/Choix-{{.VERSION}}.pkg
+
+  test:
+    desc: 'Go tests with the race detector, plus the server-tagged testsupport and menu packages (go test flags after --, e.g. task test -- -run TestX)'
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      # The second go test runs the packages whose tests need the server build.
+      - cmd: |
+          set -e
+          if [ -f "{{.ORT_DYLIB}}" ]; then export CHOIX_ONNXRUNTIME_DYLIB="{{.ROOT_DIR}}/{{.ORT_DYLIB}}"; fi
+          go test -race -count=1 {{.CLI_ARGS}} ./...
+          go test -race -count=1 -tags server {{.CLI_ARGS}} ./internal/app/testsupport/ ./internal/app/menu/
+
+  test:smoke:
+    desc: The synthetic end-to-end pipeline test (go test -tags smoke ./internal/e2e/)
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      - go test -tags smoke {{.CLI_ARGS}} ./internal/e2e/
+
+  test:e2e:
+    desc: 'End-to-end specs (frontend/e2e): the binding-level api project and the ui project on the real app, against the server build on 127.0.0.1:8090/8091 (needs Playwright Chromium: cd frontend && bunx playwright install chromium; playwright flags after --)'
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      # The app first: the server binary the ui specs run embeds frontend/dist.
+      - task: frontend:dist
+      - cmd: cd frontend && bun run harness:build && bun run test:e2e {{.CLI_ARGS}}
+
+  lint:
+    desc: go vet and golangci-lint (0 issues)
+    deps: [frontend:bootstrap]
+    env: *go-env
+    cmds:
+      - go vet ./...
+      - golangci-lint run
+
+  fmt:
+    desc: Format the Go sources (gofmt -s -w .)
+    cmds:
+      - gofmt -s -w .
+
+  icons:
+    desc: Regenerate the app icon set in assets/icon/ (needs rsvg-convert and iconutil)
+    cmds:
+      - bun run assets/icon/build.ts
+
+  clean:
+    desc: Remove bin/, frontend/dist/ and .tmp/ (never build/.tools/ or frontend/bindings/)
+    cmds:
+      - rm -rf bin frontend/dist .tmp
+
+  smoke:sandbox:
+    desc: 'Smoke the sandboxed bin/Choix.app: package, static checks, sandboxed self-check (-- --head-only stops there); then a scan of a clone of folder-1 from CHOIX_UAT_ROOT and the manual checks of docs/release/sandbox-smoke.md'
+    interactive: true
+    cmds:
+      - sh build/smoke/sandbox-smoke.sh {{.CLI_ARGS}}
+
+# Desktop-app variables (Task 47 block). The git values fall back to a
+# placeholder outside a repository, so no task ever fails on them.
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev
+  BUILD:
+    sh: git rev-list --count HEAD 2>/dev/null || echo 0
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+  WAILS_VERSION: v3.1.0
+  ORT_DYLIB: build/.tools/onnxruntime/lib/libonnxruntime.dylib

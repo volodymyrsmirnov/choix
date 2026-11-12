@@ -181,34 +181,6 @@ func TestFilesListByStatus(t *testing.T) {
 	}
 }
 
-func TestFilesMarkMissing(t *testing.T) {
-	s := newTestStore(t)
-
-	id, err := s.Files().Insert(File{
-		Path: "gone.jpg", Size: 1, Mtime: 1, ContentHash: "h",
-		Kind: "photo", Format: "jpeg", ScanStatus: "analyzed",
-	})
-	if err != nil {
-		t.Fatalf("Insert: %v", err)
-	}
-
-	if err := s.Files().MarkMissing("gone.jpg"); err != nil {
-		t.Fatalf("MarkMissing: %v", err)
-	}
-	got, err := s.Files().GetByID(id)
-	if err != nil {
-		t.Fatalf("GetByID: %v", err)
-	}
-	if got.ScanStatus != "missing" {
-		t.Errorf("scan_status = %q, want missing", got.ScanStatus)
-	}
-
-	// MarkMissing on an unknown path is a no-op (no error).
-	if err := s.Files().MarkMissing("never-existed.jpg"); err != nil {
-		t.Errorf("MarkMissing unknown: %v", err)
-	}
-}
-
 func TestFilesPathsByStatus(t *testing.T) {
 	s := newTestStore(t)
 
@@ -270,5 +242,31 @@ func TestInsertCaseMismatchReturnsSameID(t *testing.T) {
 	}
 	if id1 != id2 {
 		t.Errorf("Insert case-mismatch: id1=%d id2=%d, want same id", id1, id2)
+	}
+}
+
+// DeleteUnderPath must treat dir literally: LIKE wildcards in a directory name
+// would otherwise evict (and, through ON DELETE CASCADE, drop the picks of)
+// originals in sibling folders.
+func TestDeleteUnderPath_NoWildcards(t *testing.T) {
+	s := newTestStore(t)
+	for _, p := range []string{"my_picks/a.jpg", "myXpicks/b.jpg", "My_Picks/sub/c.jpg", "my_picks2/d.jpg"} {
+		if _, err := s.Files().Insert(File{
+			Path: p, Size: 1, Mtime: 1, ContentHash: p, Kind: "photo", Format: "jpeg", ScanStatus: "analyzed",
+		}); err != nil {
+			t.Fatalf("insert %s: %v", p, err)
+		}
+	}
+	n, err := s.Files().DeleteUnderPath(t.Context(), "my_picks")
+	if err != nil {
+		t.Fatalf("DeleteUnderPath: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("deleted %d rows, want 2 (my_picks/a.jpg and My_Picks/sub/c.jpg)", n)
+	}
+	for _, p := range []string{"myXpicks/b.jpg", "my_picks2/d.jpg"} {
+		if _, err := s.Files().GetByPath(p); err != nil {
+			t.Errorf("%s was evicted: %v", p, err)
+		}
 	}
 }

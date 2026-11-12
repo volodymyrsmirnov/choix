@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
@@ -112,19 +113,19 @@ type qualityEnv struct {
 	previews map[int64]string
 	dir      string
 	inferred int
+	// infer is the fake model the scorer calls; tests may replace it.
+	infer func(in []float32) (float64, error)
 }
+
+// cropFunc adapts a function to CropInferer.
+type cropFunc func(in []float32) (float64, error)
+
+func (f cropFunc) QualityCrop(in []float32) (float64, error) { return f(in) }
 
 func newQualityEnv(t *testing.T) *qualityEnv {
 	t.Helper()
 	e := &qualityEnv{store: store.NewTestStore(t), previews: map[int64]string{}, dir: t.TempDir()}
-	e.scorer = NewQualityScorer(e.store, NewModelStore(t.TempDir()), func(id int64) (string, error) {
-		p, ok := e.previews[id]
-		if !ok {
-			return "", errors.New("no preview row")
-		}
-		return p, nil
-	})
-	e.scorer.infer = func(in []float32) (float64, error) {
+	e.infer = func(in []float32) (float64, error) {
 		e.inferred++
 		var sum float64
 		plane := qualitySide * qualitySide
@@ -133,7 +134,19 @@ func newQualityEnv(t *testing.T) *qualityEnv {
 		}
 		return sum / float64(plane), nil
 	}
+	e.useInferer(cropFunc(func(in []float32) (float64, error) { return e.infer(in) }))
 	return e
+}
+
+// useInferer rebuilds the scorer around inf.
+func (e *qualityEnv) useInferer(inf CropInferer) {
+	e.scorer = NewQualityScorer(e.store, inf, func(id int64) (string, error) {
+		p, ok := e.previews[id]
+		if !ok {
+			return "", errors.New("no preview row")
+		}
+		return p, nil
+	})
 }
 
 // addPhoto inserts an analyzed photo whose preview is a w×h JPEG painted by
@@ -249,6 +262,70 @@ func TestScoreMarksUnratableWithoutInference(t *testing.T) {
 	}
 }
 
+// A preview that cannot be read or decoded while the folder is unreachable
+// (the folder vanished after the caller last checked it) leaves the photo
+// pending; with the folder reachable it is stamped unratable as before. An
+// image too small to rate is unratable whatever the guard says.
+func TestScoreFailureGuard(t *testing.T) {
+	gone := func() bool { return false }
+	here := func() bool { return true }
+	for _, tc := range []struct {
+		name        string
+		add         func(e *qualityEnv) store.QualityItem
+		guard       func() bool
+		wantPending bool
+	}{
+		{"missing preview, folder gone", func(e *qualityEnv) store.QualityItem {
+			return e.addPhoto(t, "a.jpg", 0, 0, nil)
+		}, gone, true},
+		{"vanished preview file, folder gone", func(e *qualityEnv) store.QualityItem {
+			item := e.addPhoto(t, "a.jpg", 800, 600, white)
+			if err := os.Remove(e.previews[item.FileID]); err != nil {
+				t.Fatal(err)
+			}
+			return item
+		}, gone, true},
+		{"corrupt preview, folder gone", func(e *qualityEnv) store.QualityItem {
+			item := e.addPhoto(t, "a.jpg", 0, 0, nil)
+			p := filepath.Join(e.dir, "a.jpg")
+			if err := os.WriteFile(p, []byte("not a jpeg"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e.previews[item.FileID] = p
+			return item
+		}, gone, true},
+		{"missing preview, folder reachable", func(e *qualityEnv) store.QualityItem {
+			return e.addPhoto(t, "a.jpg", 0, 0, nil)
+		}, here, false},
+		{"too small, folder gone", func(e *qualityEnv) store.QualityItem {
+			return e.addPhoto(t, "a.jpg", 300, 200, white)
+		}, gone, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newQualityEnv(t)
+			item := tc.add(e)
+			e.scorer.FailureGuard = tc.guard
+			err := e.scorer.Score(context.Background(), item)
+			if got := errors.Is(err, pipeline.ErrFolderUnavailable); got != tc.wantPending {
+				t.Fatalf("Score = %v; ErrFolderUnavailable %v, want %v", err, got, tc.wantPending)
+			}
+			if !tc.wantPending && err != nil {
+				t.Fatalf("Score = %v; an unratable photo is not an error", err)
+			}
+			raw, model := e.stored(t, item.FileID)
+			if tc.wantPending && (raw.Valid || model.Valid) {
+				t.Fatalf("stored raw=%+v model=%+v; nothing may be stamped while the folder is gone", raw, model)
+			}
+			if !tc.wantPending && model.String != QualityScorerID {
+				t.Fatalf("stored model=%q; want the photo stamped unratable", model.String)
+			}
+			if n, _ := e.scorer.CountPending(); (n == 1) != tc.wantPending {
+				t.Fatalf("pending = %d; want pending %v", n, tc.wantPending)
+			}
+		})
+	}
+}
+
 func TestScoreLeavesPhotoPendingOnCancellationAndInferenceError(t *testing.T) {
 	e := newQualityEnv(t)
 	item := e.addPhoto(t, "a.jpg", 800, 600, white)
@@ -261,8 +338,8 @@ func TestScoreLeavesPhotoPendingOnCancellationAndInferenceError(t *testing.T) {
 
 	// Cancelled between crops: stops without finishing all five.
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	inner := e.scorer.infer
-	e.scorer.infer = func(in []float32) (float64, error) {
+	inner := e.infer
+	e.infer = func(in []float32) (float64, error) {
 		cancel2()
 		return inner(in)
 	}
@@ -274,7 +351,7 @@ func TestScoreLeavesPhotoPendingOnCancellationAndInferenceError(t *testing.T) {
 	}
 
 	boom := errors.New("coreml exploded")
-	e.scorer.infer = func([]float32) (float64, error) { return 0, boom }
+	e.infer = func([]float32) (float64, error) { return 0, boom }
 	if err := e.scorer.Score(context.Background(), item); !errors.Is(err, boom) {
 		t.Fatalf("Score = %v, want the inference error", err)
 	}
@@ -302,7 +379,9 @@ func TestScoreDropsResultWhenFileChangedMeanwhile(t *testing.T) {
 
 func TestScoreReportsUnavailableWhenModelCannotLoad(t *testing.T) {
 	e := newQualityEnv(t)
-	e.scorer.infer = nil // use the real session path; the model file does not exist
+	// The real session path; the model file does not exist.
+	sessions := NewSessions(NewModelStore(t.TempDir()), SessionOptions{})
+	e.useInferer(sessions)
 	item := e.addPhoto(t, "a.jpg", 800, 600, white)
 	err := e.scorer.Score(context.Background(), item)
 	if !errors.Is(err, ErrQualityUnavailable) {
@@ -311,35 +390,25 @@ func TestScoreReportsUnavailableWhenModelCannotLoad(t *testing.T) {
 	if n, _ := e.scorer.CountPending(); n != 1 {
 		t.Fatal("the photo must stay pending when the scorer cannot run")
 	}
-	if err := e.scorer.Close(); err != nil {
+	if err := sessions.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 }
 
-// TestQualityModelRanksSharpAboveBlurred runs the real model when it is
-// installed (~/.choix/models, or CHOIX_QUALITY_MODEL_DIR) and skips
-// otherwise. A detailed pattern must score clearly above its blurred copy.
+// TestQualityModelRanksSharpAboveBlurred runs the real model when it and
+// the ONNX runtime are installed (see installedModels) and skips otherwise.
+// A detailed pattern must score clearly above its blurred copy.
 func TestQualityModelRanksSharpAboveBlurred(t *testing.T) {
-	dir := os.Getenv("CHOIX_QUALITY_MODEL_DIR")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			t.Skip("no home directory")
-		}
-		dir = filepath.Join(home, ".choix", "models")
+	if testing.Short() {
+		t.Skip("short mode")
 	}
-	models := NewModelStore(dir)
-	if !models.Has(ModelQuality) {
-		t.Skip("quality model not installed")
-	}
-	if _, err := NewSession(models.Path(ModelQuality)); err != nil {
-		t.Skipf("ONNX runtime unavailable: %v", err)
-	}
+	models := installedModels(t, ModelQuality)
+	skipWithoutRuntime(t)
 
 	e := newQualityEnv(t)
-	e.scorer.models = models
-	e.scorer.infer = nil
-	t.Cleanup(func() { _ = e.scorer.Close() })
+	sessions := NewSessions(models, SessionOptions{})
+	t.Cleanup(func() { _ = sessions.Close() })
+	e.useInferer(sessions)
 
 	// Fine checker + diagonal stripes: plenty of edges.
 	detail := func(x, y int) color.Color {

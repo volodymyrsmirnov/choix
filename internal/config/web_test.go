@@ -3,12 +3,13 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // stubConfigDir replaces configFilePathFunc for the duration of a test,
 // ensuring Save/Load round-trip against a temporary directory rather
-// than the user's actual ~/.choix.
+// than the user's actual data directory.
 func stubConfigDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -143,5 +144,72 @@ func TestQualityRatingAbsentKeyReadsAsOn(t *testing.T) {
 	}
 	if !cfg.QualityRating || cfg.BucketSizeSec != 300 {
 		t.Fatalf("got %+v, want QualityRating on with bucket 300", *cfg)
+	}
+}
+
+func TestDefaults_VisualGroupingOn(t *testing.T) {
+	if !Defaults().VisualGrouping {
+		t.Fatal("Defaults().VisualGrouping = false, want true")
+	}
+	stubConfigDir(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.VisualGrouping {
+		t.Fatal("VisualGrouping must default to true when the file is missing")
+	}
+}
+
+func TestSaveLoad_RoundTripsVisualGrouping(t *testing.T) {
+	dir := stubConfigDir(t)
+
+	cfg := Defaults()
+	cfg.VisualGrouping = false
+	if err := Save(&cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "visual_grouping = false") {
+		t.Errorf("config.toml lacks visual_grouping = false:\n%s", raw)
+	}
+	out, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if out.VisualGrouping {
+		t.Fatal("VisualGrouping=false did not persist")
+	}
+
+	out.VisualGrouping = true
+	if err := Save(out); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	back, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !back.VisualGrouping {
+		t.Fatal("VisualGrouping=true did not persist")
+	}
+}
+
+func TestLoad_IgnoresEnvironment(t *testing.T) {
+	stubConfigDir(t)
+	t.Setenv("CHOIX_BUCKET_SIZE", "60")
+	t.Setenv("CHOIX_PICKS_DIR", "from-env")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BucketSizeSec != 600 {
+		t.Errorf("BucketSizeSec = %d, want 600 (environment must be ignored)", cfg.BucketSizeSec)
+	}
+	if cfg.PicksDir != "picks" {
+		t.Errorf("PicksDir = %q, want picks (environment must be ignored)", cfg.PicksDir)
 	}
 }

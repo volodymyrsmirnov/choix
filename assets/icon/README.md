@@ -4,7 +4,7 @@ Three photo prints of the same sunset. The two at the back are faded, and the
 one in front is in full colour with a green pick badge. The green is the UI's
 pick colour, `oklch(0.72 0.18 145)`, and the background is the UI's graphite.
 
-Everything here comes from `build.ts`. Edit that file, then run `make icons`
+Everything here comes from `build.ts`. Edit that file, then run `task icons`
 (needs `bun`, `rsvg-convert` from `brew install librsvg`, and macOS
 `iconutil`). Don't edit the generated SVGs by hand.
 
@@ -15,4 +15,4 @@ Everything here comes from `build.ts`. Edit that file, then run `make icons`
 | `choix-icon-macos.svg`, `png/choix-64.png` … `png/choix-1024.png` | The pre-Tahoe macOS template: the rounded shape at 824 px on a 1024 canvas, with a drop shadow. |
 | `choix.icns` | A ready-made `.icns` for an app bundle's `CFBundleIconFile`. |
 | `choix-icon-small.svg`, `png/choix-16.png`, `png/choix-32.png` | Simplified artwork for 16 and 32 px (one back print, a bigger badge, no fine detail). The `.icns` uses it for its 16 and 32 px sizes. |
-| `favicon.svg` | The simplified artwork, filling its canvas. `internal/ui/web/scripts/build.ts` copies it into the SPA as the favicon and the AppBar mark. |
+| `favicon.svg` | The simplified artwork, filling its canvas. The app's brand mark (`BrandMark`) uses a copy, `frontend/src/design/assets/mark.svg`, which a test keeps byte-identical to this file. The app window shows no favicon. |

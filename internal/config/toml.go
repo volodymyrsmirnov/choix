@@ -18,6 +18,7 @@ type fileSchema struct {
 	AdvanceOnAction        *bool    `toml:"advance_on_action"`
 	HideRejectedPhotos     *bool    `toml:"hide_rejected_photos"`
 	CrossDeviceMerging     *bool    `toml:"cross_device_merging"`
+	VisualGrouping         *bool    `toml:"visual_grouping"`
 	QualityRating          *bool    `toml:"quality_rating"`
 }
 
@@ -59,6 +60,9 @@ func ApplyTOML(dst *Config, src *fileSchema) {
 	}
 	if src.CrossDeviceMerging != nil {
 		dst.CrossDeviceMerging = *src.CrossDeviceMerging
+	}
+	if src.VisualGrouping != nil {
+		dst.VisualGrouping = *src.VisualGrouping
 	}
 	if src.QualityRating != nil {
 		dst.QualityRating = *src.QualityRating

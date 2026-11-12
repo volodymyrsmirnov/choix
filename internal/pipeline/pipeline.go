@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
@@ -20,6 +19,15 @@ type Scanner interface {
 // has changed since the last call. See "Cluster recomputation" in the spec.
 type Grouper interface {
 	RebuildAll(ctx context.Context) error
+}
+
+// ProgressGrouper is a Grouper that reports the cluster stage's progress
+// like the per-file stages do: done of total (in files placed in clusters),
+// on the goroutine that called it. The pipeline uses it when the Grouper
+// implements it; otherwise the stage reports only starting and done.
+type ProgressGrouper interface {
+	Grouper
+	RebuildAllProgress(ctx context.Context, progress func(done, total int)) error
 }
 
 // IDLister exposes the subset of the store we need: returning ids whose
@@ -65,6 +73,25 @@ func stageStatusFrom(name string) string {
 		return "thumbed"
 	}
 	return ""
+}
+
+// pendingStatuses are the scan_status values of files that still have a
+// per-file stage ahead of them.
+var pendingStatuses = []string{"discovered", "metadata", "thumbed"}
+
+// Pending returns how many files still have per-file work ahead of them:
+// those in 'discovered', 'metadata' or 'thumbed'. Analyzed, failed and
+// missing files are not pending.
+func (p *Pipeline) Pending(ctx context.Context) (int, error) {
+	total := 0
+	for _, status := range pendingStatuses {
+		n, err := p.Store.CountByStatus(ctx, status)
+		if err != nil {
+			return 0, fmt.Errorf("pending: count by status %q: %w", status, err)
+		}
+		total += n
+	}
+	return total, nil
 }
 
 func (p *Pipeline) workersFor(stage string) int {
@@ -130,12 +157,24 @@ func (p *Pipeline) runStagesAndCluster(ctx context.Context) error {
 	p.Reporter.Update(Progress{Stage: "cluster", Phase: "starting"})
 	slog.Info("pipeline stage start", "stage", "cluster")
 	clusterStart := time.Now()
-	if err := p.Grouper.RebuildAll(ctx); err != nil {
-		p.Reporter.Update(Progress{Stage: "cluster", Phase: "failed"})
+	// The latest count, carried into the done or failed update like the
+	// per-file stages do. The grouper reports on this goroutine.
+	var last Progress
+	rebuild := p.Grouper.RebuildAll
+	if pg, ok := p.Grouper.(ProgressGrouper); ok {
+		rebuild = func(ctx context.Context) error {
+			return pg.RebuildAllProgress(ctx, func(done, total int) {
+				last = Progress{Stage: "cluster", Done: done, Total: total, Phase: "running"}
+				p.Reporter.Update(last)
+			})
+		}
+	}
+	if err := rebuild(ctx); err != nil {
+		p.Reporter.Update(Progress{Stage: "cluster", Done: last.Done, Total: last.Total, Phase: "failed"})
 		slog.Warn("pipeline stage failed", "stage", "cluster", "err", err)
 		return fmt.Errorf("cluster: %w", err)
 	}
-	p.Reporter.Update(Progress{Stage: "cluster", Phase: "done"})
+	p.Reporter.Update(Progress{Stage: "cluster", Done: last.Done, Total: last.Total, Phase: "done"})
 	slog.Info("pipeline stage done", "stage", "cluster", "elapsed_ms", time.Since(clusterStart).Milliseconds())
 	return nil
 }
@@ -223,11 +262,10 @@ func (p *Pipeline) runStage(ctx context.Context, st Stage) error {
 		}
 		_, _, runErr := RunPoolWithProgress(ctx, workers, ids, st.Process, progress)
 		if runErr != nil {
-			// Cancellation aborts the stage and bubbles up. Per-item
-			// errors are tracked in the count but don't stop the pool;
-			// runErr will only be non-nil for ctx cancellation here
-			// because per-item failures are isolated by the workers.
-			if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+			// Cancellation, or the folder becoming unavailable, aborts
+			// the stage and bubbles up. Per-item errors are tracked in
+			// the count but don't stop the pool.
+			if isCancellation(runErr) {
 				p.Reporter.Update(Progress{Stage: st.Name(), Done: int(totalOK), Total: totalQueue, Failed: int(totalFail), Phase: "failed"})
 				slog.Warn("pipeline stage cancelled", "stage", st.Name(), "done", totalOK, "failed", totalFail, "total", totalQueue)
 				return runErr
