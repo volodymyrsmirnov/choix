@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Choix</title>
+    <!-- The window is the page: #root is the window's height, and the design's
+         AppRoot fills #root. The html element gets no style here, as in the
+         prototype (both import the design's base.css). No
+         favicon: a desktop window shows none.
+         The document never scrolls: only the panes inside the app do, under
+         a title bar that stays put. The design's base.css stops the page's
+         rubber-band (html overscroll-behavior); here body's overflow reaches
+         the viewport, so the page itself cannot scroll, and body's dark
+         background is the canvas, never white. Nothing on html here: parity
+         compares html's own style with the prototype's. -->
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: var(--color-bg-1);
+      }
+      #root {
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- data-file-drop-target: folders dropped anywhere on the window are
+         added to the Library (Wails hands the drop to Go). -->
+    <div id="root" data-file-drop-target></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+# `wails3 dev` configuration (Wails v3.1.0), used by `task dev` as
+# `wails3 dev -config build/config.yml` from the repository root.
+# Only `dev_mode` is read; the app's identity lives in build/darwin/.
+version: '3'
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+      - build
+      - .tmp
+      - .choix
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+      - "*_test.go"
+    watched_extension:
+      - "*.go"
+    git_ignore: true
+  executes:
+    # Once, and again on every reload: make sure frontend/dist exists so the
+    # Go embed compiles.
+    - cmd: task frontend:bootstrap
+      type: blocking
+    # The Vite dev server; it keeps running across Go reloads.
+    - cmd: task dev:frontend
+      type: background
+    # The app itself (`go run ./cmd/choix`), restarted when a Go file changes.
+    - cmd: task dev:run
+      type: primary
+      exit_policy: shutdown

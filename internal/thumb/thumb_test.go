@@ -1,11 +1,6 @@
 package thumb
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestCachePathBucketAndJoin(t *testing.T) {
 	root := "/tmp/scan-root"
@@ -28,25 +23,6 @@ func TestCachePathBucketAndJoin(t *testing.T) {
 	}
 }
 
-func TestEnsureDirCreatesParents(t *testing.T) {
-	root := t.TempDir()
-	dst := CachePath(root, 42, TierThumb)
-	if err := ensureDir(dst); err != nil {
-		t.Fatalf("ensureDir: %v", err)
-	}
-	parent := filepath.Dir(dst)
-	info, err := os.Stat(parent)
-	if err != nil {
-		t.Fatalf("stat parent: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatalf("expected directory at %s", parent)
-	}
-	if !strings.HasSuffix(parent, filepath.Join(".choix", "thumbs", "2a")) {
-		t.Errorf("unexpected parent path %s", parent)
-	}
-}
-
 func TestTierConstants(t *testing.T) {
 	if TierThumb != "thumb" {
 		t.Errorf("TierThumb = %q, want %q", TierThumb, "thumb")
@@ -59,5 +35,8 @@ func TestTierConstants(t *testing.T) {
 	}
 	if WidthPreview != 1600 {
 		t.Errorf("WidthPreview = %d, want 1600", WidthPreview)
+	}
+	if TierFullJPEG != "full" || WidthFullJPEG != 4096 {
+		t.Errorf("full tier = %q/%d, want full/4096", TierFullJPEG, WidthFullJPEG)
 	}
 }

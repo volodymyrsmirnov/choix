@@ -1,0 +1,26 @@
+{
+  "PixelHeight": 4000,
+  "PixelWidth": 6000,
+  "{Exif}": {
+    "BodySerialNumber": "TESTSERIAL01",
+    "DateTimeDigitized": "2026:01:02 03:04:05",
+    "DateTimeOriginal": "2026:01:02 03:04:05",
+    "ExposureTime": 0.008,
+    "FNumber": 4,
+    "FocalLength": 35,
+    "ISOSpeedRatings": [
+      100
+    ]
+  },
+  "{GPS}": {
+    "Latitude": 10.5,
+    "LatitudeRef": "S",
+    "Longitude": 20.25,
+    "LongitudeRef": "W"
+  },
+  "{TIFF}": {
+    "DateTime": "2026:01:02 03:04:05",
+    "Make": "TESTCAM",
+    "Model": "D1"
+  }
+}

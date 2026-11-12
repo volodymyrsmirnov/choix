@@ -17,7 +17,18 @@ permissions:
 
 jobs:
   ci:
+    # macos-latest is Apple Silicon (arm64); the app is built for arm64 only.
     runs-on: macos-latest
+    # Every Go command runs with the Taskfile's environment (its &go-env
+    # anchor): arm64 only, deployment target macOS 14.0. No signing secret is
+    # used: task package signs the bundle ad hoc (sign:dev).
+    env:
+      GOOS: darwin
+      GOARCH: arm64
+      CGO_ENABLED: '1'
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+      CGO_CFLAGS: -O2 -g -mmacosx-version-min=14.0
+      CGO_LDFLAGS: -O2 -g -mmacosx-version-min=14.0
     steps:
       - uses: actions/checkout@v4
 
@@ -28,8 +39,38 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Build embedded SPA
-        run: make webui
+      - uses: go-task/setup-task@v1
+        with:
+          version: 3.52.0
+
+      # task tools checks that golangci-lint is on PATH; the version is the one
+      # the golangci-lint action used to run.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      # The pinned ONNX Runtime library (build time only; fetch.sh verifies its SHA-256).
+      - name: Cache ONNX Runtime
+        uses: actions/cache@v4
+        with:
+          path: build/.tools/onnxruntime
+          key: onnxruntime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/onnxruntime/pin.env') }}
+
+      - name: Install the build tools (wails3)
+        run: task tools
+
+      - name: Fetch ONNX Runtime
+        run: task deps:onnxruntime
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: bunx playwright install chromium
+
+      - name: Create the embedded-asset placeholders
+        run: task frontend:bootstrap
 
       - name: Check formatting
         run: |
@@ -41,19 +82,28 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      - name: Vet
-        run: go vet ./...
+      - name: Bindings are up to date
+        run: task bindings:check
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.12.2
+      - name: Lint (go vet and golangci-lint)
+        run: task lint
 
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@v1.13.0
 
+      # The race-detector run of task test, with a JUnit report and coverage.
+      # The ONNX tests use the fetched runtime; no model is downloaded, so the
+      # tests that need one skip.
       - name: Test with coverage
+        env:
+          CHOIX_ONNXRUNTIME_DYLIB: ${{ github.workspace }}/build/.tools/onnxruntime/lib/libonnxruntime.dylib
         run: gotestsum --junitfile test-results.xml -- -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      # The second go test of task test: keep this package list equal to it.
+      - name: Test the server-tagged packages
+        env:
+          CHOIX_ONNXRUNTIME_DYLIB: ${{ github.workspace }}/build/.tools/onnxruntime/lib/libonnxruntime.dylib
+        run: go test -race -count=1 -tags server ./internal/app/testsupport/ ./internal/app/menu/
 
       - name: Test report
         uses: dorny/test-reporter@v1
@@ -62,11 +112,6 @@ jobs:
           name: Test Results
           path: test-results.xml
           reporter: java-junit
-
-      - name: Vulnerability check
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
 
       - name: Generate coverage report
         id: coverage
@@ -99,3 +144,198 @@ jobs:
             ```
 
             </details>
+
+      - name: Smoke test (synthetic end-to-end pipeline)
+        run: task test:smoke
+
+      - name: Build script tests
+        run: |
+          sh build/taskfile_test.sh
+          sh build/darwin/bundle_test.sh
+          sh build/onnxruntime/fetch_test.sh
+
+      # The binding-level end-to-end specs (frontend/e2e/api) against the
+      # server build, on port 8090/8091 with throw-away data directories.
+      # Chromium is installed by the step above; the model settings are off
+      # in the E2E config, so nothing is downloaded.
+      - name: End-to-end tests (server build)
+        run: task test:e2e
+
+      - name: Package Choix.app (signed ad hoc)
+        run: task package
+
+      - name: Verify the bundle's signature and entitlements
+        run: |
+          codesign --verify --strict --verbose=2 bin/Choix.app
+          codesign -d --entitlements - --xml bin/Choix.app > "$RUNNER_TEMP/entitlements.plist"
+          python3 - build/darwin/entitlements.plist "$RUNNER_TEMP/entitlements.plist" <<'EOF'
+          import plistlib, sys
+          want, got = (plistlib.load(open(p, "rb")) for p in sys.argv[1:])
+          print("signed entitlements:", sorted(got))
+          if got != want:
+              sys.exit("the signed entitlements differ from build/darwin/entitlements.plist: want %r" % sorted(want))
+          EOF
+
+      # The shipped build ignores CHOIX_DATA_DIR and CHOIX_ONNXRUNTIME_DYLIB.
+      # No model is installed on the runner, so both providers report
+      # "skipped: model missing", which is not a failure.
+      - name: Self-check of the sandboxed bundle
+        run: |
+          out=$(CHOIX_SELFCHECK=1 bin/Choix.app/Contents/MacOS/Choix)
+          echo "$out"
+          for want in '"sandboxed":true' '"onnxRuntime":"1.25.0"' '"bookmarkRoundTrip":true' '"trashCheck":true'; do
+            case $out in
+            *"$want"*) ;;
+            *) echo "self-check: no $want in the report" >&2; exit 1 ;;
+            esac
+          done
+
+      # Writes the snapshot again and fails if the committed file changes by a byte.
+      - name: Design fingerprints match the prototype (macOS)
+        working-directory: frontend
+        run: bun run design:snapshot && git diff --exit-code -- ../docs/design/state-hashes.json
+
+      # ditto keeps the bundle's symlinks, file modes and signature; upload-artifact alone would not.
+      - name: Archive Choix.app
+        run: ditto -c -k --keepParent bin/Choix.app bin/Choix.app.zip
+
+      - name: Upload Choix.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Choix.app
+          path: bin/Choix.app.zip
+          if-no-files-found: error
+
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  design:
+    runs-on: ubuntu-latest
+    env:
+      # The branch name reaches scripts through the environment, never by ${{ }} expansion inside a script.
+      BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bunx playwright install --with-deps chromium webkit
+
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun test
+
+      - name: Type check
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun run check
+
+      - name: Check and flow self-tests
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun run design:selftest
+
+      - name: Design lint
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun run lint:design
+
+      - name: State checks
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun run design:check-states
+
+      - name: Flows
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun run design:flows
+
+      - name: Extractor
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bunx playwright test -c playwright.design.config.ts tools/extract.pw.ts
+
+      # Writes the snapshot again and fails if the committed file changes by a byte.
+      - name: Design fingerprints match the prototype
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: bun run design:snapshot && git diff --exit-code -- ../docs/design/state-hashes.json
+
+      - name: Gate tests
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest tools/design/gate_test.py
+
+      - name: Hook tests
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s .claude/hooks -p '*_test.py'
+
+      - name: Note a branch that claims no UI change
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'EOF'
+          import os, sys
+          sys.path.insert(0, "tools/design")
+          import gate
+          rel = "{}/{}.md".format(gate.CHANGES, gate.slug(os.environ["BRANCH"]))
+          text = gate.read_text(".", rel)
+          try:
+              ui = gate.parse_change_file(text)["ui"] if text is not None else None
+          except gate.ChangeFileError:
+              ui = None
+          if ui is False:
+              print("::notice title=Design gate::{} says ui: false. This branch claims no visible UI change; "
+                    "the owner confirms that with task design:confirm-no-ui.".format(rel))
+          EOF
+
+      - name: Design gate (merge check)
+        if: ${{ !cancelled() }}
+        run: python3 tools/design/gate.py check --mode merge --branch "$BRANCH" --base origin/main
+
+  # App ↔ prototype parity: the parity self-test, plus one test per approved
+  # state of each group in frontend/e2e/parity/enabled.json, with the app's
+  # parity build (the app on the mock bindings) served as PARITY_APP_URL.
+  # task parity builds and serves both sides on 127.0.0.1 and stops them.
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: go-task/setup-task@v1
+        with:
+          version: 3.52.0
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: bunx playwright install --with-deps chromium
+
+      - name: Build the prototype
+        run: task design:build
+
+      - name: Parity
+        run: task parity

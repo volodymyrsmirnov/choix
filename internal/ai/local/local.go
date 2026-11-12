@@ -7,12 +7,11 @@ import (
 	"image"
 	_ "image/jpeg" // decoder
 	_ "image/png"  // decoder
-	"log/slog"
 	"math"
 	"os"
-	"sync"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/pipeline"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
@@ -22,47 +21,49 @@ import (
 // retired; CLIP is the only signal still in production use, where it
 // drives within-bucket visual grouping.
 type Analyzer struct {
-	store  *store.Store
-	models *ModelStore
+	store    *store.Store
+	embedder Embedder
 
-	mu       sync.Mutex
-	clipSess *OrtSession
+	// FailureGuard, when set, is consulted right before a failure would be
+	// recorded. When it returns false (the folder is unreachable) nothing is
+	// written — the row keeps its status — and the error wraps
+	// pipeline.ErrFolderUnavailable. nil records every failure.
+	FailureGuard func() bool
 }
 
-// NewAnalyzer returns an Analyzer backed by the given store and model store.
-func NewAnalyzer(s *store.Store, models *ModelStore) *Analyzer {
-	return &Analyzer{store: s, models: models}
-}
-
-// Close releases the cached CLIP session.
-func (a *Analyzer) Close() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.clipSess != nil {
-		err := a.clipSess.Close()
-		a.clipSess = nil
-		return err
+// unavailable returns cause wrapped in pipeline.ErrFolderUnavailable when
+// guard reports the folder unreachable, and nil otherwise (including when
+// guard is nil).
+func unavailable(guard func() bool, cause error) error {
+	if guard != nil && !guard() {
+		return fmt.Errorf("%w: %w", pipeline.ErrFolderUnavailable, cause)
 	}
 	return nil
 }
 
-// Analyze loads the tier-1 thumbnail at thumbPath, runs CLIP if the model
-// is installed, writes the ai_signals row, and bumps scan_status to
-// "analyzed". When the CLIP model is absent the row is still written
-// (with a NULL embedding) so the cluster step has uniform input.
-//
-// CLIP inference (session acquire + CLIPEmbed) runs under a.mu to prevent
-// concurrent calls from racing on the shared OrtSession. The mutex is
-// released before the Upsert/UpdateStatus calls, which do not touch the
-// session. Pipeline analyze-concurrency is already 1 by convention
-// (see CLAUDE.md), but holding the lock here makes the invariant explicit
-// and safe if concurrency is ever raised.
+// NewAnalyzer returns an Analyzer backed by the given store. e computes the
+// CLIP embedding — normally the app's shared *Sessions, which owns (and
+// closes) the ONNX session; with e == nil no embedding is computed. Pass a
+// nil interface, not a typed nil pointer.
+func NewAnalyzer(s *store.Store, e Embedder) *Analyzer {
+	return &Analyzer{store: s, embedder: e}
+}
+
+// Analyze loads the tier-1 thumbnail at thumbPath, computes its CLIP
+// embedding when an Embedder is set, writes the ai_signals row, and bumps
+// scan_status to "analyzed". When there is no embedding — no Embedder, the
+// model is not installed (ErrModelMissing), or any other Embedder error —
+// the row is still written with a NULL embedding and the file is still
+// analyzed, so the cluster step has uniform input.
 func (a *Analyzer) Analyze(ctx context.Context, fileID int64, thumbPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	img, err := loadImage(thumbPath)
 	if err != nil {
+		if uerr := unavailable(a.FailureGuard, fmt.Errorf("load thumb: %w", err)); uerr != nil {
+			return uerr
+		}
 		if ferr := a.store.Files().UpdateStatus(fileID, "failed", fmt.Sprintf("load thumb: %s", err)); ferr != nil {
 			return fmt.Errorf("load thumb: %w (also: record failure: %v)", err, ferr)
 		}
@@ -71,22 +72,20 @@ func (a *Analyzer) Analyze(ctx context.Context, fileID int64, thumbPath string) 
 
 	row := store.AISignals{FileID: fileID}
 
-	if a.models.Has(ModelCLIP) {
-		// Hold the mutex across both the session acquire and CLIPEmbed so
-		// no two goroutines call into the same OrtSession concurrently.
-		a.mu.Lock()
-		sess, sessErr := a.lockedClipSession()
-		if sessErr == nil {
-			if emb, embErr := CLIPEmbed(sess, img); embErr == nil {
-				row.ClipEmbedding = float32sToBytes(emb)
-			}
+	if a.embedder != nil {
+		// Any failure leaves the embedding NULL; the grouper then relies on
+		// time proximity alone for this file.
+		if emb, embErr := a.embedder.Embed(img); embErr == nil {
+			row.ClipEmbedding = float32sToBytes(emb)
 		}
-		a.mu.Unlock()
 	}
 
 	row.ComputedAt = sql.NullInt64{Int64: time.Now().Unix(), Valid: true}
 
 	if err := a.store.AISignals().Upsert(row); err != nil {
+		if uerr := unavailable(a.FailureGuard, fmt.Errorf("upsert ai_signals: %w", err)); uerr != nil {
+			return uerr
+		}
 		if ferr := a.store.Files().UpdateStatus(fileID, "failed", fmt.Sprintf("upsert ai_signals: %s", err)); ferr != nil {
 			return fmt.Errorf("upsert ai_signals: %w (also: record failure: %v)", err, ferr)
 		}
@@ -96,25 +95,6 @@ func (a *Analyzer) Analyze(ctx context.Context, fileID int64, thumbPath string) 
 		return fmt.Errorf("update status: %w", err)
 	}
 	return nil
-}
-
-// lockedClipSession returns (or lazily creates) the shared CLIP session.
-// Callers MUST hold a.mu before calling this method.
-func (a *Analyzer) lockedClipSession() (*OrtSession, error) {
-	if a.clipSess != nil {
-		return a.clipSess, nil
-	}
-	modelPath := a.models.Path(ModelCLIP)
-	slog.Info("loading CLIP session", "model", modelPath)
-	start := time.Now()
-	s, err := NewSession(modelPath)
-	if err != nil {
-		slog.Warn("CLIP session load failed", "model", modelPath, "err", err)
-		return nil, err
-	}
-	a.clipSess = s
-	slog.Info("CLIP session ready", "elapsed_ms", time.Since(start).Milliseconds())
-	return s, nil
 }
 
 func loadImage(path string) (image.Image, error) {

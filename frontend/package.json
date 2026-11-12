@@ -1,0 +1,44 @@
+{
+  "name": "choix-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "build:parity": "vite build --mode parity",
+    "harness:build": "vite build --config e2e/harness/vite.config.ts",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "proto:dev": "vite --config vite.prototype.config.ts",
+    "proto:build": "node tools/build-prototype.mjs",
+    "proto:serve": "node tools/serve.mjs",
+    "design:check-states": "playwright test -c playwright.design.config.ts tools/check-states.pw.ts --project checks-chromium --project checks-webkit",
+    "design:flows": "playwright test -c playwright.design.config.ts --project flows",
+    "design:selftest": "playwright test -c playwright.design.config.ts --project selftest-chromium --project selftest-webkit",
+    "design:snapshot": "node tools/snapshot.mjs",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint:design": "bun tools/lint-design.ts",
+    "mock:photos": "bun tools/make-mock-photos.ts"
+  },
+  "dependencies": {
+    "@wailsio/runtime": "3.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@fontsource/inter": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "@playwright/test": "1.65.0",
+    "@types/bun": "1.4.4",
+    "@types/node": "26.6.6",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "6.3.0",
+    "jpeg-js": "0.4.4",
+    "postcss": "8.5.32",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.9.3",
+    "vite": "8.3.8"
+  }
+}

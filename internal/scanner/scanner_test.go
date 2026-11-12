@@ -15,8 +15,7 @@ import (
 func newScannerStore(t *testing.T) *store.Store {
 	t.Helper()
 	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "scan.db") + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	s, err := store.Open(dsn)
+	s, err := store.Open(filepath.Join(dir, "scan.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -115,7 +114,7 @@ func TestScannerWalkSkipsConfiguredPicksDir(t *testing.T) {
 
 	s := newScannerStore(t)
 	sc := New(root, s)
-	sc.SetPicksDir("exported")
+	sc.SetSkipDirs([]string{"exported"})
 
 	if err := sc.Walk(context.Background()); err != nil {
 		t.Fatalf("Walk: %v", err)
@@ -197,7 +196,7 @@ func TestScannerWalkSkipsNestedPicksDir(t *testing.T) {
 
 	s := newScannerStore(t)
 	sc := New(root, s)
-	sc.SetPicksDir("exports/luminar")
+	sc.SetSkipDirs([]string{"exports/luminar"})
 
 	if err := sc.Walk(context.Background()); err != nil {
 		t.Fatalf("Walk: %v", err)
@@ -217,5 +216,97 @@ func TestScannerWalkSkipsNestedPicksDir(t *testing.T) {
 	}
 	if !hasOther {
 		t.Errorf("sibling of nested picks dir was skipped, got %v", got)
+	}
+}
+
+func seedRows(t *testing.T, s *store.Store, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		if _, err := s.Files().Insert(store.File{
+			Path: p, Size: 1, Mtime: 1, ContentHash: p, Kind: "photo", Format: "jpeg", ScanStatus: "analyzed",
+		}); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+}
+
+func equalSorted(got []string, want ...string) bool {
+	sort.Strings(want)
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// An empty skip list replaces the default "picks": the picks directory is
+// walked as originals (a refused picks directory) and nothing is evicted.
+func TestSetSkipDirs_EmptySkipsNothing(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root, "keep.jpg", []byte("a"))
+	mustWrite(t, root, "picks/a.jpg", []byte("b"))
+	mustWrite(t, root, ".choix/thumbs/00/1-thumb.jpg", []byte("c"))
+
+	s := newScannerStore(t)
+	seedRows(t, s, "picks/a.jpg")
+	seeded, err := s.Files().GetByPath("picks/a.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := New(root, s)
+	sc.SetSkipDirs(nil)
+
+	if err := sc.Walk(context.Background()); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if got := listPaths(t, s); !equalSorted(got, "keep.jpg", "picks/a.jpg") {
+		t.Fatalf("paths = %v, want keep.jpg and picks/a.jpg (.choix always skipped)", got)
+	}
+	f, err := s.Files().GetByPath("picks/a.jpg")
+	if err != nil || f.ID != seeded.ID {
+		t.Errorf("picks/a.jpg row id = %d, %v; want the seeded row %d kept, not evicted", f.ID, err, seeded.ID)
+	}
+}
+
+// Every listed directory is skipped and evicted; others are walked and kept.
+func TestSetSkipDirs_SkipsAndEvictsOnlyListed(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root, "keep.jpg", []byte("a"))
+	mustWrite(t, root, "picks/a.jpg", []byte("b"))
+	mustWrite(t, root, "Exports/Out/b.jpg", []byte("c"))
+	mustWrite(t, root, "Exports/other/c.jpg", []byte("d"))
+	mustWrite(t, root, "pickss/e.jpg", []byte("e"))
+
+	s := newScannerStore(t)
+	seedRows(t, s, "picks/a.jpg", "Exports/Out/b.jpg", "pickss/e.jpg")
+	sc := New(root, s)
+	sc.SetSkipDirs([]string{"picks", "exports/out"}) // matched case-insensitively
+
+	if err := sc.Walk(context.Background()); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if got := listPaths(t, s); !equalSorted(got, "keep.jpg", "Exports/other/c.jpg", "pickss/e.jpg") {
+		t.Fatalf("paths = %v", got)
+	}
+}
+
+// Without SetSkipDirs, a scanner skips the default "picks" directory.
+func TestNew_SkipsPicksByDefault(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, root, "keep.jpg", []byte("a"))
+	mustWrite(t, root, "picks/a.jpg", []byte("b"))
+
+	s := newScannerStore(t)
+	sc := New(root, s)
+
+	if err := sc.Walk(context.Background()); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if got := listPaths(t, s); !equalSorted(got, "keep.jpg") {
+		t.Fatalf("paths = %v, want only keep.jpg", got)
 	}
 }

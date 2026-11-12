@@ -3,79 +3,16 @@ package local
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sync"
+	"log/slog"
 
 	ort "github.com/yalue/onnxruntime_go"
-
-	"github.com/volodymyrsmirnov/choix/internal/appdir"
 )
 
-// initOnce guards the global ONNX runtime initialization.
-var initOnce sync.Once
-var initErr error
-
-// runtimeDylibCandidates lists the paths to probe for libonnxruntime.dylib,
-// in priority order:
-//
-//  1. ~/.choix/lib/libonnxruntime.dylib — an explicit user-level install
-//     (the first-run wizard may drop one here, or a user can symlink it).
-//  2. $HOMEBREW_PREFIX/opt/onnxruntime/... — honors a non-standard brew root.
-//  3. /opt/homebrew and /usr/local — the stock Apple Silicon / Intel brew
-//     prefixes, covered even when HOMEBREW_PREFIX is unset.
-//
-// We point at the Homebrew *opt* symlink, never a versioned Cellar path, so a
-// `brew upgrade onnxruntime` can't strand the loader: opt always tracks the
-// current version. (A hand-made Cellar symlink going stale on upgrade was the
-// original "onnxruntime.so not found" failure.)
-func runtimeDylibCandidates() []string {
-	const rel = "opt/onnxruntime/lib/libonnxruntime.dylib"
-	var c []string
-	if p := appdir.RuntimeDylib(); p != "" {
-		c = append(c, p)
-	}
-	if pfx := os.Getenv("HOMEBREW_PREFIX"); pfx != "" {
-		c = append(c, filepath.Join(pfx, rel))
-	}
-	c = append(c,
-		filepath.Join("/opt/homebrew", rel),
-		filepath.Join("/usr/local", rel),
-	)
-	return c
-}
-
-// firstExisting returns the first path in candidates that resolves to an
-// existing file (symlinks are followed, so a dangling link counts as
-// missing), or "" if none do.
-func firstExisting(candidates []string) string {
-	for _, p := range candidates {
-		if p == "" {
-			continue
-		}
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
-}
-
-func ensureRuntime() error {
-	initOnce.Do(func() {
-		// Point onnxruntime_go at the first reachable dylib. When none of
-		// the candidates exist, fall back to whatever the DYLD loader can
-		// find — the downstream session creation returns a clear error if
-		// no dylib is reachable, and the analyzer skips ML-backed signals
-		// without failing the analyze step.
-		if p := firstExisting(runtimeDylibCandidates()); p != "" {
-			ort.SetSharedLibraryPath(p)
-		}
-		if err := ort.InitializeEnvironment(); err != nil {
-			initErr = fmt.Errorf("init onnxruntime: %w", err)
-		}
-	})
-	return initErr
-}
+// Execution providers a session can run on, as reported by Sessions.Provider.
+const (
+	providerCoreML = "coreml"
+	providerCPU    = "cpu"
+)
 
 // OrtSession wraps a single-input single-output ONNX model session.
 // We use DynamicAdvancedSession so that input/output tensors can be passed
@@ -85,12 +22,17 @@ type OrtSession struct {
 	inputName   string
 	outputName  string
 	outputShape ort.Shape
-	closed      bool
+	// provider is the execution provider the session was created with:
+	// providerCoreML or providerCPU.
+	provider string
+	closed   bool
 }
 
 // NewSession loads the model at modelPath and prepares it for inference.
-// CoreML EP is requested when available; falls back to CPU.
-func NewSession(modelPath string) (*OrtSession, error) {
+// Unless cpuOnly, the CoreML execution provider is requested (v1's flags,
+// 0); when appending it fails the failure is logged and the session runs on
+// the CPU provider instead.
+func NewSession(modelPath string, cpuOnly bool) (*OrtSession, error) {
 	if err := ensureRuntime(); err != nil {
 		return nil, err
 	}
@@ -100,8 +42,15 @@ func NewSession(modelPath string) (*OrtSession, error) {
 	}
 	defer func() { _ = opts.Destroy() }()
 
-	// Best-effort CoreML EP append; ignore the error (older runtimes / non-mac builds).
-	_ = opts.AppendExecutionProviderCoreML(0)
+	provider := providerCPU
+	if !cpuOnly {
+		if err := opts.AppendExecutionProviderCoreML(0); err != nil {
+			slog.Warn("onnxruntime: CoreML execution provider unavailable, using the CPU provider",
+				"model", modelPath, "err", err)
+		} else {
+			provider = providerCoreML
+		}
+	}
 
 	inputs, outputs, err := ort.GetInputOutputInfo(modelPath)
 	if err != nil {
@@ -123,6 +72,7 @@ func NewSession(modelPath string) (*OrtSession, error) {
 		inputName:   inputs[0].Name,
 		outputName:  outputs[0].Name,
 		outputShape: outputs[0].Dimensions,
+		provider:    provider,
 	}, nil
 }
 

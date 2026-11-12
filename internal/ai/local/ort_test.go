@@ -42,29 +42,6 @@ func TestFirstExisting(t *testing.T) {
 	}
 }
 
-func TestRuntimeDylibCandidatesIncludesHomebrew(t *testing.T) {
-	t.Setenv("HOMEBREW_PREFIX", "/fake/brew")
-	got := runtimeDylibCandidates()
-
-	wantSubstrings := []string{
-		"/fake/brew/opt/onnxruntime/lib/libonnxruntime.dylib",
-		"/opt/homebrew/opt/onnxruntime/lib/libonnxruntime.dylib",
-		"/usr/local/opt/onnxruntime/lib/libonnxruntime.dylib",
-	}
-	for _, want := range wantSubstrings {
-		found := false
-		for _, c := range got {
-			if c == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("candidates %v missing %q", got, want)
-		}
-	}
-}
-
 func TestOrtSessionRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode: skipping ONNX session test")
@@ -75,7 +52,7 @@ func TestOrtSessionRoundTrip(t *testing.T) {
 		t.Skipf("identity.onnx fixture not available: %v", err)
 	}
 
-	sess, err := NewSession(model)
+	sess, err := NewSession(model, true)
 	if err != nil {
 		t.Skipf("ONNX runtime unavailable: %v", err)
 	}

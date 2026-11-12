@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 	"testing"
 
@@ -536,5 +537,63 @@ func TestWriteBucketIsTransactional(t *testing.T) {
 	}
 	if len(clusters) != 0 {
 		t.Fatalf("after clear WriteBucket: got %d clusters, want 0", len(clusters))
+	}
+}
+
+func TestGrouper_WithoutEmbeddingsIsTimeOnly(t *testing.T) {
+	s := store.NewTestStore(t)
+	// Cosine similarity of a and b is 0.1: visually different scenes.
+	a := []float32{1, 0}
+	b := []float32{0.1, float32(math.Sqrt(0.99))}
+	insertAnalyzed(t, s, "a.jpg", "Fuji#A", 1000, a)
+	insertAnalyzed(t, s, "b.jpg", "Fuji#A", 1005, b)
+
+	clusterCount := func(t *testing.T, g *Grouper) int {
+		t.Helper()
+		if err := g.RebuildAll(context.Background()); err != nil {
+			t.Fatalf("RebuildAll: %v", err)
+		}
+		all, err := s.Clusters().ListAll()
+		if err != nil {
+			t.Fatalf("ListAll: %v", err)
+		}
+		return len(all)
+	}
+
+	g := NewGrouper(s, 600, 0.92, false)
+	if got := clusterCount(t, g); got != 2 {
+		t.Fatalf("embeddings on (default): %d clusters, want 2", got)
+	}
+
+	g.SetUseEmbeddings(false)
+	if got := clusterCount(t, g); got != 1 {
+		t.Fatalf("embeddings off: %d clusters, want 1 (time-only)", got)
+	}
+
+	// Cross-device mode needs embeddings; with them off it must fall back
+	// to the same time-only result.
+	gx := NewGrouper(s, 600, 0.92, true)
+	gx.SetUseEmbeddings(false)
+	if got := clusterCount(t, gx); got != 1 {
+		t.Fatalf("cross-device, embeddings off: %d clusters, want 1", got)
+	}
+
+	g.SetUseEmbeddings(true)
+	if got := clusterCount(t, g); got != 2 {
+		t.Fatalf("embeddings back on: %d clusters, want 2", got)
+	}
+
+	// RebuildBucket follows the same switch.
+	bucket := sql.NullInt64{Int64: 600, Valid: true}
+	g.SetUseEmbeddings(false)
+	if err := g.RebuildBucket(context.Background(), "Fuji#A", bucket); err != nil {
+		t.Fatalf("RebuildBucket: %v", err)
+	}
+	inBucket, err := s.Clusters().ListByBucket("Fuji#A", bucket)
+	if err != nil {
+		t.Fatalf("ListByBucket: %v", err)
+	}
+	if len(inBucket) != 1 {
+		t.Fatalf("RebuildBucket with embeddings off: %d clusters, want 1", len(inBucket))
 	}
 }

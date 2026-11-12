@@ -1,0 +1,353 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Bundled fonts (latin subsets, see fonts/LICENSE.md). */
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./fonts/inter-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("./fonts/inter-latin-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("./fonts/inter-latin-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("./fonts/inter-latin-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./fonts/jetbrains-mono-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("./fonts/jetbrains-mono-latin-500.woff2") format("woff2");
+}
+
+@layer base {
+  /* The window never rubber-bands (the title bar must not move): WebKit's
+     elastic overscroll of the whole page is the root element's. Here, not
+     in the app's index.html, so the app and the prototype share it and
+     their <html> records stay equal (parity compares them). */
+  html { overscroll-behavior: none; }
+
+  /* v1's html/body rules, on the app's root element rather than html/body:
+     the prototype's navigator shares the document and must not inherit them.
+     position: relative makes the root the containing block of the app's own
+     overlays (sheets, prompts, toasts), which are absolute, not fixed. */
+  [data-app-root] {
+    position: relative;
+    height: 100%;
+    background: var(--color-bg-1);
+    color: var(--color-fg-0);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: var(--tracking-tightish);
+    font-feature-settings: "ss01", "cv11";
+    color-scheme: dark;
+    /* A native window: a drag or Select All highlights nothing. WebKit
+       (the app's WKWebView) still reads the prefixed name. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* What a native app lets you select: text fields, and a value meant to be
+     copied (data-selectable: the error screen's details). */
+  [data-app-root] :is(input, textarea, [data-selectable]) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Images and links are not dragged out of the window (the img elements
+     also say draggable="false"; this covers a link and any image without). */
+  [data-app-root] :is(img, a) { -webkit-user-drag: none; }
+
+  /* The window drag region (Wails reads the computed custom property, which
+     inherits, so controls inside the title bar opt back out). */
+  [data-titlebar] { --wails-draggable: drag; }
+  [data-titlebar-control] { --wails-draggable: no-drag; }
+
+  /* v1's scrollbars. background-color, not the background shorthand: a
+     var() in a shorthand that a later longhand (background-clip) overrides
+     reads back from CSSOM as empty, and the fingerprint reads these rules
+     (tools/extract.ts). The other background longhands are initial anyway. */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-bg-4);
+    border-radius: var(--radius-full);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-bg-5);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  button, input, select, textarea { font: inherit; color: inherit; }
+
+  /* An extra on engines that have it; copy binds its last two words anyway. */
+  h1, h2, h3, [data-wrap="balance"] { text-wrap: balance; }
+  p, li, [data-wrap="pretty"] { text-wrap: pretty; }
+}
+
+/* v1's component classes (internal/ui/web/src/styles.css), on tokens.
+   Interaction rules are written so a forced look equals the real one
+   (tools/postcss-force.cjs gives each a [data-force] twin): every :active
+   rule follows the :hover rule it competes with and re-declares every
+   property that :hover sets, because a real press is also a hover. Focus
+   rings are explicit solid outlines, never `outline-style: auto`. */
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md
+           text-12 font-medium border border-line-1 bg-bg-3 text-fg-0
+           transition-colors whitespace-nowrap cursor-pointer;
+    letter-spacing: var(--tracking-tightish);
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+  .btn:enabled:hover { @apply bg-bg-4 border-line-2; }
+  .btn:enabled:active { @apply bg-bg-2 border-line-2; }
+  .btn:focus-visible { outline-color: var(--color-pick); }
+  .btn:disabled { @apply opacity-40 cursor-not-allowed; }
+  .btn[aria-busy="true"] { cursor: progress; }
+
+  /* Icon-only: square-ish padding a caller's px-* utility can override. */
+  .btn-icon { @apply px-2; }
+
+  .btn-ghost { @apply bg-transparent border-transparent text-fg-1; }
+  .btn-ghost:enabled:hover { @apply bg-bg-3 border-transparent text-fg-0; }
+  .btn-ghost:enabled:active { @apply bg-bg-2 border-transparent text-fg-0; }
+
+  .btn-primary { @apply bg-pick border-pick text-pick-ink font-semibold; }
+  .btn-primary:enabled:hover { @apply bg-pick-hover border-pick; }
+  .btn-primary:enabled:active { @apply bg-pick border-pick-ink; }
+
+  .btn-pick-active { @apply bg-pick-bg border-pick text-pick; }
+  .btn-pick-active:enabled:hover { @apply bg-pick-bg border-pick-hover text-pick-hover; }
+  .btn-pick-active:enabled:active { @apply bg-bg-2 border-pick text-pick; }
+
+  .btn-reject-active { @apply bg-reject-bg border-reject text-reject; }
+  .btn-reject-active:enabled:hover { @apply bg-reject-bg border-reject text-fg-0; }
+  .btn-reject-active:enabled:active { @apply bg-bg-2 border-reject text-reject; }
+
+  /* A text field: the box is the wrapper, the <input> inside is bare, so a
+     leading icon sits inside the same border and one :focus-within rule
+     covers both forms. */
+  .input {
+    @apply inline-flex items-center gap-1.5 h-[30px] bg-bg-2 border border-line-1
+           rounded-md px-2.5 text-12 text-fg-0 transition-colors;
+  }
+  .input:hover { @apply border-line-2; }
+  .input:focus-within { @apply border-pick shadow-pick-ring; }
+  .input[data-invalid="true"],
+  .input[data-invalid="true"]:hover,
+  .input[data-invalid="true"]:focus-within { @apply border-reject; }
+  .input[data-disabled="true"] { @apply opacity-40 cursor-not-allowed; }
+  .input[data-disabled="true"]:hover { @apply border-line-1; }
+  .input > input {
+    @apply flex-1 min-w-0 h-full bg-transparent border-0 p-0 text-fg-0 outline-none placeholder:text-fg-3;
+  }
+  .input > input:disabled { cursor: not-allowed; }
+  /* Number fields are typed, not stepped: no native spin control, so the
+     field looks the same in WebKit (which always draws it) and Chromium. */
+  .input > input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+  .input > input[type="number"]::-webkit-inner-spin-button,
+  .input > input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
+  .input-sm { @apply h-[26px] px-2; }
+
+  .kbd {
+    @apply inline-flex items-center justify-center align-middle font-mono
+           text-10 text-fg-1 px-[5px] h-[16px] rounded-sm border border-line-1
+           leading-none bg-kbd;
+    letter-spacing: 0;
+  }
+  .btn .kbd { @apply ml-0.5 text-fg-2 border-line-1 bg-kbd-in-btn; }
+  /* On a filled or tinted button the cap takes the button's ink. */
+  .btn-primary .kbd { @apply text-pick-ink border-pick-ink; }
+  .btn-pick-active .kbd { @apply text-pick border-pick; }
+  .btn-reject-active .kbd { @apply text-reject border-reject; }
+
+  .eyebrow {
+    @apply font-mono text-11 uppercase tracking-[0.08em] text-fg-2 font-medium;
+  }
+
+  .imgph {
+    @apply relative flex items-center justify-center overflow-hidden font-mono text-11 text-fg-2;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: repeating-linear-gradient(135deg,
+      var(--color-imgph-a) 0 12px,
+      var(--color-imgph-b) 12px 24px);
+  }
+
+  .thumb {
+    @apply relative block rounded-md overflow-hidden transition-all bg-bg-2 border border-line-1;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+  .thumb img { @apply w-full h-full object-cover block; }
+  .thumb-btn { @apply p-0 cursor-pointer; }
+  .thumb-btn:hover { @apply border-line-2; filter: brightness(1.08); }
+  .thumb-btn:active { @apply border-line-2; filter: brightness(0.92); }
+  .thumb-btn:focus-visible { outline-color: var(--color-pick); }
+  .thumb[data-state="picked"] { @apply border-pick shadow-pick-glow; }
+  .thumb[data-state="rejected"] { @apply border-reject; filter: saturate(0.4) brightness(0.7); }
+  /* The current photo (components/current.ts): the blue edge and soft ring.
+     Picked or rejected stays a state: the mark keeps its edge, and the blue
+     ring goes around it. Keyboard focus on a current thumbnail deepens the
+     ring, with no outline on top. */
+  .thumb[data-current="true"] { @apply border-sel shadow-sel-ring; }
+  .thumb[data-current="true"][data-state="picked"] { @apply border-pick; box-shadow: var(--shadow-sel-mark); }
+  .thumb[data-current="true"][data-state="rejected"] { @apply border-reject; box-shadow: var(--shadow-sel-mark); }
+  .thumb-btn[data-current="true"]:focus-visible { outline-color: transparent; box-shadow: var(--shadow-sel-focus); }
+  .thumb-btn[data-current="true"][data-state]:focus-visible { box-shadow: var(--shadow-sel-mark-focus); }
+
+  .dot { @apply inline-block w-1.5 h-1.5 rounded-full bg-fg-2 flex-shrink-0; }
+  .dot[data-tone="pick"] { @apply bg-pick shadow-dot-pick; }
+  .dot[data-tone="reject"] { @apply bg-reject; }
+  .dot[data-tone="warn"] { @apply bg-warn; }
+  .dot[data-tone="active"] { @apply bg-fg-0; }
+
+  .progress-rail { @apply relative h-[3px] bg-bg-3 rounded-full overflow-hidden; }
+  .progress-fill {
+    @apply absolute inset-y-0 left-0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--color-pick), var(--color-pick-hover));
+  }
+  .progress-fill[data-indet="true"] {
+    width: 30%;
+    animation: choix-indet var(--dur-indet) ease-in-out infinite;
+  }
+
+  /* A range slider (v1 Settings' similarity slider: a native range with the
+     pick accent). The track and knob are the engine's -webkit pseudo-elements
+     (both target engines are WebKit-family); they read their colours from
+     custom properties set on the <input>, so every interaction rule is a
+     plain :hover / :active / :focus-visible on the input and gets its
+     data-force twin. --slider-fill (0%–100%) is set inline by Slider. */
+  .slider {
+    --slider-fill-color: var(--color-pick);
+    --slider-rest-color: var(--color-bg-4);
+    --slider-knob: var(--color-fg-1);
+    --slider-knob-border: var(--color-line-2);
+    @apply block w-full h-4 m-0 p-0 bg-transparent cursor-pointer rounded-sm;
+    -webkit-appearance: none;
+    appearance: none;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+  .slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: var(--radius-full);
+    background: linear-gradient(
+      to right,
+      var(--slider-fill-color) var(--slider-fill, 0%),
+      var(--slider-rest-color) var(--slider-fill, 0%)
+    );
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    /* border-box: the 14 px include the border, so the knob is centred on
+       the 4 px track by half the difference (content-box made it 16 px and
+       sat it 1 px low). */
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    margin-top: calc((4px - 14px) / 2);
+    border-radius: var(--radius-full);
+    border: 1px solid var(--slider-knob-border);
+    background: var(--slider-knob);
+    transition: background-color var(--dur-fast);
+  }
+  .slider:enabled:hover {
+    --slider-fill-color: var(--color-pick-hover);
+    --slider-rest-color: var(--color-bg-5);
+    --slider-knob: var(--color-fg-0);
+    --slider-knob-border: var(--color-line-2);
+  }
+  .slider:enabled:active {
+    --slider-fill-color: var(--color-pick);
+    --slider-rest-color: var(--color-bg-5);
+    --slider-knob: var(--color-fg-2);
+    --slider-knob-border: var(--color-pick);
+  }
+  .slider:focus-visible { outline-color: var(--color-pick); }
+  .slider:disabled { @apply opacity-40 cursor-not-allowed; }
+
+  .choix-spin { animation: choix-spin var(--dur-spin) linear infinite; }
+  /* On the pick-filled primary button the spinner takes the button's ink. */
+  .btn-primary .choix-spin path { stroke: var(--color-pick-ink); }
+  .btn-primary .choix-spin circle { stroke: var(--color-pick-ink); opacity: 0.25; }
+}
+
+@keyframes choix-indet {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(370%); }
+}
+@keyframes choix-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes choix-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Reduced motion, app-wide (v1). Durations collapse to --dur-instant rather
+   than `none` so transitionend / animationend still fire. Elements that say
+   "still working" carry data-indet="true" (the spinner and the indeterminate
+   rail fill): they are left out of the collapse and swap their movement for a
+   slow opacity pulse, with no spatial motion, so they do not freeze into a
+   half-arc or a stray sliver that reads as "stuck". The selectors match the
+   components' own specificity and come later, so they win without
+   !important; the freeze rule below, which has it, still wins over them. */
+@media (prefers-reduced-motion: reduce) {
+  *:not([data-indet="true"]) {
+    animation-duration: var(--dur-instant) !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: var(--dur-instant) !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  [data-indet="true"],
+  .choix-spin[data-indet="true"],
+  .progress-fill[data-indet="true"] {
+    transform: none;
+    animation: choix-pulse var(--dur-pulse) ease-in-out infinite;
+  }
+  .progress-fill[data-indet="true"] { width: 100%; }
+}
+
+/* The orphan check's second pass: balance / pretty switched off. Only the
+   wrap style: `text-wrap: wrap` would also reset the wrap mode and make every
+   `truncate` (white-space: nowrap) element wrap. */
+html[data-nowrapfx] * { text-wrap-style: auto !important; }
+
+/* Scripted renders: no animation, no transition. Must stay last. */
+html[data-freeze] * { animation: none !important; transition: none !important; }

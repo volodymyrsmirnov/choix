@@ -50,6 +50,7 @@ type Model struct {
 	FileName    string
 	URL         string
 	SHA256      string
+	Size        int64 // exact file length in bytes; the expected download total until the server reports one
 	InputShape  []int
 	OutputShape []int
 }
@@ -62,6 +63,7 @@ var KnownModels = map[ModelKind]Model{
 		FileName:    "clip_vit_b32.onnx",
 		URL:         "https://huggingface.co/Qdrant/clip-ViT-B-32-vision/resolve/e0c24ed0fa57fa3e4f97f30de74c51d944036ace/model.onnx",
 		SHA256:      "c68d3d9a200ddd2a8c8a5510b576d4c94d1ae383bf8b36dd8c084f94e1fb4d63",
+		Size:        351686194,
 		InputShape:  []int{1, 3, 224, 224},
 		OutputShape: []int{1, 512},
 	},
@@ -76,6 +78,7 @@ var KnownModels = map[ModelKind]Model{
 		FileName:    "topiq_nr_koniq_384.onnx",
 		URL:         "https://huggingface.co/nocturna/topiq-nr-koniq-onnx/resolve/3dab0f80c8a3afa0356c763b0e741564096783a8/model.onnx",
 		SHA256:      "9aa87559a8b8f6084ed5ab5eb0d489e1351ec9ad7e733213cdff14a5dccf34c2",
+		Size:        176803037,
 		InputShape:  []int{1, 3, 384, 384},
 		OutputShape: []int{1, 1},
 	},

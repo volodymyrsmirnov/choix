@@ -2,106 +2,66 @@ package thumb
 
 import (
 	"context"
+	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"github.com/volodymyrsmirnov/choix/internal/deps"
-	"github.com/volodymyrsmirnov/choix/internal/meta"
+	"github.com/volodymyrsmirnov/choix/internal/platform"
+	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 )
 
-func requireTools(t *testing.T) (*meta.ExifTool, *deps.Runner) {
-	t.Helper()
-	if _, err := exec.LookPath("exiftool"); err != nil {
-		t.Skip("exiftool not on PATH; skipping")
-	}
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not on PATH; skipping")
-	}
-	return meta.New("exiftool"), deps.NewRunner("ffmpeg")
+func TestPhoto_Full4096FollowsSourceKind(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("HEIC by long side", func(t *testing.T) {
+		heic := filepath.Join(t.TempDir(), "IMG_0001.HEIC")
+		if err := os.WriteFile(heic, []byte("not decoded by the fake"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s := &platformtest.Stills{Props: map[string]map[string]any{heic: {"PixelWidth": 100, "PixelHeight": 8000}}}
+		img, err := Photo(ctx, s, heic, WidthFullJPEG)
+		if err != nil {
+			t.Fatalf("Photo: %v", err)
+		}
+		calls := s.Calls()
+		if len(calls) != 1 || calls[0].Path != heic || calls[0].Limit != 4096 || calls[0].Fit != platform.FitLongSide {
+			t.Fatalf("calls = %+v; want one Path call (4096, FitLongSide)", calls)
+		}
+		if img.Width != 51 || img.Height != 4096 {
+			t.Fatalf("image = %dx%d; want 51x4096", img.Width, img.Height)
+		}
+	})
+
+	t.Run("RAF by width on the embedded JPEG", func(t *testing.T) {
+		raf := platformtest.MakeRAF(t, platformtest.MakeJPEG(t, 600, 400))
+		s := &platformtest.Stills{}
+		img, err := Photo(ctx, s, raf, WidthFullJPEG)
+		if err != nil {
+			t.Fatalf("Photo: %v", err)
+		}
+		calls := s.Calls()
+		if len(calls) != 1 || calls[0].Path != "" || calls[0].Data == nil || calls[0].Limit != 4096 || calls[0].Fit != platform.FitWidth {
+			t.Fatalf("got %d calls; want one Data call (4096, FitWidth)", len(calls))
+		}
+		if img.Width != 600 || img.Height != 400 {
+			t.Fatalf("image = %dx%d; want 600x400 (never upscaled)", img.Width, img.Height)
+		}
+	})
 }
 
-func fixturePath(t *testing.T, name string) string {
-	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", name))
-	if err != nil {
-		t.Fatalf("abs: %v", err)
-	}
-	if _, err := os.Stat(abs); err != nil {
-		t.Skipf("fixture %s missing: %v", name, err)
-	}
-	return abs
-}
-
-func TestBuildPhotoTier1JPEG(t *testing.T) {
-	et, ff := requireTools(t)
-	src := fixturePath(t, "jpeg-with-exif.jpg")
-	dst := filepath.Join(t.TempDir(), "out-thumb.jpg")
-
-	w, h, err := BuildPhotoTier1(context.Background(), et, ff, src, dst)
-	if err != nil {
-		t.Fatalf("BuildPhotoTier1: %v", err)
-	}
-	if w != WidthThumb {
-		t.Errorf("width = %d, want %d", w, WidthThumb)
-	}
-	if h <= 0 {
-		t.Errorf("height = %d, want > 0", h)
-	}
-	info, err := os.Stat(dst)
-	if err != nil {
-		t.Fatalf("stat dst: %v", err)
-	}
-	if info.Size() == 0 {
-		t.Fatalf("dst is empty")
-	}
-}
-
-func TestBuildPhotoTier1HEIC(t *testing.T) {
-	et, ff := requireTools(t)
-	src := fixturePath(t, "sample.heic")
-	dst := filepath.Join(t.TempDir(), "out-thumb.jpg")
-
-	w, _, err := BuildPhotoTier1(context.Background(), et, ff, src, dst)
-	if err != nil {
-		t.Fatalf("BuildPhotoTier1 HEIC: %v", err)
-	}
-	if w != WidthThumb {
-		t.Errorf("width = %d, want %d", w, WidthThumb)
-	}
-	if _, err := os.Stat(dst); err != nil {
-		t.Fatalf("stat dst: %v", err)
+func TestPhoto_NilStillsIsError(t *testing.T) {
+	if _, err := Photo(context.Background(), nil, "/x/a.jpg", WidthThumb); err == nil {
+		t.Fatal("Photo without Stills: want an error")
 	}
 }
 
-func TestBuildPhotoTier2JPEG(t *testing.T) {
-	et, ff := requireTools(t)
-	src := fixturePath(t, "jpeg-with-exif.jpg")
-	dst := filepath.Join(t.TempDir(), "out-preview.jpg")
-
-	w, _, err := BuildPhotoTier2(context.Background(), et, ff, src, dst)
-	if err != nil {
-		t.Fatalf("BuildPhotoTier2: %v", err)
-	}
-	if w != WidthPreview {
-		t.Errorf("width = %d, want %d", w, WidthPreview)
-	}
-	if _, err := os.Stat(dst); err != nil {
-		t.Fatalf("stat dst: %v", err)
-	}
-}
-
-func TestBuildPhotoTier2RAF(t *testing.T) {
-	et, ff := requireTools(t)
-	src := fixturePath(t, "tiny.raf")
-	dst := filepath.Join(t.TempDir(), "out-preview.jpg")
-
-	w, _, err := BuildPhotoTier2(context.Background(), et, ff, src, dst)
-	if err != nil {
-		t.Fatalf("BuildPhotoTier2 RAF: %v", err)
-	}
-	if w != WidthPreview {
-		t.Errorf("width = %d, want %d", w, WidthPreview)
+func TestPhoto_CancelledReturnsContextError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	raf := platformtest.MakeRAF(t, platformtest.MakeJPEG(t, 64, 64))
+	_, err := Photo(ctx, &platformtest.Stills{}, raf, WidthThumb)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Photo = %v; want context.Canceled", err)
 	}
 }

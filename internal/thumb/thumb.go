@@ -1,11 +1,12 @@
 // Package thumb builds and caches three tiers of media thumbnails for choix:
-// tier-1 ("thumb", 256w) for the Library grid, tier-2 ("preview", 1600w)
-// for Focus mode, and "full" which streams the original on demand.
+// tier-1 ("thumb", 256) for the Library grid, tier-2 ("preview", 1600) for
+// Focus mode, and "full" (4096), a JPEG made on demand for originals a
+// browser cannot show. Images come from the platform layer (ImageIO,
+// AVFoundation) as bytes; every cache file is written through safefs.
 package thumb
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -35,14 +36,4 @@ func CachePath(root string, fileID int64, tier string) string {
 	bucket := fmt.Sprintf("%02x", fileID%256)
 	name := fmt.Sprintf("%d-%s.jpg", fileID, tier)
 	return filepath.Join(root, ".choix", "thumbs", bucket, name)
-}
-
-// ensureDir creates the parent directory of path with mode 0o750, including
-// any intermediate directories. It is a no-op if the directory already exists.
-func ensureDir(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-	return nil
 }

@@ -12,7 +12,7 @@ import (
 )
 
 // configFilePathFunc is the seam tests override to redirect Load/Save to
-// a tmp file. Production points it at appdir.Config (~/.choix/config.toml).
+// a tmp file. Production points it at appdir.Config (<data root>/config.toml).
 var configFilePathFunc = appdir.Config
 
 func configFilePath() (string, error) {
@@ -54,6 +54,7 @@ func Save(cfg *Config) error {
 		AdvanceOnAction:        &cfg.AdvanceOnAction,
 		HideRejectedPhotos:     &cfg.HideRejectedPhotos,
 		CrossDeviceMerging:     &cfg.CrossDeviceMerging,
+		VisualGrouping:         &cfg.VisualGrouping,
 		QualityRating:          &cfg.QualityRating,
 	}
 	var buf bytes.Buffer

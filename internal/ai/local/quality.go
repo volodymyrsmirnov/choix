@@ -9,8 +9,6 @@ import (
 	"log/slog"
 	"math"
 	"sort"
-	"sync"
-	"time"
 
 	"golang.org/x/image/draw"
 
@@ -128,31 +126,35 @@ func cropTensor(img image.Image, r image.Rectangle) []float32 {
 }
 
 // ErrQualityUnavailable means the scorer cannot run at all in this process
-// (the model or the ONNX runtime failed to load). ONNX runtime
-// initialisation is attempted once per process, so the condition lasts
-// until choix is restarted.
+// (the model or the ONNX runtime failed to load, or the sessions are
+// closed). ONNX runtime initialisation is attempted once per process, so the
+// condition lasts until choix is restarted.
 var ErrQualityUnavailable = errors.New("quality scorer unavailable")
 
 // QualityScorer rates photos for technical quality (focus, motion blur,
 // noise) with the TOPIQ-NR model and stores the raw score on the file row.
 // The rating is advisory: nothing else reads it but the UI.
 type QualityScorer struct {
-	store  *store.Store
-	models *ModelStore
+	store *store.Store
+	// inf runs one 384×384 crop through the model — normally the app's
+	// shared *Sessions, which owns (and closes) the ONNX session.
+	inf CropInferer
 	// previewPath resolves a file id to its tier-2 preview JPEG.
 	previewPath func(fileID int64) (string, error)
 
-	mu   sync.Mutex
-	sess *OrtSession
-	// infer runs one 384×384 crop through the model. Nil → the ONNX
-	// session; tests replace it so they need neither model nor runtime.
-	infer func(input []float32) (float64, error)
+	// FailureGuard, when set, is consulted before a photo whose preview
+	// could not be found, read or decoded is stamped as never ratable. When
+	// it returns false (the folder is unreachable) nothing is stamped — the
+	// photo stays pending — and Score returns an error wrapping
+	// pipeline.ErrFolderUnavailable. nil stamps it as before.
+	FailureGuard func() bool
 }
 
-// NewQualityScorer builds a scorer. previewPath must return the absolute
-// path of the tier-2 preview for a file id.
-func NewQualityScorer(s *store.Store, models *ModelStore, previewPath func(fileID int64) (string, error)) *QualityScorer {
-	return &QualityScorer{store: s, models: models, previewPath: previewPath}
+// NewQualityScorer builds a scorer that runs crops through inf.
+// previewPath must return the absolute path of the tier-2 preview for a
+// file id.
+func NewQualityScorer(s *store.Store, inf CropInferer, previewPath func(fileID int64) (string, error)) *QualityScorer {
+	return &QualityScorer{store: s, inf: inf, previewPath: previewPath}
 }
 
 // CountPending returns how many photos still need a rating.
@@ -171,14 +173,21 @@ func (q *QualityScorer) ListPending(afterID int64, limit int) ([]store.QualityIt
 // (no usable preview, or too small — stamped so it is not retried); or
 // superseded (the file changed on disk meanwhile, so the result was
 // dropped). It returns an error — leaving the photo pending — when ctx is
-// cancelled, when the scorer cannot run (ErrQualityUnavailable), or when
-// inference or the database write failed.
+// cancelled, when the scorer cannot run (ErrQualityUnavailable), when
+// inference or the database write failed, or when the preview could not be
+// read while FailureGuard reports the folder unreachable
+// (pipeline.ErrFolderUnavailable).
 func (q *QualityScorer) Score(ctx context.Context, item store.QualityItem) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	img, reason := q.loadScoringImage(item)
+	img, reason, readFailed := q.loadScoringImage(item)
 	if img == nil {
+		if readFailed {
+			if err := unavailable(q.FailureGuard, fmt.Errorf("quality: file %d: %s", item.FileID, reason)); err != nil {
+				return err
+			}
+		}
 		slog.Warn("quality: photo cannot be rated", "file_id", item.FileID, "reason", reason)
 		_, err := q.store.Files().SetQuality(item.FileID, item.ContentHash, sql.NullFloat64{}, QualityScorerID)
 		return err
@@ -193,7 +202,7 @@ func (q *QualityScorer) Score(ctx context.Context, item store.QualityItem) error
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		v, err := q.inferCrop(cropTensor(img, r))
+		v, err := q.inf.QualityCrop(cropTensor(img, r))
 		if err != nil {
 			return err
 		}
@@ -208,71 +217,28 @@ func (q *QualityScorer) Score(ctx context.Context, item store.QualityItem) error
 }
 
 // loadScoringImage returns the image the crops are taken from, or nil and
-// the reason the photo cannot be rated.
-func (q *QualityScorer) loadScoringImage(item store.QualityItem) (image.Image, string) {
+// the reason the photo cannot be rated; readFailed is set when that reason
+// is that the preview could not be found, read or decoded.
+func (q *QualityScorer) loadScoringImage(item store.QualityItem) (img image.Image, reason string, readFailed bool) {
 	path, err := q.previewPath(item.FileID)
 	if err != nil {
-		return nil, "preview missing: " + err.Error()
+		return nil, "preview missing: " + err.Error(), true
 	}
-	img, err := loadImage(path)
+	img, err = loadImage(path)
 	if err != nil {
-		return nil, "preview unreadable: " + err.Error()
+		return nil, "preview unreadable: " + err.Error(), true
 	}
 	b := img.Bounds()
 	tw, th := qualityTargetSize(b.Dx(), b.Dy(), item.Width.Int64, item.Height.Int64)
 	if min(tw, th) < qualitySide {
 		// Scaling up would only invent blur; leave tiny images and
 		// extreme panoramas unrated.
-		return nil, fmt.Sprintf("too small to rate (%dx%d)", tw, th)
+		return nil, fmt.Sprintf("too small to rate (%dx%d)", tw, th), false
 	}
 	if tw != b.Dx() || th != b.Dy() {
 		dst := image.NewRGBA(image.Rect(0, 0, tw, th))
 		draw.CatmullRom.Scale(dst, dst.Bounds(), img, b, draw.Src, nil)
 		img = dst
 	}
-	return img, ""
-}
-
-// inferCrop runs one crop through the model. The mutex serialises inference
-// and guards the lazily created session, so Close cannot destroy a session
-// that is mid-run.
-func (q *QualityScorer) inferCrop(input []float32) (float64, error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.infer != nil {
-		return q.infer(input)
-	}
-	if q.sess == nil {
-		path := q.models.Path(ModelQuality)
-		slog.Info("loading quality model session", "model", path)
-		start := time.Now()
-		s, err := NewSession(path)
-		if err != nil {
-			slog.Warn("quality model session load failed", "model", path, "err", err)
-			return 0, fmt.Errorf("%w: %v", ErrQualityUnavailable, err)
-		}
-		q.sess = s
-		slog.Info("quality model session ready", "elapsed_ms", time.Since(start).Milliseconds())
-	}
-	out, err := q.sess.Run(input, []int64{1, 3, qualitySide, qualitySide})
-	if err != nil {
-		return 0, fmt.Errorf("quality inference: %w", err)
-	}
-	if len(out) != 1 {
-		return 0, fmt.Errorf("quality output len=%d, want 1", len(out))
-	}
-	return float64(out[0]), nil
-}
-
-// Close releases the ONNX session. Safe to call more than once; waits for
-// an in-flight inference to finish.
-func (q *QualityScorer) Close() error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.sess == nil {
-		return nil
-	}
-	err := q.sess.Close()
-	q.sess = nil
-	return err
+	return img, "", false
 }

@@ -1,0 +1,31 @@
+/* The parity self-test's fixture styles (parity-states.tsx). A stylesheet
+   rather than inline styles, so the build's PostCSS pipeline gives the
+   :hover rule its data-force twin, as it does for every design component. */
+.fx-parity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px;
+}
+
+.fx-parity-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fx-parity-row {
+  padding: 4px 12px;
+}
+
+.fx-parity-tile {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background-color: rgb(42, 42, 42);
+  color: rgb(238, 238, 238);
+}
+
+.fx-parity-tile:hover {
+  background-color: rgb(64, 64, 64);
+}

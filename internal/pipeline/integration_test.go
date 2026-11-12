@@ -3,20 +3,21 @@ package pipeline_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/volodymyrsmirnov/choix/internal/deps"
 	"github.com/volodymyrsmirnov/choix/internal/group"
 	"github.com/volodymyrsmirnov/choix/internal/meta"
 	"github.com/volodymyrsmirnov/choix/internal/pipeline"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
 	"github.com/volodymyrsmirnov/choix/internal/scanner"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
@@ -82,26 +83,6 @@ func (a *stubAnalyzer) Analyze(ctx context.Context, fileID int64) error {
 // Helpers.
 // ---------------------------------------------------------------------------
 
-// requireTools skips the test if exiftool is not in $PATH. ffmpeg is
-// optional — videos are skipped if ffmpeg is absent, but photos still run.
-func requireExiftool(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("exiftool")
-	if err != nil {
-		t.Skip("exiftool not installed — skipping integration test")
-	}
-	return p
-}
-
-// ffmpegPath returns the ffmpeg path if available, or "" if not.
-func ffmpegPath() string {
-	p, err := exec.LookPath("ffmpeg")
-	if err != nil {
-		return ""
-	}
-	return p
-}
-
 // setupCorpus copies up to n regular media files from src into dst,
 // preserving filenames in the flat root. Returns the destination root.
 func setupCorpus(t *testing.T, src string, n int) string {
@@ -161,8 +142,7 @@ func openTestStore(t *testing.T, root string) *store.Store {
 	if err := os.MkdirAll(dbDir, 0o750); err != nil {
 		t.Fatalf("mkdir .choix: %v", err)
 	}
-	dsn := "file:" + filepath.Join(dbDir, "state.db") + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	st, err := store.Open(dsn)
+	st, err := store.Open(filepath.Join(dbDir, "state.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
@@ -170,24 +150,17 @@ func openTestStore(t *testing.T, root string) *store.Store {
 	return st
 }
 
-func buildPipeline(t *testing.T, st *store.Store, root, exiftoolBin string) *pipeline.Pipeline {
+func buildPipeline(t *testing.T, st *store.Store, root string) *pipeline.Pipeline {
 	t.Helper()
 
-	etool := meta.New(exiftoolBin)
-	mx := meta.NewExtractor(etool, st, root)
-
-	var ffRunner *deps.Runner
-	if fp := ffmpegPath(); fp != "" {
-		ffRunner = deps.NewRunner(fp)
-	} else {
-		ffRunner = &deps.Runner{Path: "ffmpeg"} // will fail gracefully for video files
-	}
+	// Metadata and thumbnails come from ImageIO and AVFoundation in-process.
+	mx := meta.NewExtractor(&meta.NativeReader{Stills: imageio.New(), Video: avmedia.New()}, st, root)
 
 	tb := &thumb.Builder{
 		ScanRoot: root,
-		ExifTool: etool,
-		Ffmpeg:   ffRunner,
 		Store:    st,
+		Stills:   imageio.New(),
+		Video:    avmedia.New(),
 	}
 
 	var an pipeline.AnalyzeProcessor = &stubAnalyzer{s: st}
@@ -232,14 +205,13 @@ func TestPipelineEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration: skipped under -short")
 	}
-	exiftoolBin := requireExiftool(t)
 
 	src := corpusSrc(t)
 	root := setupCorpus(t, src, 5)
 	st := openTestStore(t, root)
 
 	prog := make(chan pipeline.Progress, 64)
-	p := buildPipeline(t, st, root, exiftoolBin)
+	p := buildPipeline(t, st, root)
 	p.Reporter = pipeline.NewReporter(prog)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -301,7 +273,6 @@ func TestPipelineEndToEndCancelLeavesConsistentState(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration: skipped under -short")
 	}
-	exiftoolBin := requireExiftool(t)
 
 	src := corpusSrc(t)
 	root := setupCorpus(t, src, 5)
@@ -315,7 +286,7 @@ func TestPipelineEndToEndCancelLeavesConsistentState(t *testing.T) {
 		}
 	}()
 
-	p := buildPipeline(t, st, root, exiftoolBin)
+	p := buildPipeline(t, st, root)
 	p.Reporter = pipeline.NewReporter(prog)
 	p.BatchSize = 1
 
@@ -346,4 +317,67 @@ func TestPipelineEndToEndCancelLeavesConsistentState(t *testing.T) {
 		}
 	}
 	close(prog)
+}
+
+// cancelThenBuild cancels the run while the thumb stage is working on a
+// file, then lets the real builder see the cancelled context.
+type cancelThenBuild struct {
+	cancel context.CancelFunc
+	b      *thumb.Builder
+}
+
+func (c *cancelThenBuild) Build(ctx context.Context, fileID int64) error {
+	c.cancel()
+	return c.b.Build(ctx, fileID)
+}
+
+// A file interrupted by cancellation stays at its current status, so the
+// next run resumes it; neither the store nor the progress stream reports it
+// as failed. No external tool runs: every invocation sees a cancelled ctx.
+func TestPipelineCancelMidStageLeavesFilePending(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.jpg"), []byte("not decoded"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	st := openTestStore(t, root)
+	id, err := st.Files().Insert(store.File{
+		Path: "a.jpg", Size: 11, Mtime: 1, ContentHash: "h", Kind: "photo", Format: "jpeg", ScanStatus: "metadata",
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prog := make(chan pipeline.Progress, 256)
+	p := &pipeline.Pipeline{
+		Store:         &storeIDLister{s: st},
+		Scanner:       scanner.New(root, st),
+		MetaExtractor: &metaProcessorAdapter{ext: meta.NewExtractor(&meta.NativeReader{Stills: imageio.New(), Video: avmedia.New()}, st, root), root: root, s: st},
+		ThumbBuilder: &cancelThenBuild{cancel: cancel, b: &thumb.Builder{
+			ScanRoot: root, Store: st, Stills: imageio.New(), Video: avmedia.New(),
+		}},
+		Analyzer:    &stubAnalyzer{s: st},
+		Grouper:     group.NewGrouper(st, 600, 0.92, false),
+		Reporter:    pipeline.NewReporter(prog),
+		Concurrency: map[string]int{"metadata": 1, "thumb": 1, "analyze": 1},
+		BatchSize:   100,
+	}
+
+	if err := p.Resume(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Resume = %v, want context.Canceled", err)
+	}
+	close(prog)
+	for ev := range prog {
+		if ev.Failed != 0 {
+			t.Errorf("progress event %+v reports a failure", ev)
+		}
+	}
+	row, err := st.Files().GetByID(id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if row.ScanStatus != "metadata" || row.ErrMsg.Valid {
+		t.Fatalf("after cancel: scan_status=%q error=%+v; want 'metadata' and no error (resumable)", row.ScanStatus, row.ErrMsg)
+	}
 }

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,6 +75,34 @@ func TestPoolCancellationStopsWorkers(t *testing.T) {
 	}
 }
 
+func TestPoolFolderUnavailableStopsWithoutCounting(t *testing.T) {
+	ids := make([]int64, 50)
+	for i := range ids {
+		ids[i] = int64(i + 1)
+	}
+	var calls int32
+	fn := func(_ context.Context, id int64) error {
+		atomic.AddInt32(&calls, 1)
+		if id == 1 {
+			return fmt.Errorf("thumb: %w", ErrFolderUnavailable)
+		}
+		return nil
+	}
+	var fails int32
+	_, fail, err := RunPoolWithProgress(context.Background(), 1, ids, fn, func(_, f int) {
+		atomic.AddInt32(&fails, int32(f)) //nolint:gosec // 0 or 1
+	})
+	if !errors.Is(err, ErrFolderUnavailable) {
+		t.Fatalf("err = %v, want ErrFolderUnavailable", err)
+	}
+	if fail != 0 || atomic.LoadInt32(&fails) != 0 {
+		t.Errorf("fail = %d (progress %d); a file interrupted by an outage is not a failure", fail, fails)
+	}
+	if n := atomic.LoadInt32(&calls); n >= int32(len(ids)) {
+		t.Errorf("calls = %d; the pool did not stop", n)
+	}
+}
+
 func TestPoolEmptyInput(t *testing.T) {
 	ok, fail, err := RunPool(context.Background(), 4, nil, func(context.Context, int64) error {
 		t.Fatal("must not be called")
@@ -81,6 +110,41 @@ func TestPoolEmptyInput(t *testing.T) {
 	})
 	if err != nil || ok != 0 || fail != 0 {
 		t.Errorf("RunPool nil = %d/%d/%v, want 0/0/nil", ok, fail, err)
+	}
+}
+
+// A processor can report a (wrapped) context error while the pool's own
+// context is still live — e.g. from a context it derived itself. That is an
+// interruption, not a failure of the file: it is not counted, the pool
+// aborts, and the error is returned.
+func TestPoolContextErrorWithLiveParentAbortsWithoutFailure(t *testing.T) {
+	for _, ctxErr := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(ctxErr.Error(), func(t *testing.T) {
+			ids := make([]int64, 50)
+			for i := range ids {
+				ids[i] = int64(i + 1)
+			}
+			var processed, failDeltas int32
+			fn := func(_ context.Context, id int64) error {
+				atomic.AddInt32(&processed, 1)
+				if id == 3 {
+					return fmt.Errorf("thumb: tier1: %w", ctxErr)
+				}
+				return nil
+			}
+			onProgress := func(_, failDelta int) { atomic.AddInt32(&failDeltas, int32(failDelta)) }
+
+			_, fail, err := RunPoolWithProgress(context.Background(), 1, ids, fn, onProgress)
+			if !errors.Is(err, ctxErr) {
+				t.Fatalf("err = %v, want %v", err, ctxErr)
+			}
+			if fail != 0 || atomic.LoadInt32(&failDeltas) != 0 {
+				t.Fatalf("fail = %d, progress fail deltas = %d; want 0/0", fail, failDeltas)
+			}
+			if n := atomic.LoadInt32(&processed); n >= int32(len(ids)) {
+				t.Fatalf("processed = %d, want the pool to abort well short of %d", n, len(ids))
+			}
+		})
 	}
 }
 

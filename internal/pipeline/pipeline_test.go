@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -267,5 +268,146 @@ func TestPipelineNoProgressBreaks(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no progress") {
 		t.Errorf("error = %q; want it to contain 'no progress'", err.Error())
+	}
+}
+
+func TestPipeline_Pending(t *testing.T) {
+	st := &fakeStore{byStatus: map[string][]int64{
+		"discovered": {1, 2},
+		"metadata":   {3},
+		"thumbed":    {4, 5, 6},
+		"analyzed":   {7, 8, 9, 10},
+	}}
+	p := &Pipeline{Store: st}
+	n, err := p.Pending(context.Background())
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if n != 6 {
+		t.Fatalf("Pending = %d, want 6 (2 discovered + 1 metadata + 3 thumbed)", n)
+	}
+}
+
+// cancellingProcessor cancels the run's context while processing a file and
+// returns the context's error, as a stage interrupted mid-file does.
+type cancellingProcessor struct{ cancel context.CancelFunc }
+
+func (c *cancellingProcessor) Process(ctx context.Context, _ int64) error {
+	c.cancel()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// unavailableProcessor answers ErrFolderUnavailable, as a processor whose
+// failure guard found the folder gone does.
+type unavailableProcessor struct{ calls int32 }
+
+func (u *unavailableProcessor) Process(context.Context, int64) error {
+	atomic.AddInt32(&u.calls, 1)
+	return fmt.Errorf("read metadata: %w", ErrFolderUnavailable)
+}
+
+func TestPipeline_FolderUnavailableStopsTheRun(t *testing.T) {
+	st := &fakeStore{byStatus: map[string][]int64{
+		"discovered": {1, 2, 3},
+	}}
+	prog := make(chan Progress, 256)
+	grp := &fakeGrouper{}
+	meta := &unavailableProcessor{}
+	thumbs := &fakeProcessor{}
+	p := &Pipeline{
+		Store:         st,
+		Scanner:       &fakeScanner{},
+		MetaExtractor: meta,
+		ThumbBuilder:  thumbs,
+		Analyzer:      &fakeProcessor{},
+		Grouper:       grp,
+		Reporter:      NewReporter(prog),
+		Concurrency:   map[string]int{"metadata": 1, "thumb": 1, "analyze": 1},
+		BatchSize:     100,
+	}
+
+	err := p.Run(context.Background())
+	if !errors.Is(err, ErrFolderUnavailable) {
+		t.Fatalf("Run = %v, want ErrFolderUnavailable", err)
+	}
+	if n := atomic.LoadInt32(&meta.calls); n != 1 {
+		t.Errorf("metadata calls = %d, want 1 (the stage stops at the first outage)", n)
+	}
+	if atomic.LoadInt32(&grp.called) != 0 {
+		t.Errorf("grouper called after the folder became unavailable: %d", grp.called)
+	}
+	close(prog)
+	for ev := range prog {
+		if ev.Failed != 0 {
+			t.Errorf("progress event %+v reports a failure; an outage is not a file failure", ev)
+		}
+	}
+}
+
+// An outage found by the discover stage (the scanner's walk) ends the run
+// with ErrFolderUnavailable — which the folder job reads as "suspended", not
+// "failed" — and no later stage runs.
+func TestPipeline_DiscoverFolderUnavailableStopsTheRun(t *testing.T) {
+	st := &fakeStore{byStatus: map[string][]int64{"discovered": {1, 2}}}
+	grp := &fakeGrouper{}
+	meta := &fakeProcessor{}
+	p := &Pipeline{
+		Store:         st,
+		Scanner:       &fakeScanner{err: fmt.Errorf("scanner: %w: /Volumes/X: no such file or directory", ErrFolderUnavailable)},
+		MetaExtractor: meta,
+		ThumbBuilder:  &fakeProcessor{},
+		Analyzer:      &fakeProcessor{},
+		Grouper:       grp,
+		Reporter:      NewReporter(make(chan Progress, 256)),
+		Concurrency:   map[string]int{"metadata": 1, "thumb": 1, "analyze": 1},
+	}
+	err := p.Run(context.Background())
+	if !errors.Is(err, ErrFolderUnavailable) || !isCancellation(err) {
+		t.Fatalf("Run = %v, want an error wrapping ErrFolderUnavailable", err)
+	}
+	meta.mu.Lock()
+	n := len(meta.ids)
+	meta.mu.Unlock()
+	if n != 0 {
+		t.Errorf("metadata ran %d times after discovery found the folder unavailable", n)
+	}
+	if atomic.LoadInt32(&grp.called) != 0 {
+		t.Errorf("grouper called after discovery found the folder unavailable")
+	}
+}
+
+func TestPipeline_CancelDoesNotCountAsFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &fakeStore{byStatus: map[string][]int64{
+		"discovered": {1, 2, 3},
+	}}
+	prog := make(chan Progress, 256)
+	grp := &fakeGrouper{}
+	p := &Pipeline{
+		Store:         st,
+		Scanner:       &fakeScanner{},
+		MetaExtractor: &cancellingProcessor{cancel: cancel},
+		ThumbBuilder:  &fakeProcessor{},
+		Analyzer:      &fakeProcessor{},
+		Grouper:       grp,
+		Reporter:      NewReporter(prog),
+		Concurrency:   map[string]int{"metadata": 1, "thumb": 1, "analyze": 1},
+		BatchSize:     100,
+	}
+
+	err := p.Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled", err)
+	}
+	if atomic.LoadInt32(&grp.called) != 0 {
+		t.Errorf("grouper called despite cancel: %d", grp.called)
+	}
+	close(prog)
+	for ev := range prog {
+		if ev.Failed != 0 {
+			t.Errorf("progress event %+v reports a failure; a cancelled file is not a failed one", ev)
+		}
 	}
 }

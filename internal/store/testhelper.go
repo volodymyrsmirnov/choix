@@ -7,9 +7,7 @@ import (
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	dir := t.TempDir()
-	dsn := "file:" + filepath.Join(dir, "test.db") + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	s, err := Open(dsn)
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -17,8 +15,9 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-// NewTestStore returns an in-memory SQLite store for use in tests outside the
-// store package. The store is automatically closed when the test completes.
+// NewTestStore returns a store backed by a fresh database file in a test
+// temporary directory, for use in tests outside the store package. The store
+// is automatically closed when the test completes.
 func NewTestStore(t *testing.T) *Store {
 	t.Helper()
 	return newTestStore(t)

@@ -1,22 +1,19 @@
+//go:build darwin
+
 package meta
 
 import (
 	"context"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/avmedia"
+	"github.com/volodymyrsmirnov/choix/internal/platform/darwin/imageio"
 	"github.com/volodymyrsmirnov/choix/internal/scanner"
-	"github.com/volodymyrsmirnov/choix/internal/store"
 )
 
 func TestScannerMetadataPipeline(t *testing.T) {
-	exiftoolPath, err := exec.LookPath("exiftool")
-	if err != nil {
-		t.Skip("exiftool not installed")
-	}
-
 	root, err := filepath.Abs("../../testdata/exif/integration")
 	if err != nil {
 		t.Fatalf("abs: %v", err)
@@ -29,10 +26,10 @@ func TestScannerMetadataPipeline(t *testing.T) {
 		t.Fatalf("scanner.Walk: %v", err)
 	}
 
-	// Phase 4 extractor: process every "discovered" row. Scanner stores
-	// paths relative to root; ProcessByStatus joins them with this root
-	// before invoking exiftool.
-	ext := NewExtractor(New(exiftoolPath), s, root)
+	// Phase 4 extractor: process every "discovered" row through ImageIO and
+	// AVFoundation. Scanner stores paths relative to root; ProcessByStatus
+	// joins them with this root before reading.
+	ext := NewExtractor(&NativeReader{Stills: imageio.New(), Video: avmedia.New()}, s, root)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	n, err := ext.ProcessByStatus(ctx, "discovered", 100)
@@ -68,6 +65,4 @@ func TestScannerMetadataPipeline(t *testing.T) {
 			t.Errorf("%s: raw_exif empty", f.Path)
 		}
 	}
-
-	_ = store.File{} // ensure import is used even if struct already referenced
 }

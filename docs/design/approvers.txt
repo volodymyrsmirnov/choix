@@ -1,0 +1,2 @@
+# Design approvers: one git email per line.
+volodymyr@smirnov.im
