@@ -148,8 +148,11 @@ New package `internal/analyze` replaces the analyzer in `internal/ai/local`:
 // another id are pending again.
 const PrintID = "vnfp-r2/fill/preview/v1"
 
-// Printer makes the feature print of the image at path. A nil Printer means
-// prints are not computed.
+// ErrPrintsOff is what a Printer answers while visual grouping is off.
+var ErrPrintsOff = errors.New("analyze: visual grouping is off")
+
+// Printer makes the feature print of the image at path. A nil Printer, or
+// one answering ErrPrintsOff, means prints are not computed.
 type Printer interface {
 	Print(ctx context.Context, path string) ([]float32, error)
 }
@@ -159,11 +162,11 @@ func (a *Analyzer) Analyze(ctx context.Context, fileID int64, previewPath string
 ```
 
 - The stage reads the **preview tier** (`thumb.TierPreview`, at most 1600 px), not the thumb tier. That is the input the benchmark measured. For a video it is the preview made from the first keyframe, as today.
-- The session's printer wraps `platform.Vision` and answers "off" while `visual_grouping` is off, exactly as `sessionGatedEmbedder` does today.
+- The session's printer wraps `platform.Vision` and answers `analyze.ErrPrintsOff` while `visual_grouping` is off, read live for every file, as `sessionGatedEmbedder` does today.
 - `Analyze` L2-normalises the vector before storing it and rejects a vector whose length is not `platform.FeaturePrintLen` or whose norm is zero or not finite.
 - Outcomes, each ending with the file `analyzed` unless noted:
   - print made: store it with `PrintID`;
-  - `visual_grouping` off or no printer: store nothing, leave the row unstamped;
+  - no printer, or the printer answers `ErrPrintsOff` (checked before any other error): store nothing, leave the row unstamped, so the file is pending when grouping is switched on;
   - Vision failed on a readable preview: store a NULL print **stamped with `PrintID`**, so the file is not retried on every job, and log it;
   - cancelled, or the folder is unreachable: leave the row as it was; an unreachable folder is `pipeline.ErrFolderUnavailable`, as today;
   - the preview cannot be read while the folder is reachable: the file is `failed` with the error text, as today.
@@ -189,14 +192,16 @@ PRAGMA user_version = 7;
   - `AllPrints(printID string) (map[int64][]float32, error)`: rows with a non-NULL print and that id;
   - `CountAnalyzedMissingPrint(printID)` and `BumpAnalyzedMissingPrint(printID)`: analyzed files with no `ai_signals` row, or with `vision_print_id` NULL or different. They replace the two `…MissingEmbedding` methods.
 - A stored blob whose length is not 3,072 bytes is treated as no print.
+- **A changed file loses its print.** `UpsertOnRescan` clears `vision_print` and `vision_print_id` in the same statement that clears the quality rating when a file's content changed. Without that, a file changed while grouping was off would keep a print of its old content under the current id. Picks are untouched.
 
 ### 5.4 Clustering
 
-`internal/group/visual.go` `Cluster(prints map[int64][]float32, threshold float64) [][]int64` becomes **complete-link**:
+`internal/group/visual.go` `Cluster(ctx context.Context, prints map[int64][]float32, threshold float64) ([][]int64, error)` becomes **complete-link**:
 
 - Similarity is the dot product of two unit vectors.
 - Start with every id alone. Repeatedly merge the two clusters with the highest linkage, where a pair's linkage is the **lowest** similarity between any member of one and any member of the other, while that linkage is **strictly greater** than the threshold. A tie in linkage goes to the pair whose smaller minimum id is smaller, then whose other minimum id is smaller.
 - Output ordering is unchanged: members ascending, clusters by smallest member.
+- **It is cancellable.** It checks `ctx` at least once per row of the similarity matrix and once per merge, and returns `ctx.Err()` within a second of cancellation. The grouper commits a bucket's clusters only after `Cluster` has returned without error, so a cancelled rebuild replaces nothing.
 - Any implementation that returns exactly these groups is acceptable. It must handle a bucket of 2,000 prints in under 5 s on the development machine, and a property test compares it with a naive version of the rule above on random inputs.
 - A bucket with more than 4,000 printed files is clustered in consecutive windows of 4,000 in the bucket's time order **[call]**, to bound memory at one similarity matrix of 4,000². Groups never span two windows.
 
@@ -230,7 +235,8 @@ Everything else in `internal/group` keeps its behaviour: time buckets, files wit
 - Input: the preview tier JPEG, decoded with Go's `image/jpeg`. A preview whose shorter side is under 384 px is unrated (NULL score stamped with the scorer id), as today.
 - Storage is unchanged: `files.quality_raw`, `files.quality_model`. No migration.
 - The pass runs where it runs today (last step of a folder job, when `quality_rating` is on). Nothing waits for a model. `jobScorer` no longer takes an inference turn. `local.ErrQualityUnavailable` and `Pass.IsUnavailable` are deleted.
-- Only "this photo can never be rated" is stamped with NULL. Cancellation, a disabled setting and database errors leave the row pending. Three consecutive failures stop the pass with the `error` state, as today.
+- Only "this photo can never be rated" is stamped with NULL. Cancellation, a disabled setting, an unreachable folder and database errors leave the row pending.
+- Three consecutive failures still stop a pass; the photos stay pending for the next one and nothing is shown, which is today's rule for failures of single photos. The quality status's `error` state is **removed** **[call]**: its only source was the model failing to open.
 
 ### 6.2 The formula
 
@@ -247,6 +253,8 @@ All arithmetic in float64.
    `raw = 3·ln(dn_1) + 3·ln(dn_2) − ln(noise + 1e-4) − midgrey_ev − 10·clip_hi`
 
 `files.quality_raw` stores `raw`. Changing any step, constant or weight **must** bump `quality.ScorerID`.
+
+`Measure` reports "not measurable" (all features zero, `ok` false) for a working copy with a side under 16 px, where the interior of step 3 would be empty. The scorer never reaches that case: it leaves a preview under 384 px on its short side unrated first.
 
 ### 6.3 Reference values
 
@@ -279,7 +287,7 @@ The badge keeps today's look and rules (a value shows only when `quality_model` 
 
 ### 6.5 Status
 
-`events.Quality` loses `received` and `size`, and the states `downloading` and `download_failed`. The remaining states are `disabled`, `waiting`, `scoring`, `idle`, `error`. `QualityOptions.Model` is deleted.
+`events.Quality` loses `received`, `size` and `error`, and the states `downloading`, `download_failed` and `error`. The remaining states are `disabled`, `waiting`, `scoring`, `idle`. `QualityOptions.Model` and the tracker's last-error text are deleted. The tracker stops producing the removed states in phase A; the payload fields themselves go in phase B (§9.3).
 
 ## 7. What is removed
 
@@ -287,11 +295,12 @@ The badge keeps today's look and rules (a value shows only when `quality_model` 
 
 - `internal/ai/local/` (whole package, with `testdata/`).
 - `internal/app/inference/` (whole package).
-- `internal/app/models/` (whole package): the download manager and the `Models` binding.
+- `internal/app/models/` (whole package): the download manager and the `Models` binding. The manager goes in phase A; the binding is reduced to a compatibility shim in phase A and deleted in phase B (§9.3).
 - `internal/app/session/inference.go`; in `job.go` the model-readiness plumbing (`ModelState`, `JobOptions.Models`, `ready`); in `quality.go` the download states.
 - `appdir.Models()`. A new `appdir.LegacyModels()` returns the old path without creating it (§11).
+- `appdir.BundleFrameworksDir()`, its Objective-C bridge, `bundleFrameworksDir` and their tests: their only user was the ONNX Runtime lookup.
 - In `internal/app/runtime`: `Deps.Downloader`, `Deps.CPUOnly`, `Deps.Embedder`, `Deps.CropInferer`, the model manager, the engine, `modelEnabled`, `modelStatus`, `onModelDownloaded`, the shutdown steps for models and inference, and the model part of `Idle()`.
-- `events.ModelsProgress`, `events.ModelStatus`, and their registration in `cmd/choix/events.go`.
+- `events.ModelsProgress`, `events.ModelStatus`, and their registration in `cmd/choix/events.go` (phase B: the unchanged app code still imports their generated types in phase A).
 - `go.mod`: `github.com/yalue/onnxruntime_go`, and `golang.org/x/image` if nothing imports it after the change (`go mod tidy` decides).
 
 **Build, CI, release**
@@ -306,8 +315,10 @@ The badge keeps today's look and rules (a value shows only when `quality_model` 
 
 ## 8. Bindings and events
 
+The end state, reached in phase B (§9.3):
+
 - `cmd/choix` registers four services: `Library`, `Catalog`, `Settings`, `System`; `Media` stays mounted at `/media`.
-- `Models.Status` and `Models.Retry` are deleted. `Models.Quality` becomes **`Catalog.QualityStatus() (events.Quality, error)`**.
+- `Models.Status` and `Models.Retry` are deleted. `Models.Quality` becomes **`Catalog.QualityStatus() (events.Quality, error)`** (added in phase A, next to the shim).
 - Events: `models:progress` is deleted. `quality:status` stays with the slimmer payload (§6.5). `folder:changed` reasons are unchanged.
 - `task bindings` regenerates `frontend/bindings`; the generated `models` service directory disappears.
 - `Runtime.Idle()` and `testsupport.WaitIdle` no longer consider downloads.
@@ -321,36 +332,44 @@ The UI loses everything that exists to show a download. Nothing new is added.
 - **Deleted components:** `ModelRow`, `ModelBanner`, `SettingsModelCard`, the whole `screens/welcome/` screen.
 - **Library:** with no folders it shows the existing "Empty (drop zone)" state as soon as the list has loaded. The props `models`, `online`, `onRetryModel`, `onToggleModel` are deleted.
 - **Folder:** `FolderGrouping` becomes `'visual' | 'time-off'`. The two time-only notices about a model download are deleted.
-- **Settings:** the two model cards and the `models`, `retrying`, `onRetryModel`, `onRetryQuality` props are deleted. The status line under Quality rating no longer has download states.
-- **Quality indicator:** the `downloading` and `download_failed` variants and their copy are deleted.
+- **Settings:** the two model cards and the `models`, `retrying`, `onRetryModel`, `onRetryQuality` props are deleted. The status line under Quality rating no longer has download or error states.
+- **Quality indicator:** the `downloading`, `download_failed` and `error` variants and their copy are deleted. The Library title bar shows no quality indicator any more (its only case was the error).
 - **Types:** `ModelStatus` is deleted; `QualityState` and `QualityStatus` follow §6.5; `DEFAULTS.similarity` is 0.90.
 - **Copy** **[call]**, exact strings:
   - Visual grouping hint: "Group shots that look alike, using Apple’s on-device image analysis. Nothing is downloaded and nothing leaves this Mac. Off: folders are grouped by time only."
   - Visual similarity hint: "How alike two shots in the same time group must look to share a cluster. Only takes effect with visual grouping on; without it, each time group is one cluster."
   - Quality rating hint: "Show a 0–10 technical-quality rating (sharpness, noise, exposure) on every photo, to tell near-identical frames apart. Advisory only: it never picks, rejects or reorders. It compares frames of the same scene; it does not rank different scenes."
   - Quality status when off: "Off: no ratings."
-  - The mock rating error in state 514 becomes "the database is busy".
 
 ### 9.2 States
 
-- **Retired** (scenario deleted, number added to `docs/design/retired.json` and the change file's `retired:`): 11, 12, 13, 14, 15, 16, 17, 112, 120, 216, 228, 505, 506, 515, 516, 517.
-- **Changed:** every state whose rendered tree changes. At least the Settings states that show the Grouping or Quality section (500, 507, 514, 518 and their neighbours) and the gallery states 803, 805 and 807. The exact list is whatever `task design:snapshot` re-hashes; all of it goes into the change file's `states:`.
-- `frontend/tools/state-inventory.ts` drops the "No. 10, both models downloading" not-a-state entry; `frontend/tools/flows/welcome.ts` and the model parts of `flows/settings.ts` are deleted.
+- **Retired** (scenario deleted, number added to `docs/design/retired.json` and the change file's `retired:`): 11, 12, 13, 14, 15, 16, 17, 112, 120, 216, 228, 505, 506, 514, 515, 516, 517. Seventeen states.
+- **Changed:** every state whose rendered tree changes. Every Settings state and most Folder states re-hash even where the pixels are the same, because `SettingsScreen.tsx` and `FolderScreen.tsx` are hashed into them (`frontend/src/design/measured.ts`); so do the gallery states 803, 805 and 807. The exact list is whatever `task design:snapshot` re-hashes; all of it goes into the change file's `states:`.
+- `frontend/tools/state-inventory.ts` drops the "No. 10, both models downloading" not-a-state entry. `frontend/tools/flows/welcome.ts` is rewritten around the states that remain in its group (30–37, 40): every group with states needs a flow. The model parts of `flows/settings.ts` are deleted.
 - `docs/design/gate.json` is not changed.
 
-### 9.3 Order of work under the design gate
+### 9.3 Two phases under the design gate
 
-The owner asked for the UI to be implemented and confirmed once, at the end. The gate allows gated edits only while every state is approved at its current hash, so the work is ordered so that it is:
+The gate's rule is design first, the owner's approval, then app code. Gated files (`frontend/src/app/**` and the rest of `docs/design/gate.json`'s `gated` list) are therefore not touched until the owner has approved the changed states. The owner asked to confirm once, at the end, so the work is split in two.
 
-1. **Change file first.** `docs/design/changes/<branch-slug>.md` with `ui: true`, written before anything else.
-2. **Design preparation, no visible change.** In `frontend/src/design/**`, make every download-related prop optional, with the no-download behaviour when it is absent. Scenarios keep passing them, so no rendered tree changes. Run `task design:snapshot`: `state-hashes.json` must differ only in `sourceDigest`. Commit.
-3. **Gated app edits**, while `python3 tools/design/gate.py check --mode edit --assume-changed <path>` passes: the files under `frontend/src/app/**` stop using the `Models` bindings, the `models:progress` event and the optional props, and read the quality status from `Catalog.QualityStatus`. Commit.
-4. **Design and prototype, final.** Delete the optional props, the components, the scenarios; change the copy; retire the states; update the parity cases, fixtures and mock bindings under `frontend/e2e/parity/`. Snapshot, inventory, checks. Commit.
-5. **Review build and links**, then stop for the owner's approval of the changed states. No gated file is touched after step 4.
+**Phase A, unattended. No gated file changes.**
 
-If a hook blocks a gated edit at step 3: do not work around it. Keep a `Models` binding that reports both models `disabled` and an idle quality status, so the unchanged app code keeps working; leave the gated edits and the removal of that shim for after the owner's approval; say so in the pull request.
+- The engine, the build, the documentation, and the design and prototype all reach their final form.
+- The unchanged app code must keep compiling and working against them, so three things stay as compatibility until phase B:
+  1. **A `Models` binding shim.** `internal/app/models` is reduced to a `Service` with the same three methods: `Status()` returns `clip` and `quality` both `ready`; `Retry` does nothing; `Quality()` returns the quality status. No manager, no downloader, no event is emitted. The generated bindings the app imports stay byte-identical; `Catalog.QualityStatus` is added next to them.
+  2. **The event types** `events.ModelStatus`, `events.ModelsProgress` and the `Received`, `Size` and `Error` fields of `events.Quality` stay declared and registered. Nothing sets or emits them.
+  3. **Deprecated design types.** Where the unchanged app code would stop type-checking, the design keeps the name it needs as an optional, ignored, `@deprecated` member: the download props of `LibraryProps` and `SettingsProps`, the four members of `FolderGrouping`, the `ModelStatus` type, the old members of `QualityState`. Nothing renders from them. The test is mechanical: after the design change, `cd frontend && bun run check` passes with no edit to a non-test file under `frontend/src/app/`.
+- With the shim reporting `ready` and the design ignoring the model props, the unchanged app shows the new interface: no welcome panel, no model cards, no download notices.
+- Phase A ends with the review build served, one link per changed state, and the pull request open. CI's `design` job fails with `unapproved` until the owner approves. That is the gate working.
 
-Until the owner approves, CI's `design` job fails with `unapproved`. That is the gate working.
+**Phase B, after the owner has approved and retired the states.**
+
+- The app code under `frontend/src/app/**` drops the `Models` binding, the `models:progress` subscription and the deprecated props, and reads the quality status from `Catalog.QualityStatus`. These edits change wiring only; they render nothing new.
+- The shim, the event types and the deprecated design members are deleted, and the bindings regenerated.
+- The deprecated members are removed only from files that no state hashes: `types.ts` and the `props.ts` files of library, settings and folder. `SettingsScreen.tsx`, `FolderScreen.tsx`, `ClusterList.tsx`, `ClusterStrip.tsx`, `FocusMedia.tsx`, `FocusRail.tsx`, `screens/focus/logic.ts` and `screens/focus/props.ts` are hashed into states (`frontend/src/design/measured.ts`) and must already be final in phase A. After phase B's snapshot, `state-hashes.json` may differ only in `sourceDigest`, so the approvals stand.
+- The full parity suite runs against the approved states.
+
+If the owner asks for a design change instead of approving, phase A's design step is repeated and phase B waits.
 
 ## 10. Self-check, smoke and CI
 
@@ -367,15 +386,16 @@ Existing installs hold about 530 MB of model files in `<data dir>/models/`. On s
 
 - **Unit:** the formula against §6.3; `Display`; complete-link against the naive rule, its ordering, the 4,000 window, a 2,000-print timing bound; the store migration (`wantVersion` 7) and the print methods; the analyzer's five outcomes (§5.2) with the `platformtest` fake; the scorer's unrated and pending rules; `ClusterParams`; config reading ignores `visual_cluster_threshold`.
 - **Platform (darwin):** `vision_test.go` on generated images: length 768, finite, two different images differ, the same image twice is identical, cancellation returns within a second.
-- **Retired:** `internal/retired_test.go` lists `internal/ai/local`, `internal/app/inference`, `internal/app/models`, `build/onnxruntime`, `build/quality-model` as retired paths, drops `internal/ai/local` from `netHTTPAllowed`, and fails on an import of `onnxruntime_go` or the string `onnxruntime` in non-test Go code.
-- **Suites that must pass before the pull request:** `task test`, `task lint`, `task test:smoke`, `task test:frontend`, `task bindings:check`, `task test:e2e`, `task parity`, the design checks of the gate workflow, and `task package` followed by the head-only sandbox smoke (`task smoke:sandbox -- --head-only`).
+- **Retired:** `internal/retired_test.go` lists `internal/ai/local`, `internal/app/inference`, `build/onnxruntime`, `build/quality-model` (phase A) and `internal/app/models` (phase B) as retired paths, drops `internal/ai/local` from `netHTTPAllowed`, and fails on an import of `onnxruntime_go` or the string `onnxruntime` in non-test Go code.
+- **Suites that must pass before the pull request (phase A):** `task test`, `task lint`, `task test:smoke`, `task test:frontend`, `task bindings:check`, `task test:e2e`, the design checks of the gate workflow, and `task package` followed by the head-only sandbox smoke (`task smoke:sandbox -- --head-only`).
+- **Parity.** The parity suite compares the app only with states approved at their current hash, so before the owner's approval it covers the unchanged states only. A phase A run is reported as partial. The full run is part of phase B.
 
 ## 13. Documentation
 
 - **Living documents are rewritten in place** so that none describes ONNX, CLIP, TOPIQ, a model download or CoreML as part of the app: `CLAUDE.md`, `README.md` (including the removal of the TOPIQ licence section), `v2.md`, `docs/release/uat.md`, `docs/release/signing-checklist.md`, `docs/release/sandbox-smoke.md`, and `docs/superpowers/specs/2026-11-11-choix-2-desktop-design.md` (its models section is replaced by a summary of this spec and a link to it).
 - **Historical documents keep their text** and get one line under the title, "Superseded in part by `2026-11-12-builtin-grouping-and-quality-design.md`: the models, ONNX Runtime and the download are gone.": `docs/superpowers/specs/2026-11-11-choix-2-spike-results.md`, `docs/superpowers/plans/2026-11-11-choix-2-engine-and-wails.md`, `docs/superpowers/plans/2026-11-11-design-prototype-and-gate.md`, `docs/plans/2026-11-11-quality-rating.md` **[call]**.
 - `docs/design/inventory.md` is regenerated.
-- After the change, `grep -riE 'onnx|topiq|coreml|hugging ?face'` over tracked files matches only: this spec, its plan, the four historical documents above, `internal/retired_test.go`, and the old design change file `docs/design/changes/feat-choix-2-backend-9051c1.md`. `CLIP` as a word may also remain in names unrelated to the model (`clip.mov`, the CSS clip check).
+- After the change, `grep -riE 'onnx|topiq|coreml|hugging ?face'` over tracked files matches only: this spec, its plan, the four historical documents above, `internal/retired_test.go`, the old design change file `docs/design/changes/feat-choix-2-backend-9051c1.md`, and `internal/app/runtime/legacy.go` with its test (the file names it cleans up, §11). Tests that need "a rating by another scorer" use a made-up id, not the old one. `CLIP` as a word may also remain in names unrelated to the model (`clip.mov`, the CSS clip check).
 
 ## 14. Deferred
 
@@ -393,8 +413,8 @@ Existing installs hold about 530 MB of model files in `<data dir>/models/`. On s
 3. A folder last clustered by a 2.0 build re-clusters after it is opened, without the user doing anything, and its picks are unchanged.
 4. Every rated photo has a `quality_model` of `choix-sne-1024/v1`; a full rating pass over 2,000 photos takes well under the old model's time.
 5. No file in the repository builds, bundles, signs or tests ONNX Runtime or a model.
-6. The prototype shows no download anywhere; the app's parity suite passes against it.
-7. The suites of §12 pass, except CI's `design` job, which waits for the owner's approval.
+6. The prototype shows no download anywhere. After phase B the app's parity suite passes against it, and no file under `frontend/src/app/` or `internal/app/` mentions a model.
+7. The suites of §12 pass. At the end of phase A, CI's `design` job waits for the owner's approval and parity is partial.
 
 ## 16. Calls made without the owner
 
@@ -405,7 +425,8 @@ Existing installs hold about 530 MB of model files in `<data dir>/models/`. On s
 5. No backfill is queued at launch; a folder upgrades when opened or scanned (§5.6).
 6. The badge mapping `(raw + 60) / 2` (§6.4).
 7. The new copy (§9.1), and the Library's empty state replacing the welcome panel.
-8. Gated app edits are made before the design changes, while the gate still passes (§9.3).
+8. The work is split in two phases around the owner's approval, with a compatibility shim in between (§9.3).
 9. Old model files are deleted from the app's data directory at start-up (§11).
 10. Historical documents keep their text under a "superseded" line (§13).
 11. The network entitlement stays until the owner has checked the packaged app without it (§14).
+12. The quality status loses its `error` state, and state 514 is retired with it (§6.1, §9.2).
