@@ -74,7 +74,7 @@ func newGrouper(s *store.Store, bucketSec int64, threshold float64, crossDevice 
 	return g
 }
 
-func TestRebuildBucketCreatesClusters(t *testing.T) {
+func TestRebuildAllCreatesClusters(t *testing.T) {
 	s := store.NewTestStore(t) // exported helper from store package
 	g := newGrouper(s, 600, 0.92, false)
 
@@ -86,17 +86,16 @@ func TestRebuildBucketCreatesClusters(t *testing.T) {
 	id2 := insertAnalyzed(t, s, "b.jpg", "Fuji#A", 700, b)
 	id3 := insertAnalyzed(t, s, "c.jpg", "Fuji#A", 800, c)
 
-	bucket := sql.NullInt64{Int64: 600, Valid: true}
-	if err := g.RebuildBucket(context.Background(), "Fuji#A", bucket); err != nil {
-		t.Fatalf("RebuildBucket: %v", err)
+	if err := g.RebuildAll(context.Background()); err != nil {
+		t.Fatalf("RebuildAll: %v", err)
 	}
 
-	clusters, err := s.Clusters().ListByBucket("Fuji#A", bucket)
+	clusters, err := s.Clusters().ListAll()
 	if err != nil {
-		t.Fatalf("ListByBucket: %v", err)
+		t.Fatalf("ListAll: %v", err)
 	}
 	if len(clusters) != 2 {
-		t.Fatalf("clusters in bucket: got %d want 2", len(clusters))
+		t.Fatalf("clusters: got %d want 2", len(clusters))
 	}
 
 	// Verify membership: one cluster has {id1, id2}, the other has {id3}.
@@ -158,7 +157,7 @@ func insertAnalyzedNoEmbedding(t *testing.T, s *store.Store, path, dev string, c
 // were analyzed with visual grouping off — the bucket should produce one cluster, not N
 // singletons. Time proximity already does the grouping work; without a
 // visual signal saying these are different scenes we trust the bucket.
-func TestRebuildBucketGroupsEmbeddinglessFilesAsOne(t *testing.T) {
+func TestRebuildAllGroupsEmbeddinglessFilesAsOne(t *testing.T) {
 	s := store.NewTestStore(t)
 	g := newGrouper(s, 600, 0.92, false)
 
@@ -166,14 +165,13 @@ func TestRebuildBucketGroupsEmbeddinglessFilesAsOne(t *testing.T) {
 		insertAnalyzedNoEmbedding(t, s, fmt.Sprintf("img%d.heic", i), "Apple iPhone#X", int64(700+i*10))
 	}
 
-	bucket := sql.NullInt64{Int64: 600, Valid: true}
-	if err := g.RebuildBucket(context.Background(), "Apple iPhone#X", bucket); err != nil {
-		t.Fatalf("RebuildBucket: %v", err)
+	if err := g.RebuildAll(context.Background()); err != nil {
+		t.Fatalf("RebuildAll: %v", err)
 	}
 
-	clusters, err := s.Clusters().ListByBucket("Apple iPhone#X", bucket)
+	clusters, err := s.Clusters().ListAll()
 	if err != nil {
-		t.Fatalf("ListByBucket: %v", err)
+		t.Fatalf("ListAll: %v", err)
 	}
 	if len(clusters) != 1 {
 		t.Fatalf("expected 1 fallback cluster for bucket with no embeddings, got %d", len(clusters))
@@ -190,7 +188,7 @@ func TestRebuildBucketGroupsEmbeddinglessFilesAsOne(t *testing.T) {
 // Mixed bucket: some files have embeddings, others don't. Embedding-bearing
 // files cluster by similarity; embeddingless files merge into a single
 // fallback cluster (not one per file).
-func TestRebuildBucketMixedEmbeddingFallback(t *testing.T) {
+func TestRebuildAllMixedEmbeddingFallback(t *testing.T) {
 	s := store.NewTestStore(t)
 	g := newGrouper(s, 600, 0.92, false)
 
@@ -202,14 +200,13 @@ func TestRebuildBucketMixedEmbeddingFallback(t *testing.T) {
 	insertAnalyzedNoEmbedding(t, s, "d.heic", "Fuji#A", 1030)
 	insertAnalyzedNoEmbedding(t, s, "e.heic", "Fuji#A", 1040)
 
-	bucket := sql.NullInt64{Int64: 600, Valid: true}
-	if err := g.RebuildBucket(context.Background(), "Fuji#A", bucket); err != nil {
-		t.Fatalf("RebuildBucket: %v", err)
+	if err := g.RebuildAll(context.Background()); err != nil {
+		t.Fatalf("RebuildAll: %v", err)
 	}
 
-	clusters, err := s.Clusters().ListByBucket("Fuji#A", bucket)
+	clusters, err := s.Clusters().ListAll()
 	if err != nil {
-		t.Fatalf("ListByBucket: %v", err)
+		t.Fatalf("ListAll: %v", err)
 	}
 	// Expected: one cluster {a,b} + one fallback cluster {c,d,e} = 2 clusters.
 	if len(clusters) != 2 {
@@ -229,7 +226,7 @@ func TestRebuildBucketMixedEmbeddingFallback(t *testing.T) {
 	}
 }
 
-func TestRebuildBucketIsIdempotent(t *testing.T) {
+func TestRebuildAllIsIdempotent(t *testing.T) {
 	s := store.NewTestStore(t)
 	g := newGrouper(s, 600, 0.92, false)
 
@@ -238,13 +235,12 @@ func TestRebuildBucketIsIdempotent(t *testing.T) {
 	insertAnalyzed(t, s, "a.jpg", "Fuji#A", 1000, a)
 	insertAnalyzed(t, s, "b.jpg", "Fuji#A", 1100, b)
 
-	bucket := sql.NullInt64{Int64: 600, Valid: true}
 	for i := 0; i < 3; i++ {
-		if err := g.RebuildBucket(context.Background(), "Fuji#A", bucket); err != nil {
-			t.Fatalf("RebuildBucket pass %d: %v", i, err)
+		if err := g.RebuildAll(context.Background()); err != nil {
+			t.Fatalf("RebuildAll pass %d: %v", i, err)
 		}
 	}
-	clusters, _ := s.Clusters().ListByBucket("Fuji#A", bucket)
+	clusters, _ := s.Clusters().ListAll()
 	if len(clusters) != 1 {
 		t.Errorf("expected 1 cluster after repeated rebuilds, got %d", len(clusters))
 	}
@@ -515,61 +511,6 @@ func TestRebuildAllCrossDeviceNoEmbeddingsPerBucketStaySeparate(t *testing.T) {
 	}
 }
 
-// TestWriteBucketIsTransactional verifies that WriteBucket leaves the bucket
-// in a consistent state (fully written) and that the operation is idempotent
-// (calling it twice with the same defs yields the same result, not doubled rows).
-func TestWriteBucketIsTransactional(t *testing.T) {
-	s := store.NewTestStore(t)
-
-	a := normalize([]float32{1.0, 0.0, 0.0, 0.0})
-	b := normalize([]float32{0.0, 1.0, 0.0, 0.0})
-	id1 := insertAnalyzed(t, s, "x1.jpg", "Fuji#A", 1000, a)
-	id2 := insertAnalyzed(t, s, "x2.jpg", "Fuji#A", 1100, b)
-
-	bucket := sql.NullInt64{Int64: 600, Valid: true}
-	defs := []store.ClusterDef{
-		{DeviceKey: "Fuji#A", TimeBucket: bucket, Members: []int64{id1}},
-		{DeviceKey: "Fuji#A", TimeBucket: bucket, Members: []int64{id2}},
-	}
-
-	// First call: creates 2 clusters.
-	if err := s.WriteBucket(context.Background(), "Fuji#A", bucket, defs); err != nil {
-		t.Fatalf("WriteBucket (first): %v", err)
-	}
-	clusters, err := s.Clusters().ListByBucket("Fuji#A", bucket)
-	if err != nil {
-		t.Fatalf("ListByBucket: %v", err)
-	}
-	if len(clusters) != 2 {
-		t.Fatalf("after first WriteBucket: got %d clusters, want 2", len(clusters))
-	}
-
-	// Second call with identical defs: old clusters are deleted atomically,
-	// new ones inserted. The count must still be 2 (not 4 from doubling).
-	if err := s.WriteBucket(context.Background(), "Fuji#A", bucket, defs); err != nil {
-		t.Fatalf("WriteBucket (second): %v", err)
-	}
-	clusters, err = s.Clusters().ListByBucket("Fuji#A", bucket)
-	if err != nil {
-		t.Fatalf("ListByBucket (second): %v", err)
-	}
-	if len(clusters) != 2 {
-		t.Fatalf("after second WriteBucket: got %d clusters, want 2 (no doubling)", len(clusters))
-	}
-
-	// Passing nil defs clears the bucket entirely.
-	if err := s.WriteBucket(context.Background(), "Fuji#A", bucket, nil); err != nil {
-		t.Fatalf("WriteBucket (clear): %v", err)
-	}
-	clusters, err = s.Clusters().ListByBucket("Fuji#A", bucket)
-	if err != nil {
-		t.Fatalf("ListByBucket (clear): %v", err)
-	}
-	if len(clusters) != 0 {
-		t.Fatalf("after clear WriteBucket: got %d clusters, want 0", len(clusters))
-	}
-}
-
 func TestGrouper_WithoutEmbeddingsIsTimeOnly(t *testing.T) {
 	s := store.NewTestStore(t)
 	// Cosine similarity of a and b is 0.1: visually different scenes.
@@ -613,19 +554,6 @@ func TestGrouper_WithoutEmbeddingsIsTimeOnly(t *testing.T) {
 		t.Fatalf("embeddings back on: %d clusters, want 2", got)
 	}
 
-	// RebuildBucket follows the same switch.
-	bucket := sql.NullInt64{Int64: 600, Valid: true}
-	g.UsePrints("")
-	if err := g.RebuildBucket(context.Background(), "Fuji#A", bucket); err != nil {
-		t.Fatalf("RebuildBucket: %v", err)
-	}
-	inBucket, err := s.Clusters().ListByBucket("Fuji#A", bucket)
-	if err != nil {
-		t.Fatalf("ListByBucket: %v", err)
-	}
-	if len(inBucket) != 1 {
-		t.Fatalf("RebuildBucket with embeddings off: %d clusters, want 1", len(inBucket))
-	}
 }
 
 // insertBulk inserts n analyzed files of device dev in one transaction, the
@@ -698,44 +626,6 @@ func TestCluster_LargeBucketIsWindowed(t *testing.T) {
 	}
 	if got, want := clusterSizes(t, s), []int{MaxClusterWindow, 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("cluster sizes = %v; want %v", got, want)
-	}
-}
-
-// RebuildBucket windows in the bucket's time order: the 4,000 earliest
-// frames are one cluster, the latest one is alone, whatever the ids.
-func TestRebuildBucket_IsWindowed(t *testing.T) {
-	s := store.NewTestStore(t)
-	v := normalize([]float32{1, 2, 3, 4})
-	const n = MaxClusterWindow + 1
-	// The first file inserted is the latest shot.
-	ids := insertBulk(t, s, "Cam#1", n, func(i int) int64 { return 100 + int64(n-i) }, v)
-	g := newGrouper(s, 100000, 0.9, false)
-	bucket := sql.NullInt64{Int64: 0, Valid: true}
-	if err := g.RebuildBucket(context.Background(), "Cam#1", bucket); err != nil {
-		t.Fatalf("RebuildBucket: %v", err)
-	}
-	clusters, err := s.Clusters().ListByBucket("Cam#1", bucket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var single []int64
-	sizes := []int{}
-	for _, c := range clusters {
-		members, err := s.ClusterMembers().ListByCluster(c.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		sizes = append(sizes, len(members))
-		if len(members) == 1 {
-			single = members
-		}
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
-	if want := []int{MaxClusterWindow, 1}; !reflect.DeepEqual(sizes, want) {
-		t.Fatalf("cluster sizes = %v; want %v", sizes, want)
-	}
-	if len(single) != 1 || single[0] != ids[0] {
-		t.Fatalf("the cluster of one = %v; want the latest shot %d", single, ids[0])
 	}
 }
 
@@ -828,9 +718,6 @@ func TestRebuild_CancelledKeepsClusters(t *testing.T) {
 		{"per device", false, 3, func(g *Grouper, ctx context.Context) error { return g.RebuildAll(ctx) }},
 		// The skew estimate is the first thing the cross-device rebuild does.
 		{"cross device, in EstimateSkew", true, 1, func(g *Grouper, ctx context.Context) error { return g.RebuildAll(ctx) }},
-		{"one bucket", false, 3, func(g *Grouper, ctx context.Context) error {
-			return g.RebuildBucket(ctx, "Cam#1", sql.NullInt64{Int64: 600, Valid: true})
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := build(t)

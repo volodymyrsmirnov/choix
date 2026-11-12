@@ -25,7 +25,7 @@ const MergedDeviceKey = "*merged*"
 // windows.
 const MaxClusterWindow = 4000
 
-// Grouper rebuilds clusters from analyzed files in a single (device, time-bucket).
+// Grouper rebuilds the clusters of a folder's analyzed files.
 type Grouper struct {
 	s           *store.Store
 	bucketSec   int64
@@ -66,66 +66,6 @@ func (g *Grouper) prints() string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.printID
-}
-
-// RebuildBucket recomputes clusters for the given (device_key, time_bucket).
-// The bucket is clustered like every other path (clusterIDs, in time order)
-// and written only once its clustering succeeded: the delete of old clusters
-// and the insert of new ones happen inside a single transaction (via
-// Store.WriteBucket), so a cancelled or failed rebuild leaves the bucket as it
-// was.
-func (g *Grouper) RebuildBucket(ctx context.Context, deviceKey string, timeBucket sql.NullInt64) error {
-	files, err := g.s.Files().ListAnalyzedInBucket(deviceKey, timeBucket, g.bucketSec)
-	if err != nil {
-		return fmt.Errorf("list bucket files: %w", err)
-	}
-
-	if len(files) == 0 {
-		// No analyzed files in bucket — delete any stale clusters and return.
-		return g.s.WriteBucket(ctx, deviceKey, timeBucket, nil)
-	}
-
-	// The bucket's files in time order, for the windows of clusterIDs.
-	seq := make([]runFile, len(files))
-	for i, f := range files {
-		seq[i] = runFile{ID: f.ID, DeviceKey: deviceKey, CapturedAt: f.CapturedAt}
-	}
-	sortRunFiles(seq)
-	ids := make([]int64, len(seq))
-	for i, f := range seq {
-		ids[i] = f.ID
-	}
-
-	// Gather prints. Files without one (visual grouping was off when they
-	// were analyzed, or Vision could not make one) are merged into the
-	// bucket-level fallback cluster: time proximity already does the
-	// grouping work, so without a visual signal saying these are different
-	// scenes we trust the bucket.
-	embeds := make(map[int64][]float32, len(files))
-	if printID := g.prints(); printID != "" {
-		for _, id := range ids {
-			sig, err := g.s.AISignals().GetByFileID(id)
-			if err == nil && sig.Print != nil && sig.PrintID == printID {
-				embeds[id] = sig.Print
-			}
-		}
-	}
-
-	groups, err := clusterIDs(ctx, ids, embeds, g.threshold)
-	if err != nil {
-		return err
-	}
-
-	defs := make([]store.ClusterDef, 0, len(groups))
-	for _, members := range groups {
-		defs = append(defs, store.ClusterDef{
-			DeviceKey:  deviceKey,
-			TimeBucket: timeBucket,
-			Members:    members,
-		})
-	}
-
-	return g.s.WriteBucket(ctx, deviceKey, timeBucket, defs)
 }
 
 // runFile is the shared in-memory file shape used by both clustering paths.

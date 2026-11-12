@@ -250,20 +250,12 @@ func (c *completeLink) merge(a, b int) {
 		}
 		c.m.set(a, k, math.Min(c.m.get(a, k), c.m.get(b, k)))
 	}
-	for k, on := range c.active {
-		if !on || k == a || c.best[k] != b {
-			continue
-		}
-		// k's best merge was with b. Its merge with a is never better in
-		// similarity; when it is as good, its key is better (a < b), and
-		// it is k's best merge now. Otherwise the old key stays as an
-		// upper bound and k is refreshed when it reaches the top.
-		key := pairKey(c.m.get(a, k), a, k)
-		if key.sim == c.h.key[k].sim {
-			c.best[k] = a
-			c.h.set(k, key)
-		}
-	}
+	// A cluster k whose best partner was b keeps its key, now an upper bound
+	// that is refreshed when it reaches the top: its linkage to a∪b is
+	// strictly below the key. With an exact key, b beat a when k was last
+	// refreshed, and a wins every tie with b (a < b), so the linkage to a
+	// was already strictly lower and linkages never rise; a stale key is
+	// above the linkage to b, which the merged linkage does not exceed.
 	// A cluster whose best partner was a keeps its key: exact when the
 	// linkage to a did not drop, an upper bound otherwise. Every other key
 	// is unchanged, and so is the merge behind it.
