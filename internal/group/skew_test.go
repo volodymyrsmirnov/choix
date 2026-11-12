@@ -1,7 +1,9 @@
 package group
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -26,7 +28,7 @@ func TestEstimateSkewSingleDeviceReturnsEmpty(t *testing.T) {
 		1: normalize([]float32{1, 0, 0, 0}),
 		2: normalize([]float32{1, 0, 0, 0}),
 	}
-	out := EstimateSkew(files, embeds)
+	out := mustSkew(t, files, embeds)
 	if len(out) != 0 {
 		t.Errorf("single device, want empty map; got %v", out)
 	}
@@ -37,7 +39,7 @@ func TestEstimateSkewNoEmbeddingsReturnsEmpty(t *testing.T) {
 		makeFile(1, "iPhone#A", 100),
 		makeFile(2, "X-T5#B", 100),
 	}
-	out := EstimateSkew(files, map[int64][]float32{})
+	out := mustSkew(t, files, map[int64][]float32{})
 	if len(out) != 0 {
 		t.Errorf("no embeddings, want empty map; got %v", out)
 	}
@@ -71,7 +73,7 @@ func TestEstimateSkewRecoversKnownOffset(t *testing.T) {
 		10: v1, 11: v2, 12: v3, 13: v4, 14: v5, 15: v6,
 		20: v1, 21: v2, 22: v3, 23: v4, 24: v5,
 	}
-	out := EstimateSkew(files, embeds)
+	out := mustSkew(t, files, embeds)
 	if got := out["iPhone#A"]; got != 0 {
 		t.Errorf("skew[iPhone] = %d, want 0 (reference, more shots)", got)
 	}
@@ -95,7 +97,7 @@ func TestEstimateSkewBelowMinAnchorsLeavesZero(t *testing.T) {
 		10: v, 11: v, 12: v,
 		20: v, 21: v,
 	}
-	out := EstimateSkew(files, embeds)
+	out := mustSkew(t, files, embeds)
 	if out["X-T5#B"] != 0 {
 		t.Errorf("with %d anchors (< minAnchors), expected offset 0; got %d", 2, out["X-T5#B"])
 	}
@@ -122,7 +124,7 @@ func TestEstimateSkewIgnoresPairsBelowSimilarity(t *testing.T) {
 		10: v1, 11: v1, 12: v1, 13: v1, 14: v1,
 		20: v2, 21: v2, 22: v2, 23: v2, 24: v2,
 	}
-	out := EstimateSkew(files, embeds)
+	out := mustSkew(t, files, embeds)
 	if out["X-T5#B"] != 0 {
 		t.Errorf("no high-similarity pairs, expected offset 0; got %d", out["X-T5#B"])
 	}
@@ -146,7 +148,7 @@ func TestEstimateSkewIgnoresPairsOutsideMaxSkew(t *testing.T) {
 		10: v, 11: v, 12: v, 13: v,
 		20: v, 21: v, 22: v, 23: v,
 	}
-	out := EstimateSkew(files, embeds)
+	out := mustSkew(t, files, embeds)
 	if out["X-T5#B"] != 0 {
 		t.Errorf("pairs outside maxSkewSec, expected offset 0; got %d", out["X-T5#B"])
 	}
@@ -174,11 +176,32 @@ func TestEstimateSkewReferenceIsLargestDevice(t *testing.T) {
 		20: v1, 21: v2, 22: v3, 23: v4, 24: v5,
 		10: v1, 11: v2, 12: v3,
 	}
-	out := EstimateSkew(files, embeds)
+	out := mustSkew(t, files, embeds)
 	if out["X-T5#B"] != 0 {
 		t.Errorf("X-T5 should be reference (offset 0); got %d", out["X-T5#B"])
 	}
 	if got := out["iPhone#A"]; got != 30 {
 		t.Errorf("iPhone offset = %d, want 30", got)
+	}
+}
+
+// mustSkew runs EstimateSkew with a background context.
+func mustSkew(t *testing.T, files []store.File, embeds map[int64][]float32) map[string]int64 {
+	t.Helper()
+	out, err := EstimateSkew(context.Background(), files, embeds)
+	if err != nil {
+		t.Fatalf("EstimateSkew: %v", err)
+	}
+	return out
+}
+
+func TestEstimateSkew_Cancelled(t *testing.T) {
+	v := normalize([]float32{1, 0, 0, 0})
+	files := []store.File{makeFile(1, "iPhone#A", 100), makeFile(2, "X-T5#B", 110)}
+	embeds := map[int64][]float32{1: v, 2: v}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := EstimateSkew(ctx, files, embeds); !errors.Is(err, context.Canceled) {
+		t.Fatalf("EstimateSkew = %v; want context.Canceled", err)
 	}
 }

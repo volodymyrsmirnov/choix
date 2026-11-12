@@ -3,9 +3,15 @@ package group
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
+	"reflect"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -595,5 +601,230 @@ func TestGrouper_WithoutEmbeddingsIsTimeOnly(t *testing.T) {
 	}
 	if len(inBucket) != 1 {
 		t.Fatalf("RebuildBucket with embeddings off: %d clusters, want 1", len(inBucket))
+	}
+}
+
+// insertBulk inserts n analyzed files of device dev in one transaction, the
+// i-th captured at captured(i) and carrying the embedding emb, and returns
+// their ids in insertion order.
+func insertBulk(t *testing.T, s *store.Store, dev string, n int, captured func(i int) int64, emb []float32) []int64 {
+	t.Helper()
+	blob := make([]byte, 4*len(emb))
+	for i, v := range emb {
+		binary.LittleEndian.PutUint32(blob[4*i:], math.Float32bits(v))
+	}
+	ctx := context.Background()
+	tx, err := s.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	ids := make([]int64, n)
+	for i := range n {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO files (path, size, mtime, content_hash, kind, format, device_key, captured_at, scan_status)
+			 VALUES (?, 1, 1, ?, 'photo', 'jpeg', ?, ?, 'analyzed')`,
+			fmt.Sprintf("bulk/%s/%05d.jpg", dev, i), fmt.Sprintf("hash-%s-%d", dev, i), dev, captured(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ids[i], err = res.LastInsertId(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO ai_signals (file_id, clip_embedding) VALUES (?, ?)`, ids[i], blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+// clusterSizes returns the sizes of every cluster, largest first, and the
+// members of each cluster keyed by its smallest member.
+func clusterSizes(t *testing.T, s *store.Store) []int {
+	t.Helper()
+	all, err := s.Clusters().ListAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sizes []int
+	for _, c := range all {
+		ids, err := s.ClusterMembers().ListByCluster(c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes = append(sizes, len(ids))
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
+	return sizes
+}
+
+// A time bucket of more than MaxClusterWindow printed files is clustered in
+// consecutive windows: 4,001 identical frames make a cluster of 4,000 and
+// one of 1.
+func TestCluster_LargeBucketIsWindowed(t *testing.T) {
+	s := store.NewTestStore(t)
+	v := normalize([]float32{1, 2, 3, 4})
+	insertBulk(t, s, "Cam#1", MaxClusterWindow+1, func(i int) int64 { return 1000 + int64(i)/10 }, v)
+	g := NewGrouper(s, 600, 0.9, false)
+	if err := g.RebuildAll(context.Background()); err != nil {
+		t.Fatalf("RebuildAll: %v", err)
+	}
+	if got, want := clusterSizes(t, s), []int{MaxClusterWindow, 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cluster sizes = %v; want %v", got, want)
+	}
+}
+
+// RebuildBucket windows in the bucket's time order: the 4,000 earliest
+// frames are one cluster, the latest one is alone, whatever the ids.
+func TestRebuildBucket_IsWindowed(t *testing.T) {
+	s := store.NewTestStore(t)
+	v := normalize([]float32{1, 2, 3, 4})
+	const n = MaxClusterWindow + 1
+	// The first file inserted is the latest shot.
+	ids := insertBulk(t, s, "Cam#1", n, func(i int) int64 { return 100 + int64(n-i) }, v)
+	g := NewGrouper(s, 100000, 0.9, false)
+	bucket := sql.NullInt64{Int64: 0, Valid: true}
+	if err := g.RebuildBucket(context.Background(), "Cam#1", bucket); err != nil {
+		t.Fatalf("RebuildBucket: %v", err)
+	}
+	clusters, err := s.Clusters().ListByBucket("Cam#1", bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var single []int64
+	sizes := []int{}
+	for _, c := range clusters {
+		members, err := s.ClusterMembers().ListByCluster(c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes = append(sizes, len(members))
+		if len(members) == 1 {
+			single = members
+		}
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(sizes)))
+	if want := []int{MaxClusterWindow, 1}; !reflect.DeepEqual(sizes, want) {
+		t.Fatalf("cluster sizes = %v; want %v", sizes, want)
+	}
+	if len(single) != 1 || single[0] != ids[0] {
+		t.Fatalf("the cluster of one = %v; want the latest shot %d", single, ids[0])
+	}
+}
+
+// countdownCtx is a context that is cancelled by the n-th call of Err:
+// cancellation lands at a chosen check, wherever the clock is.
+type countdownCtx struct {
+	context.Context
+	mu   sync.Mutex
+	left int
+	done chan struct{}
+}
+
+func newCountdownCtx(n int) *countdownCtx {
+	return &countdownCtx{Context: context.Background(), left: n, done: make(chan struct{})}
+}
+
+func (c *countdownCtx) Err() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.left > 0 {
+		c.left--
+		if c.left > 0 {
+			return nil
+		}
+		close(c.done)
+	}
+	return context.Canceled
+}
+
+func (c *countdownCtx) Done() <-chan struct{} { return c.done }
+
+// clusterSnapshot renders the clusters and their members.
+func clusterSnapshot(t *testing.T, s *store.Store) string {
+	t.Helper()
+	ctx := context.Background()
+	var b strings.Builder
+	rows, err := s.DB().QueryContext(ctx, `SELECT id, device_key, IFNULL(time_bucket, -1) FROM clusters ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, bucket int64
+		var dev string
+		if err := rows.Scan(&id, &dev, &bucket); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&b, "c %d %s %d\n", id, dev, bucket)
+	}
+	_ = rows.Close()
+	rows, err = s.DB().QueryContext(ctx, `SELECT cluster_id, file_id FROM cluster_members ORDER BY cluster_id, file_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var c, f int64
+		if err := rows.Scan(&c, &f); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&b, "m %d %d\n", c, f)
+	}
+	_ = rows.Close()
+	return b.String()
+}
+
+// Review Focus 5: a rebuild cancelled while it clusters returns the
+// context's error and leaves the clusters as they were, on every path.
+func TestRebuild_CancelledKeepsClusters(t *testing.T) {
+	r := rand.New(rand.NewPCG(5, 6))
+	build := func(t *testing.T) *store.Store {
+		s := store.NewTestStore(t)
+		for i := range 60 {
+			dev := "Cam#1"
+			if i%2 == 1 {
+				dev = "Cam#2"
+			}
+			insertAnalyzed(t, s, fmt.Sprintf("f%02d.jpg", i), dev, int64(1000+i), randomUnit(r, 8))
+		}
+		// The clusters of an earlier rebuild, per device and per bucket.
+		if err := NewGrouper(s, 600, 0.2, false).RebuildAll(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	for _, tc := range []struct {
+		name    string
+		cross   bool
+		checks  int // the check that cancels
+		rebuild func(g *Grouper, ctx context.Context) error
+	}{
+		{"per device", false, 3, func(g *Grouper, ctx context.Context) error { return g.RebuildAll(ctx) }},
+		// The skew estimate is the first thing the cross-device rebuild does.
+		{"cross device, in EstimateSkew", true, 1, func(g *Grouper, ctx context.Context) error { return g.RebuildAll(ctx) }},
+		{"one bucket", false, 3, func(g *Grouper, ctx context.Context) error {
+			return g.RebuildBucket(ctx, "Cam#1", sql.NullInt64{Int64: 600, Valid: true})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := build(t)
+			before := clusterSnapshot(t, s)
+			g := NewGrouper(s, 600, -0.9, tc.cross)
+			if err := tc.rebuild(g, newCountdownCtx(tc.checks)); !errors.Is(err, context.Canceled) {
+				t.Fatalf("rebuild = %v; want context.Canceled", err)
+			}
+			if after := clusterSnapshot(t, s); after != before {
+				t.Fatalf("clusters changed by a cancelled rebuild:\nbefore\n%s\nafter\n%s", before, after)
+			}
+			// Not cancelled, the same rebuild changes them.
+			if err := tc.rebuild(g, context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if after := clusterSnapshot(t, s); after == before {
+				t.Fatal("the rebuild changed nothing; the test proves nothing")
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package group
 
 import (
+	"context"
 	"sort"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -45,8 +46,9 @@ type skewEntry struct {
 // qualifying pairs get offset 0 (untouched).
 //
 // Returns an empty map if there are zero or one devices with usable
-// embedded files — there's nothing to align.
-func EstimateSkew(files []store.File, embeds map[int64][]float32) map[string]int64 {
+// embedded files — there's nothing to align. The pair search checks ctx once
+// per reference file and returns ctx's error when it is cancelled.
+func EstimateSkew(ctx context.Context, files []store.File, embeds map[int64][]float32) (map[string]int64, error) {
 	byDevice := map[string][]skewEntry{}
 	for _, f := range files {
 		if !f.DeviceKey.Valid || f.DeviceKey.String == "" {
@@ -62,7 +64,7 @@ func EstimateSkew(files []store.File, embeds map[int64][]float32) map[string]int
 		byDevice[dev] = append(byDevice[dev], skewEntry{ID: f.ID, CapturedAt: f.CapturedAt.Int64})
 	}
 	if len(byDevice) < 2 {
-		return map[string]int64{}
+		return map[string]int64{}, nil
 	}
 
 	for _, list := range byDevice {
@@ -86,25 +88,31 @@ func EstimateSkew(files []store.File, embeds map[int64][]float32) map[string]int
 		if d == ref {
 			continue
 		}
-		deltas := pairDeltas(byDevice[ref], byDevice[d], embeds)
+		deltas, err := pairDeltas(ctx, byDevice[ref], byDevice[d], embeds)
+		if err != nil {
+			return nil, err
+		}
 		if len(deltas) < minAnchors {
 			result[d] = 0
 			continue
 		}
 		result[d] = medianInt64(deltas)
 	}
-	return result
+	return result, nil
 }
 
 // pairDeltas returns (other.CapturedAt - ref.CapturedAt) for every pair
 // whose cosine similarity is >= anchorSimilarity and whose raw time
 // difference is within ±maxSkewSec. Both inputs must be sorted ascending
 // by CapturedAt; the implementation slides a forward-only window over
-// `other` as it walks `ref`.
-func pairDeltas(ref, other []skewEntry, embeds map[int64][]float32) []int64 {
+// `other` as it walks `ref`, checking ctx once per ref entry.
+func pairDeltas(ctx context.Context, ref, other []skewEntry, embeds map[int64][]float32) ([]int64, error) {
 	var deltas []int64
 	lo := 0
 	for _, r := range ref {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for lo < len(other) && other[lo].CapturedAt < r.CapturedAt-maxSkewSec {
 			lo++
 		}
@@ -118,13 +126,13 @@ func pairDeltas(ref, other []skewEntry, embeds map[int64][]float32) []int64 {
 			if !ok1 || !ok2 {
 				continue
 			}
-			if cosine(er, eo) < anchorSimilarity {
+			if similarity(er, eo) < anchorSimilarity {
 				continue
 			}
 			deltas = append(deltas, o.CapturedAt-r.CapturedAt)
 		}
 	}
-	return deltas
+	return deltas, nil
 }
 
 // medianInt64 returns the median of xs (xs is mutated by sorting). Caller
