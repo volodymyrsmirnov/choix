@@ -37,4 +37,11 @@ ChoixVisionResult choix_vision_feature_print(const char *path, const void *data,
 // same guard as the entry point above.
 ChoixVisionResult choix_vision_raise_for_test(const char *name);
 
+// choix_vision_raise_after_request_for_test makes choix_vision_feature_print
+// raise an NSException once its request handler and request exist (on != 0),
+// or stops it (on == 0). choix_vision_request_released_for_test reports
+// whether the handler and request of the last such call were deallocated.
+void choix_vision_raise_after_request_for_test(int on);
+int choix_vision_request_released_for_test(void);
+
 #endif

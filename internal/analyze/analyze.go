@@ -75,9 +75,13 @@ func (a *Analyzer) fail(fileID int64, cause error) error {
 //   - no printer, or the printer answers ErrPrintsOff (checked before any
 //     other error): nothing stored, the row unstamped, so the file is
 //     pending when grouping is switched on;
-//   - the printer failed, or returned a vector that is not FeaturePrintLen
+//   - Vision could not read the image (platform.ErrUnreadableImage, the
+//     file's own fault), or returned a vector that is not FeaturePrintLen
 //     finite values with a non-zero norm: a NULL print stamped PrintID, so
 //     the file is not retried on every job;
+//   - any other printer error (the framework's, possibly transient):
+//     nothing stored, the row unstamped, so the next job's backfill tries
+//     the file again;
 //   - ctx ended, or the folder is unreachable: the row is left as it was
 //     (an unreachable folder is pipeline.ErrFolderUnavailable);
 //   - the preview cannot be opened while the folder is reachable: the file
@@ -99,13 +103,18 @@ func (a *Analyzer) Analyze(ctx context.Context, fileID int64, previewPath string
 	case ctx.Err() != nil:
 		return ctx.Err()
 	case err == nil:
-		vec, err = normalise(vec)
-	}
-	if err != nil {
+		if vec, err = normalise(vec); err != nil {
+			slog.Warn("analyze: malformed feature print; stored as none", "file", fileID, "err", err)
+		}
+	default:
 		if uerr := a.unavailable(err); uerr != nil {
 			return uerr
 		}
-		slog.Warn("analyze: no feature print", "file", fileID, "err", err)
+		if !errors.Is(err, platform.ErrUnreadableImage) {
+			slog.Warn("analyze: no feature print; the next job retries", "file", fileID, "err", err)
+			return a.analyzed(fileID)
+		}
+		slog.Warn("analyze: image unreadable by Vision; stored as no print", "file", fileID, "err", err)
 		vec = nil
 	}
 	if err := a.store.AISignals().UpsertPrint(fileID, vec, PrintID); err != nil {

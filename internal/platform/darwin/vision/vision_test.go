@@ -149,6 +149,79 @@ func TestFeaturePrint_DifferentImagesDiffer(t *testing.T) {
 	}
 }
 
+// withOrientation returns the JPEG data with an Exif APP1 segment, right
+// after SOI, whose IFD0 holds one Orientation tag (a little-endian TIFF
+// block, as platformtest's DNG fixtures write their IFDs).
+func withOrientation(t *testing.T, data []byte, orientation uint16) []byte {
+	t.Helper()
+	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+		t.Fatal("not a JPEG")
+	}
+	tiff := []byte{
+		'I', 'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // header, IFD0 at 8
+		0x01, 0x00, // one entry
+		0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, // Orientation, SHORT, count 1
+		byte(orientation), byte(orientation >> 8), 0x00, 0x00, // value
+		0x00, 0x00, 0x00, 0x00, // no next IFD
+	}
+	payload := append([]byte("Exif\x00\x00"), tiff...)
+	n := len(payload) + 2
+	app1 := append([]byte{0xFF, 0xE1, byte(n >> 8), byte(n)}, payload...) //nolint:gosec // n is a few dozen bytes
+	out := append([]byte{0xFF, 0xD8}, app1...)
+	return append(out, data[2:]...)
+}
+
+// asymmetric is a w×h image with no symmetry: a bright block in the top-left
+// corner over a horizontal colour ramp and a vertical luminance ramp.
+func asymmetric(w, h int) *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			c := color.NRGBA{R: uint8(x * 255 / w), G: uint8(y * 200 / h), B: 60, A: 255} //nolint:gosec // every value is in 0..255
+			if x < w/3 && y < h/4 {
+				c = color.NRGBA{R: 250, G: 250, B: 250, A: 255}
+			}
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+// rotateCW returns img turned 90° clockwise: what EXIF orientation 6 asks a
+// viewer to show for stored pixels img.
+func rotateCW(img *image.NRGBA) *image.NRGBA {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewNRGBA(image.Rect(0, 0, h, w))
+	for y := range w {
+		for x := range h {
+			out.Set(x, y, img.At(y, h-1-x))
+		}
+	}
+	return out
+}
+
+// The source's EXIF orientation is applied to the request (orientationOf in
+// vision.m): pixels stored sideways with orientation 6 print like the same
+// pixels stored upright, and unlike the sideways pixels without the tag.
+func TestFeaturePrint_AppliesOrientation(t *testing.T) {
+	stored := asymmetric(320, 240)
+	sideways := encode(t, stored)
+	tagged := mustPrint(t, platform.ImageInput{Data: withOrientation(t, sideways, 6)})
+	upright := mustPrint(t, platform.ImageInput{Data: encode(t, rotateCW(stored))})
+	untagged := mustPrint(t, platform.ImageInput{Data: sideways})
+
+	cos := func(a, b []float32) float64 { return dot(a, b) / (norm(a) * norm(b)) }
+	same, other := cos(tagged, upright), cos(tagged, untagged)
+	t.Logf("cos(oriented, upright) = %.6f, cos(oriented, sideways) = %.6f", same, other)
+	if same < 0.99 {
+		t.Fatalf("cos(oriented, upright) = %.6f; want ≥ 0.99 (the orientation tag was not applied)", same)
+	}
+	if other >= same {
+		t.Fatalf("cos(oriented, sideways) = %.6f ≥ cos(oriented, upright) = %.6f", other, same)
+	}
+}
+
 func TestFeaturePrint_Unreadable(t *testing.T) {
 	for name, data := range map[string][]byte{
 		"empty.jpg": nil,
@@ -157,13 +230,13 @@ func TestFeaturePrint_Unreadable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			path := writeFile(t, name, data)
 			_, err := New().FeaturePrint(context.Background(), platform.ImageInput{Path: path})
-			if err == nil || !strings.HasPrefix(err.Error(), "vision:") {
-				t.Fatalf("err = %v, want one starting with vision:", err)
+			if err == nil || !strings.HasPrefix(err.Error(), "vision:") || !errors.Is(err, platform.ErrUnreadableImage) {
+				t.Fatalf("err = %v, want a vision: error wrapping platform.ErrUnreadableImage", err)
 			}
 			if len(data) > 0 {
 				_, err = New().FeaturePrint(context.Background(), platform.ImageInput{Data: data})
-				if err == nil || !strings.HasPrefix(err.Error(), "vision:") {
-					t.Fatalf("data err = %v, want one starting with vision:", err)
+				if err == nil || !strings.HasPrefix(err.Error(), "vision:") || !errors.Is(err, platform.ErrUnreadableImage) {
+					t.Fatalf("data err = %v, want a vision: error wrapping platform.ErrUnreadableImage", err)
 				}
 			}
 		})
@@ -245,6 +318,28 @@ func TestEntryPoints_CatchObjCException(t *testing.T) {
 	err := raiseForTest("ChoixTestException")
 	if err == nil || !strings.Contains(err.Error(), "ChoixTestException") || !strings.HasPrefix(err.Error(), "vision:") {
 		t.Fatalf("err = %v, want a vision: error naming ChoixTestException", err)
+	}
+	// A framework failure is not the image's fault: it is retried.
+	if errors.Is(err, platform.ErrUnreadableImage) {
+		t.Fatalf("err = %v wraps platform.ErrUnreadableImage; want a framework failure", err)
+	}
+}
+
+// An exception raised while the ARC-owned request handler and request exist
+// is caught, and they are still released: none is left behind by the unwind.
+func TestEntryPoints_ExceptionReleasesRequest(t *testing.T) {
+	raiseAfterRequestForTest(true)
+	t.Cleanup(func() { raiseAfterRequestForTest(false) })
+	src, err := newSource(platform.ImageInput{Data: gradient(t, 64, 48)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = src.print()
+	if err == nil || !strings.Contains(err.Error(), "ChoixTestException") {
+		t.Fatalf("err = %v, want a vision: error naming ChoixTestException", err)
+	}
+	if !requestReleasedForTest() {
+		t.Fatal("the request handler or the request outlived the call: the exception leaked them")
 	}
 }
 

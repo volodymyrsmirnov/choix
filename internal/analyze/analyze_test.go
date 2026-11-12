@@ -3,6 +3,7 @@ package analyze
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -161,9 +162,9 @@ func TestAnalyze_PrintsOff(t *testing.T) {
 	}
 }
 
-func TestAnalyze_VisionFailureIsStampedOnce(t *testing.T) {
+func TestAnalyze_UnreadableImageIsStampedOnce(t *testing.T) {
 	f := newFixture(t)
-	p := &fakePrinter{err: errors.New("vision: cannot read preview")}
+	p := &fakePrinter{err: fmt.Errorf("vision: cannot read preview: %w", platform.ErrUnreadableImage)}
 	a := New(f.st, p)
 	a.FailureGuard = func() bool { return true }
 	if err := a.Analyze(context.Background(), f.id, f.preview); err != nil {
@@ -181,6 +182,40 @@ func TestAnalyze_VisionFailureIsStampedOnce(t *testing.T) {
 	}
 	if n, err := f.st.Files().BumpAnalyzedMissingPrint(PrintID); err != nil || n != 0 {
 		t.Fatalf("BumpAnalyzedMissingPrint = %d, %v; want 0", n, err)
+	}
+}
+
+// A Vision failure that is not the image's fault (the framework's, possibly
+// transient) leaves the row unstamped: the file is analyzed and pending, so
+// the next job's backfill tries it again.
+func TestAnalyze_TransientVisionFailureIsRetried(t *testing.T) {
+	f := newFixture(t)
+	p := &fakePrinter{err: errors.New("vision: preview: feature print: the request failed")}
+	a := New(f.st, p)
+	a.FailureGuard = func() bool { return true }
+	if err := a.Analyze(context.Background(), f.id, f.preview); err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	if st, msg := f.status(t); st != "analyzed" || msg != "" {
+		t.Fatalf("status %q (%q), want analyzed", st, msg)
+	}
+	if row, ok := f.signals(t); ok && row.PrintID != "" {
+		t.Fatalf("row stamped %q, want unstamped", row.PrintID)
+	}
+	if n := f.missing(t); n != 1 {
+		t.Fatalf("CountAnalyzedMissingPrint = %d, want 1: the file is retried", n)
+	}
+
+	// The backfill rewinds it; this time Vision answers.
+	if n, err := f.st.Files().BumpAnalyzedMissingPrint(PrintID); err != nil || n != 1 {
+		t.Fatalf("BumpAnalyzedMissingPrint = %d, %v; want 1", n, err)
+	}
+	p.err, p.vec = nil, vector()
+	if err := a.Analyze(context.Background(), f.id, f.preview); err != nil {
+		t.Fatalf("second Analyze: %v", err)
+	}
+	if row, ok := f.signals(t); !ok || row.PrintID != PrintID || len(row.Print) != platform.FeaturePrintLen {
+		t.Fatalf("row %v stamped %q with %d values; want a print", ok, row.PrintID, len(row.Print))
 	}
 }
 

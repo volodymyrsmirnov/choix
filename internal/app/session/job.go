@@ -210,8 +210,9 @@ func (j *Job) run(ctx context.Context, s *Session, kind JobKind, report func(eve
 // backfillPrints rewinds the files analyzed without a feature print stamped
 // analyze.PrintID (grouping was off, or an earlier build made them) and
 // analyzes them again (which reclusters), when visual grouping is on, the
-// session can make prints and such files exist. A file Vision could not
-// print is stamped, so it is not rewound again.
+// session can make prints and such files exist. A file Vision cannot read
+// is stamped, so it is not rewound again; one whose print failed for another
+// reason stays pending and is tried again by the next job.
 func (j *Job) backfillPrints(ctx context.Context, s *Session, p *pipeline.Pipeline) error {
 	if !j.o.Settings().VisualGrouping || s.deps.Vision == nil {
 		return nil

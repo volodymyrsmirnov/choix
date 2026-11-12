@@ -26,8 +26,12 @@ const visionGrid = 16
 // read-only. Every call goes through platform.Detach, so it takes a native
 // slot and honours cancellation like the real one.
 //
+// An input the standard library cannot decode gives an error wrapping
+// platform.ErrUnreadableImage, as the real one does for an image Vision
+// cannot read; Fail can return either class of failure.
+//
 // Fail is keyed by ImageInput.Path; an input given as Data uses the key "".
-// Set the fields before the fake is used.
+// Set the fields before the fake is used; SetFail changes Fail while it is.
 type Vision struct {
 	// Fail makes every call for a key return that error.
 	Fail map[string]error
@@ -49,6 +53,27 @@ func (v *Vision) Calls() []string {
 	return slices.Clone(v.calls)
 }
 
+// SetFail makes every later call for key return err (nil: answer
+// normally). It is safe while calls run.
+func (v *Vision) SetFail(key string, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err == nil {
+		delete(v.Fail, key)
+		return
+	}
+	if v.Fail == nil {
+		v.Fail = map[string]error{}
+	}
+	v.Fail[key] = err
+}
+
+func (v *Vision) failure(key string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.Fail[key]
+}
+
 // FeaturePrint implements platform.Vision.
 func (v *Vision) FeaturePrint(ctx context.Context, in platform.ImageInput) ([]float32, error) {
 	key, err := inputKey(in)
@@ -61,7 +86,7 @@ func (v *Vision) FeaturePrint(ctx context.Context, in platform.ImageInput) ([]fl
 	v.mu.Unlock()
 	return platform.Detach(ctx, func() ([]float32, error) {
 		wait(v.Gate)
-		if err := v.Fail[key]; err != nil {
+		if err := v.failure(key); err != nil {
 			return nil, err
 		}
 		if in.Path != "" {
@@ -73,7 +98,7 @@ func (v *Vision) FeaturePrint(ctx context.Context, in platform.ImageInput) ([]fl
 		}
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
-			return nil, fmt.Errorf("vision: cannot read %s: %w", nameOf(in), err)
+			return nil, fmt.Errorf("vision: cannot read %s: %w (%w)", nameOf(in), platform.ErrUnreadableImage, err)
 		}
 		return FeaturePrintOf(img), nil
 	})

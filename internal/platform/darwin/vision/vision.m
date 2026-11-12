@@ -1,11 +1,14 @@
 //go:build darwin
 
-// Vision image feature prints. Compiled with ARC; Core Foundation and Core
-// Graphics objects are released by hand in @finally blocks so that a caught
-// exception does not leak them. The entry point runs inside guarded(): an
-// autorelease pool (the calling thread is a Go thread with no pool of its
-// own) and an @try that turns an Objective-C exception into a
-// CHOIX_VISION_FAILED result instead of letting it unwind through cgo.
+// Vision image feature prints. Compiled with ARC, without
+// -fobjc-arc-exceptions (cgo refuses the flag), so ARC does not release a
+// strong local whose scope an exception unwinds: the entry point declares its
+// Objective-C objects outside its @try and catches exceptions in its own
+// frame. Core Foundation and Core Graphics objects are released by hand in
+// @finally blocks. The entry point also runs inside guarded(): an autorelease
+// pool (the calling thread is a Go thread with no pool of its own) and an
+// @try that turns any other Objective-C exception into a CHOIX_VISION_FAILED
+// result instead of letting it unwind through cgo.
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -15,6 +18,13 @@
 #include <string.h>
 
 #include "vision.h"
+
+// Test hook (choix_vision_raise_after_request_for_test): when set, the entry
+// point raises once its handler and request exist, after recording weak
+// references to them.
+static volatile int raiseAfterRequest = 0;
+static __weak id weakHandler = nil;
+static __weak id weakRequest = nil;
 
 static ChoixVisionResult resultFailed(NSString *message) {
 	ChoixVisionResult r = {0};
@@ -30,15 +40,23 @@ static ChoixVisionResult resultUnreadable(void) {
 	return r;
 }
 
+// resultException is the CHOIX_VISION_FAILED result for a caught
+// Objective-C exception.
+static ChoixVisionResult resultException(id e) {
+	if ([e isKindOfClass:[NSException class]]) {
+		NSException *ex = e;
+		return resultFailed([NSString stringWithFormat:@"Objective-C exception %@: %@", ex.name, ex.reason]);
+	}
+	return resultFailed([NSString stringWithFormat:@"Objective-C exception: %@", e]);
+}
+
 static ChoixVisionResult guarded(ChoixVisionResult (^body)(void)) {
 	ChoixVisionResult r = {0};
 	@autoreleasepool {
 		@try {
 			r = body();
-		} @catch (NSException *e) {
-			r = resultFailed([NSString stringWithFormat:@"Objective-C exception %@: %@", e.name, e.reason]);
 		} @catch (id e) {
-			r = resultFailed([NSString stringWithFormat:@"Objective-C exception: %@", e]);
+			r = resultException(e);
 		}
 	}
 	return r;
@@ -102,6 +120,17 @@ ChoixVisionResult choix_vision_feature_print(const char *path, const void *data,
 	return guarded(^ChoixVisionResult {
 		CGImageSourceRef src = NULL;
 		CGImageRef img = NULL;
+		// The ARC-owned objects are declared outside the @try and an
+		// exception is caught in this frame, so their scope always ends
+		// normally and ARC releases them. ARC releases nothing whose scope an
+		// exception unwinds unless the file is built with
+		// -fobjc-arc-exceptions, which cgo's flag allowlist refuses.
+		NSDictionary *options = nil;
+		VNImageRequestHandler *handler = nil;
+		VNGenerateImageFeaturePrintRequest *req = nil;
+		NSArray<VNRequest *> *requests = nil;
+		VNFeaturePrintObservation *obs = nil;
+		NSError *err = nil;
 		@try {
 			if (revision <= 0 || ![VNGenerateImageFeaturePrintRequest.supportedRevisions containsIndex:(NSUInteger)revision]) {
 				return resultFailed([NSString stringWithFormat:@"feature print revision %d is not supported", revision]);
@@ -116,15 +145,21 @@ ChoixVisionResult choix_vision_feature_print(const char *path, const void *data,
 				return resultUnreadable();
 			}
 
-			VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:img orientation:o options:@{}];
-			VNGenerateImageFeaturePrintRequest *req = [[VNGenerateImageFeaturePrintRequest alloc] init];
+			options = @{};
+			handler = [[VNImageRequestHandler alloc] initWithCGImage:img orientation:o options:options];
+			req = [[VNGenerateImageFeaturePrintRequest alloc] init];
 			req.revision = (NSUInteger)revision;
 			req.imageCropAndScaleOption = VNImageCropAndScaleOptionScaleFill;
-			NSError *err = nil;
-			if (![handler performRequests:@[ req ] error:&err]) {
+			requests = @[ req ];
+			if (![handler performRequests:requests error:&err]) {
 				return resultFailed([NSString stringWithFormat:@"feature print: %@", err.localizedDescription ?: @"unknown error"]);
 			}
-			VNFeaturePrintObservation *obs = req.results.firstObject;
+			if (raiseAfterRequest) {
+				weakHandler = handler;
+				weakRequest = req;
+				[NSException raise:@"ChoixTestException" format:@"raised after the request for a test"];
+			}
+			obs = req.results.firstObject;
 			if (obs == nil) {
 				return resultFailed(@"feature print: no observation");
 			}
@@ -148,6 +183,8 @@ ChoixVisionResult choix_vision_feature_print(const char *path, const void *data,
 			r.len = want_len;
 			r.revision = (int)obs.requestRevision;
 			return r;
+		} @catch (id e) {
+			return resultException(e);
 		} @finally {
 			if (img != NULL) {
 				CGImageRelease(img);
@@ -165,4 +202,16 @@ ChoixVisionResult choix_vision_raise_for_test(const char *name) {
 		[NSException raise:exceptionName format:@"raised for a test"];
 		return resultUnreadable();
 	});
+}
+
+void choix_vision_raise_after_request_for_test(int on) {
+	raiseAfterRequest = on;
+	if (on) {
+		weakHandler = nil;
+		weakRequest = nil;
+	}
+}
+
+int choix_vision_request_released_for_test(void) {
+	return weakHandler == nil && weakRequest == nil;
 }

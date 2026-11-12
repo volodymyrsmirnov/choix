@@ -873,6 +873,88 @@ func TestJob_BackfillsPendingPrints(t *testing.T) {
 	}
 }
 
+// TestJob_VisionFailureClasses: a file Vision cannot read is stamped with no
+// print and not asked again; a file whose print failed for another reason
+// (the framework's) is left pending and printed by the next job.
+func TestJob_VisionFailureClasses(t *testing.T) {
+	vis := &platformtest.Vision{}
+	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}
+	h := newJobTestHarness(t, sessionTestOptions{stills: stills, vision: vis})
+	id, root := h.folder(t, "classes")
+	jobTestWriteShots(t, stills, root, 64, 48, time.Second, "a.jpg", "b.jpg", "c.jpg")
+
+	// A first job without prints makes the previews; their paths are what
+	// the fake's failures are keyed by.
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = false })
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("first Run = %v %q; want Done", o, msg)
+	}
+	ids, previews := map[string]int64{}, map[string]string{}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		for _, rel := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+			f, err := s.Store.Files().GetByPath(rel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := sessionThumbPath(s.Store, s.Root, f.ID, thumb.TierPreview)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids[rel], previews[rel] = f.ID, p
+		}
+	}()
+	vis.SetFail(previews["a.jpg"], errors.New("vision: feature print: the request failed"))
+	vis.SetFail(previews["b.jpg"], fmt.Errorf("vision: cannot read: %w", platform.ErrUnreadableImage))
+
+	h.settings.set(func(c *config.Config) { c.VisualGrouping = true })
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("backfill Run = %v %q; want Done", o, msg)
+	}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		prints := jobTestPrints(t, s.Store)
+		if prints[ids["a.jpg"]] != nil || prints[ids["b.jpg"]] != nil || prints[ids["c.jpg"]] == nil {
+			t.Fatalf("prints = %d (a %v, b %v, c %v); want c's only", len(prints),
+				prints[ids["a.jpg"]] != nil, prints[ids["b.jpg"]] != nil, prints[ids["c.jpg"]] != nil)
+		}
+		for rel, fid := range ids {
+			f, err := s.Store.Files().GetByID(fid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.ScanStatus != "analyzed" {
+				t.Fatalf("%s is %q (%s); want analyzed", rel, f.ScanStatus, f.ErrMsg.String)
+			}
+		}
+		if n := jobTestPending(t, s.Store); n != 1 {
+			t.Fatalf("pending for a print = %d; want 1 (a.jpg)", n)
+		}
+	}()
+
+	// Vision answers now, for both: only the transient one is asked again.
+	vis.SetFail(previews["a.jpg"], nil)
+	vis.SetFail(previews["b.jpg"], nil)
+	calls := len(vis.Calls())
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobBackfill); o != Done {
+		t.Fatalf("second backfill Run = %v %q; want Done", o, msg)
+	}
+	if got := vis.Calls()[calls:]; !slices.Equal(got, []string{previews["a.jpg"]}) {
+		t.Fatalf("Vision calls in the second backfill = %v; want only a.jpg's preview", got)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	prints := jobTestPrints(t, s.Store)
+	if prints[ids["a.jpg"]] == nil || prints[ids["b.jpg"]] != nil {
+		t.Fatalf("after the retry: a printed %v, b printed %v; want a only", prints[ids["a.jpg"]] != nil, prints[ids["b.jpg"]] != nil)
+	}
+	if n := jobTestPending(t, s.Store); n != 0 {
+		t.Fatalf("pending for a print = %d; want 0", n)
+	}
+}
+
 func TestJob_BackfillWithNothingPendingDoesNotRecluster(t *testing.T) {
 	vis := &platformtest.Vision{}
 	stills := &platformtest.Stills{ReadPaths: true, Props: map[string]map[string]any{}}

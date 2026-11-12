@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -606,16 +607,49 @@ func TestVisionFake_Unreadable(t *testing.T) {
 	if err := os.WriteFile(empty, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, in := range []platform.ImageInput{
-		{Path: empty},
-		{Path: filepath.Join(t.TempDir(), "missing.jpg")},
-		{Data: []byte("not an image")},
-		{},
-		{Path: "/x/a.jpg", Data: []byte{1}},
+	for _, tc := range []struct {
+		in         platform.ImageInput
+		unreadable bool // the image's fault: wraps platform.ErrUnreadableImage
+	}{
+		{platform.ImageInput{Path: empty}, true},
+		{platform.ImageInput{Path: filepath.Join(t.TempDir(), "missing.jpg")}, false},
+		{platform.ImageInput{Data: []byte("not an image")}, true},
+		{platform.ImageInput{}, false},
+		{platform.ImageInput{Path: "/x/a.jpg", Data: []byte{1}}, false},
 	} {
-		if _, err := v.FeaturePrint(ctx, in); err == nil {
-			t.Errorf("FeaturePrint(%q, %d bytes): want an error", in.Path, len(in.Data))
+		_, err := v.FeaturePrint(ctx, tc.in)
+		if err == nil {
+			t.Errorf("FeaturePrint(%q, %d bytes): want an error", tc.in.Path, len(tc.in.Data))
+			continue
 		}
+		if got := errors.Is(err, platform.ErrUnreadableImage); got != tc.unreadable {
+			t.Errorf("FeaturePrint(%q, %d bytes) = %v; wraps ErrUnreadableImage %v, want %v", tc.in.Path, len(tc.in.Data), err, got, tc.unreadable)
+		}
+	}
+}
+
+// SetFail changes the answer for a key while the fake is in use: either
+// class of Vision failure, then none.
+func TestVisionFake_SetFail(t *testing.T) {
+	v := &platformtest.Vision{}
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "a.jpg")
+	if err := os.WriteFile(path, platformtest.MakeJPEG(t, 32, 24), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in := platform.ImageInput{Path: path}
+	transient := errors.New("vision: the request failed")
+	v.SetFail(path, transient)
+	if _, err := v.FeaturePrint(ctx, in); !errors.Is(err, transient) || errors.Is(err, platform.ErrUnreadableImage) {
+		t.Fatalf("err = %v; want the transient failure", err)
+	}
+	v.SetFail(path, fmt.Errorf("vision: cannot read: %w", platform.ErrUnreadableImage))
+	if _, err := v.FeaturePrint(ctx, in); !errors.Is(err, platform.ErrUnreadableImage) {
+		t.Fatalf("err = %v; want ErrUnreadableImage", err)
+	}
+	v.SetFail(path, nil)
+	if _, err := v.FeaturePrint(ctx, in); err != nil {
+		t.Fatalf("err = %v; want a print", err)
 	}
 }
 

@@ -95,7 +95,7 @@ func (s source) result(r C.ChoixVisionResult) ([]float32, int, error) {
 		copy(v, unsafe.Slice((*float32)(unsafe.Pointer(r.values)), platform.FeaturePrintLen))
 		return v, int(r.revision), nil
 	case C.CHOIX_VISION_UNREADABLE:
-		return nil, 0, fmt.Errorf("vision: cannot read %s", s.name)
+		return nil, 0, fmt.Errorf("vision: cannot read %s: %w", s.name, platform.ErrUnreadableImage)
 	default:
 		msg := "unknown error"
 		if r.message != nil {
@@ -124,4 +124,20 @@ func raiseForTest(name string) error {
 	defer C.free(unsafe.Pointer(cname))
 	_, _, err := source{name: "test"}.result(C.choix_vision_raise_for_test(cname))
 	return err
+}
+
+// raiseAfterRequestForTest makes FeaturePrint raise an NSException once its
+// Vision request handler and request exist (on), or stops it (off).
+func raiseAfterRequestForTest(on bool) {
+	v := 0
+	if on {
+		v = 1
+	}
+	C.choix_vision_raise_after_request_for_test(C.int(v))
+}
+
+// requestReleasedForTest reports whether the request handler and request of
+// the last call raised by raiseAfterRequestForTest were deallocated.
+func requestReleasedForTest() bool {
+	return C.choix_vision_request_released_for_test() != 0
 }
