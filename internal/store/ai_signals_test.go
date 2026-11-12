@@ -63,7 +63,8 @@ func TestPrint_RoundTrip(t *testing.T) {
 	}
 }
 
-// A print written over an existing CLIP row leaves clip_embedding alone, and
+// A print written over a row that holds the legacy embedding column
+// (clip_embedding, which 1.x and 2.0.0 wrote) leaves that column alone, and
 // a nil print is stored as NULL but stamped.
 func TestPrint_NilIsStampedAndClipKept(t *testing.T) {
 	s := newTestStore(t)
@@ -159,7 +160,8 @@ func TestPrint_CountAndBumpMissing(t *testing.T) {
 	if err := s.AISignals().UpsertPrint(other, testPrint(2), "older/v0"); err != nil {
 		t.Fatal(err)
 	}
-	// A row with only a CLIP embedding has a NULL print id.
+	// A row with only the legacy embedding column (clip_embedding, which 1.x
+	// and 2.0.0 wrote) has a NULL print id.
 	insertClipRow(t, s, unstamped, bytes.Repeat([]byte{1}, 16))
 	if err := s.Files().UpdateStatus(stamped, "analyzed", "earlier error"); err != nil {
 		t.Fatal(err)

@@ -93,8 +93,9 @@ describe('quality status line', () => {
   })
 
   test('no download or error text: a state the worker no longer reports says nothing', () => {
-    // What the worker reported while it downloaded a model (the app's types
-    // keep the names until phase B).
+    // What the worker reported while it downloaded a model. Go no longer
+    // sends these states and QualityState no longer names them; a stale
+    // value must still say nothing.
     for (const state of ['downloading', 'download_failed', 'error'] as unknown as QualityStatus['state'][]) {
       expect(qualityStatusText(q({ state })), state).toBe('')
     }

@@ -148,8 +148,9 @@ func TestPrintTrigger_OlderWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 2.0.0 rescans the edited photo, re-analyzes it (its CLIP upsert) and
-	// moves it back to analyzed.
+	// 2.0.0 rescans the edited photo, re-analyzes it (its upsert of the
+	// legacy embedding column, clip_embedding, which 1.x and 2.0.0 wrote)
+	// and moves it back to analyzed.
 	ctx := context.Background()
 	if _, err := s.db.ExecContext(ctx, v2RescanChanged, 2, 2, "h2", "photo", "jpeg", 5, id); err != nil {
 		t.Fatalf("2.0.0 rescan: %v", err)
