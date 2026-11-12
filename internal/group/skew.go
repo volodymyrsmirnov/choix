@@ -49,7 +49,8 @@ type skewEntry struct {
 //
 // Returns an empty map if there are zero or one devices with usable
 // printed files — there's nothing to align. The pair search checks ctx once
-// per reference file and returns ctx's error when it is cancelled.
+// per reference file and every pairCheckStride comparisons, and returns
+// ctx's error when it is cancelled.
 func EstimateSkew(ctx context.Context, files []store.File, embeds map[int64][]float32) (map[string]int64, error) {
 	byDevice := map[string][]skewEntry{}
 	for _, f := range files {
@@ -94,23 +95,28 @@ func EstimateSkew(ctx context.Context, files []store.File, embeds map[int64][]fl
 		if err != nil {
 			return nil, err
 		}
-		if len(deltas) < minAnchors {
+		if deltas.n < minAnchors {
 			result[d] = 0
 			continue
 		}
-		result[d] = medianInt64(deltas)
+		result[d] = deltas.median()
 	}
 	return result, nil
 }
 
-// pairDeltas returns (other.CapturedAt - ref.CapturedAt) for every pair
-// whose similarity is >= anchorSimilarity and whose raw time
+// pairCheckStride is how many pair comparisons pairDeltas makes between two
+// checks of its context: a few milliseconds of dot products.
+const pairCheckStride = 1024
+
+// pairDeltas returns the histogram of (other.CapturedAt - ref.CapturedAt)
+// over every pair whose similarity is >= anchorSimilarity and whose raw time
 // difference is within ±maxSkewSec. Both inputs must be sorted ascending
 // by CapturedAt; the implementation slides a forward-only window over
-// `other` as it walks `ref`, checking ctx once per ref entry.
-func pairDeltas(ctx context.Context, ref, other []skewEntry, embeds map[int64][]float32) ([]int64, error) {
-	var deltas []int64
-	lo := 0
+// `other` as it walks `ref`, checking ctx once per ref entry and every
+// pairCheckStride comparisons. It allocates nothing per pair.
+func pairDeltas(ctx context.Context, ref, other []skewEntry, embeds map[int64][]float32) (*deltaHistogram, error) {
+	deltas := &deltaHistogram{}
+	lo, compared := 0, 0
 	for _, r := range ref {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -118,32 +124,62 @@ func pairDeltas(ctx context.Context, ref, other []skewEntry, embeds map[int64][]
 		for lo < len(other) && other[lo].CapturedAt < r.CapturedAt-maxSkewSec {
 			lo++
 		}
+		er, ok := embeds[r.ID]
+		if !ok {
+			continue
+		}
 		for j := lo; j < len(other); j++ {
 			o := other[j]
 			if o.CapturedAt > r.CapturedAt+maxSkewSec {
 				break
 			}
-			er, ok1 := embeds[r.ID]
-			eo, ok2 := embeds[o.ID]
-			if !ok1 || !ok2 {
+			eo, ok := embeds[o.ID]
+			if !ok {
 				continue
+			}
+			if compared++; compared%pairCheckStride == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 			}
 			if similarity(er, eo) < anchorSimilarity {
 				continue
 			}
-			deltas = append(deltas, o.CapturedAt-r.CapturedAt)
+			deltas.add(o.CapturedAt - r.CapturedAt)
 		}
 	}
 	return deltas, nil
 }
 
-// medianInt64 returns the median of xs (xs is mutated by sorting). Caller
-// must guarantee len(xs) > 0.
-func medianInt64(xs []int64) int64 {
-	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
-	n := len(xs)
-	if n%2 == 1 {
-		return xs[n/2]
+// deltaHistogram counts whole-second deltas within ±maxSkewSec: bounded
+// memory, however many pairs qualify, and the same median a sort gives.
+type deltaHistogram struct {
+	counts [2*maxSkewSec + 1]int
+	n      int
+}
+
+// add counts d, which must be within ±maxSkewSec.
+func (h *deltaHistogram) add(d int64) {
+	h.counts[d+maxSkewSec]++
+	h.n++
+}
+
+// median returns the median of the counted deltas: the middle one, or the
+// mean of the two middle ones truncated toward zero. It needs n > 0.
+func (h *deltaHistogram) median() int64 {
+	if h.n%2 == 1 {
+		return h.nth(h.n / 2)
 	}
-	return (xs[n/2-1] + xs[n/2]) / 2
+	return (h.nth(h.n/2-1) + h.nth(h.n/2)) / 2
+}
+
+// nth returns the k-th smallest counted delta (from 0).
+func (h *deltaHistogram) nth(k int) int64 {
+	for i, c := range h.counts {
+		if k < c {
+			return int64(i) - maxSkewSec
+		}
+		k -= c
+	}
+	return maxSkewSec
 }

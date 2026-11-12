@@ -95,10 +95,31 @@ func Cluster(ctx context.Context, vectors map[int64][]float32, threshold float64
 	return out, nil
 }
 
-// similarity is the dot product of a and b as Cluster computes it, or -Inf
-// when their lengths differ or the product is not a number.
+// similarity is the dot product of a and b as Cluster computes it (the same
+// float64 accumulation as dot64 over the converted vectors, so the same
+// value), or -Inf when their lengths differ or the product is not a number.
+// It allocates nothing.
 func similarity(a, b []float32) float64 {
-	return dot64(toFloat64(a), toFloat64(b))
+	if len(a) != len(b) {
+		return math.Inf(-1)
+	}
+	var s0, s1, s2, s3 float64
+	i := 0
+	for ; i+4 <= len(a); i += 4 {
+		x, y := a[i:i+4:i+4], b[i:i+4:i+4]
+		s0 += float64(x[0]) * float64(y[0])
+		s1 += float64(x[1]) * float64(y[1]) //nolint:gosec // G602: x and y have length 4
+		s2 += float64(x[2]) * float64(y[2]) //nolint:gosec // G602: x and y have length 4
+		s3 += float64(x[3]) * float64(y[3]) //nolint:gosec // G602: x and y have length 4
+	}
+	for ; i < len(a); i++ {
+		s0 += float64(a[i]) * float64(b[i])
+	}
+	s := (s0 + s1) + (s2 + s3)
+	if math.IsNaN(s) {
+		return math.Inf(-1)
+	}
+	return s
 }
 
 func toFloat64(v []float32) []float64 {

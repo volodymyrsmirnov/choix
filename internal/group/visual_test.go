@@ -265,3 +265,26 @@ func TestCluster_TwoThousandUnderFiveSeconds(t *testing.T) {
 		t.Fatalf("2,000 prints took %v; want under 5 s", took)
 	}
 }
+
+// similarity, which allocates nothing, gives exactly the value Cluster's
+// matrix holds (dot64 over the converted vectors).
+func TestSimilarity_MatchesClusterDot(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 5))
+	for range 200 {
+		n := 1 + rng.IntN(800)
+		a, b := make([]float32, n), make([]float32, n)
+		for i := range n {
+			a[i], b[i] = rng.Float32()*2-1, rng.Float32()*2-1
+		}
+		if got, want := similarity(a, b), dot64(toFloat64(a), toFloat64(b)); got != want {
+			t.Fatalf("len %d: similarity = %v, dot64 = %v", n, got, want)
+		}
+	}
+	if got := similarity([]float32{1, 2}, []float32{1}); !math.IsInf(got, -1) {
+		t.Fatalf("lengths differ: similarity = %v; want -Inf", got)
+	}
+	nan := float32(math.NaN())
+	if got := similarity([]float32{nan, 1}, []float32{1, 1}); !math.IsInf(got, -1) {
+		t.Fatalf("NaN: similarity = %v; want -Inf", got)
+	}
+}

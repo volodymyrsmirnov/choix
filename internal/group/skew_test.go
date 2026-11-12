@@ -1,10 +1,13 @@
 package group
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"math"
+	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/volodymyrsmirnov/choix/internal/store"
@@ -83,24 +86,130 @@ func TestEstimateSkewRecoversKnownOffset(t *testing.T) {
 	}
 }
 
-func TestEstimateSkewBelowMinAnchorsLeavesZero(t *testing.T) {
+// TestEstimateSkewMinAnchors: an estimate needs minAnchors qualifying pairs.
+// Each shot is its own scene (distinct vectors), so the second camera's
+// shots give exactly one pair each, every one 50 s apart: two pairs are
+// rejected (offset 0), three are accepted (offset 50).
+func TestEstimateSkewMinAnchors(t *testing.T) {
+	const offset = int64(50)
+	scenes := []([]float32){
+		normalize([]float32{1, 0, 0, 0}),
+		normalize([]float32{0, 1, 0, 0}),
+		normalize([]float32{0, 0, 1, 0}),
+		normalize([]float32{0, 0, 0, 1}),
+	}
+	for _, tc := range []struct {
+		anchors int
+		want    int64
+	}{{minAnchors - 1, 0}, {minAnchors, offset}} {
+		files := []store.File{
+			// Reference: four shots of four scenes.
+			makeFile(10, "iPhone#A", 100),
+			makeFile(11, "iPhone#A", 200),
+			makeFile(12, "iPhone#A", 300),
+			makeFile(13, "iPhone#A", 400),
+		}
+		embeds := map[int64][]float32{10: scenes[0], 11: scenes[1], 12: scenes[2], 13: scenes[3]}
+		for k := range tc.anchors {
+			id := int64(20 + k)
+			files = append(files, makeFile(id, "X-T5#B", 100*int64(k+1)+offset))
+			embeds[id] = scenes[k]
+		}
+		deltas, err := pairDeltas(context.Background(), byDeviceForTest(files, "iPhone#A"), byDeviceForTest(files, "X-T5#B"), embeds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deltas.n != tc.anchors || deltas.median() != offset {
+			t.Fatalf("%d anchors: pairs %d with median %d; want %d with median %d", tc.anchors, deltas.n, deltas.median(), tc.anchors, offset)
+		}
+		if got := mustSkew(t, files, embeds)["X-T5#B"]; got != tc.want {
+			t.Errorf("%d anchors (minAnchors %d): offset %d, want %d", tc.anchors, minAnchors, got, tc.want)
+		}
+	}
+}
+
+// byDeviceForTest returns dev's files as skew entries, by capture time.
+func byDeviceForTest(files []store.File, dev string) []skewEntry {
+	var out []skewEntry
+	for _, f := range files {
+		if f.DeviceKey.String == dev {
+			out = append(out, skewEntry{ID: f.ID, CapturedAt: f.CapturedAt.Int64})
+		}
+	}
+	slices.SortFunc(out, func(a, b skewEntry) int { return cmp.Compare(a.CapturedAt, b.CapturedAt) })
+	return out
+}
+
+// TestDeltaHistogram_MedianMatchesSort: the bounded histogram gives the
+// median a sort of the deltas gives, for odd and even counts, negative
+// deltas and the window's ends.
+func TestDeltaHistogram_MedianMatchesSort(t *testing.T) {
+	rng := rand.New(rand.NewPCG(7, 11))
+	for trial := range 500 {
+		n := 1 + rng.IntN(40)
+		var h deltaHistogram
+		xs := make([]int64, n)
+		for i := range xs {
+			switch rng.IntN(10) {
+			case 0:
+				xs[i] = -maxSkewSec
+			case 1:
+				xs[i] = maxSkewSec
+			default:
+				xs[i] = int64(rng.IntN(2*maxSkewSec+1)) - maxSkewSec
+			}
+			if trial%3 == 0 {
+				xs[i] = int64(rng.IntN(7)) - 3 // many ties
+			}
+			h.add(xs[i])
+		}
+		slices.Sort(xs)
+		want := xs[n/2]
+		if n%2 == 0 {
+			want = (xs[n/2-1] + xs[n/2]) / 2
+		}
+		if got := h.median(); got != want || h.n != n {
+			t.Fatalf("trial %d: median of %v = %d (n %d); want %d", trial, xs, got, h.n, want)
+		}
+	}
+}
+
+// TestPairDeltas_CancelledDuringComparisons: cancellation that lands while
+// one reference shot is compared with many others is seen inside that inner
+// loop, not only before the next reference shot.
+func TestPairDeltas_CancelledDuringComparisons(t *testing.T) {
 	v := normalize([]float32{1, 0, 0, 0})
-	files := []store.File{
-		// Reference: 3 shots.
-		makeFile(10, "iPhone#A", 100),
-		makeFile(11, "iPhone#A", 200),
-		makeFile(12, "iPhone#A", 300),
-		// X-T5: only 2 anchorable shots (below minAnchors=3).
-		makeFile(20, "X-T5#B", 100+50),
-		makeFile(21, "X-T5#B", 200+50),
+	ref := []skewEntry{{ID: 1, CapturedAt: 1000}}
+	embeds := map[int64][]float32{1: v}
+	var other []skewEntry
+	for i := range 20000 {
+		id := int64(100 + i)
+		other = append(other, skewEntry{ID: id, CapturedAt: 1000 + int64(i%600)})
+		embeds[id] = v
 	}
-	embeds := map[int64][]float32{
-		10: v, 11: v, 12: v,
-		20: v, 21: v,
+	slices.SortFunc(other, func(a, b skewEntry) int { return cmp.Compare(a.CapturedAt, b.CapturedAt) })
+	ctx := newCountdownCtx(2) // the first check passes; comparisons begin
+	if _, err := pairDeltas(ctx, ref, other, embeds); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pairDeltas = %v; want context.Canceled", err)
 	}
-	out := mustSkew(t, files, embeds)
-	if out["X-T5#B"] != 0 {
-		t.Errorf("with %d anchors (< minAnchors), expected offset 0; got %d", 2, out["X-T5#B"])
+}
+
+// TestEstimateSkew_CancelledAfterComparisonsBegin: a cancellation after the
+// pair search has started stops the estimate.
+func TestEstimateSkew_CancelledAfterComparisonsBegin(t *testing.T) {
+	v := normalize([]float32{1, 0, 0, 0})
+	var files []store.File
+	embeds := map[int64][]float32{}
+	for i := range 3000 {
+		for j, dev := range []string{"iPhone#A", "X-T5#B"} {
+			id := int64(2*i + j + 1)
+			files = append(files, makeFile(id, dev, 1000+int64(i%600)))
+			embeds[id] = v
+		}
+	}
+	ctx := newCountdownCtx(2)
+	if _, err := EstimateSkew(ctx, files, embeds); !errors.Is(err, context.Canceled) {
+		t.Fatalf("EstimateSkew = %v; want context.Canceled", err)
 	}
 }
 
