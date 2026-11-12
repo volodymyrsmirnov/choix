@@ -24,6 +24,7 @@ import (
 	"github.com/volodymyrsmirnov/choix/internal/platform"
 	"github.com/volodymyrsmirnov/choix/internal/platform/platformtest"
 	"github.com/volodymyrsmirnov/choix/internal/quality"
+	"github.com/volodymyrsmirnov/choix/internal/scanner"
 	"github.com/volodymyrsmirnov/choix/internal/store"
 	"github.com/volodymyrsmirnov/choix/internal/thumb"
 )
@@ -1557,6 +1558,109 @@ func TestJob_V1FolderFullRunStampsParams(t *testing.T) {
 	}
 	if n, err := s.Store.Files().CountByStatus("analyzed"); err != nil || n != 6 {
 		t.Fatalf("analyzed = %d, %v; want the six v1 photos left analyzed", n, err)
+	}
+}
+
+// TestJob_V1FolderBackfillUsesThumbWithoutPreview: v1 made only a thumb tier
+// for a video, so the print backfill of a v1 folder reads the thumb tier of a
+// file without a preview tier (no row, or a row whose cache file is gone),
+// as the media handler does, instead of failing it.
+func TestJob_V1FolderBackfillUsesThumbWithoutPreview(t *testing.T) {
+	vis := &platformtest.Vision{}
+	h := newJobTestHarness(t, sessionTestOptions{vision: vis})
+	id, root := h.folder(t, "v1video")
+	sessionTestCopyV1(t, root)
+
+	// What v1 left for a video: the original, its row, a thumb row and the
+	// thumb cache file, an ai_signals row with no embedding; no preview.
+	const videoID = 7
+	videoRel := "DCIM/100TEST/TEST0007.MOV"
+	videoAbs := filepath.Join(root, filepath.FromSlash(videoRel))
+	if err := os.WriteFile(videoAbs, []byte("a v1 video, never decoded by this test\n"), 0o644); err != nil { //nolint:gosec // test file
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(videoAbs, sessionTestV1Mtime, sessionTestV1Mtime); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := scanner.ContentHash(videoAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoThumb := ".choix/thumbs/07/7-thumb.jpg"
+	if err := os.MkdirAll(filepath.Join(root, ".choix", "thumbs", "07"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(videoThumb)), platformtest.MakeJPEG(t, 64, 48), 0o644); err != nil { //nolint:gosec // test file
+		t.Fatal(err)
+	}
+	func() {
+		s, release := h.acquire(t, id)
+		defer release()
+		db := s.Store.DB()
+		ctx := context.Background()
+		captured := time.Date(2026, 1, 2, 10, 0, 15, 0, time.UTC).Unix()
+		for _, q := range []struct {
+			sql  string
+			args []any
+		}{
+			{`INSERT INTO files (id, path, size, mtime, content_hash, kind, format, device_key, captured_at, width, height, scan_status)
+			  SELECT ?, ?, ?, ?, ?, 'video', 'mov', device_key, ?, 64, 48, 'analyzed' FROM files WHERE id = 1`,
+				[]any{videoID, videoRel, len("a v1 video, never decoded by this test\n"), sessionTestV1Mtime.Unix(), hash, captured}},
+			{`INSERT INTO thumbs (file_id, tier, rel_path, width, height) VALUES (?, 'thumb', ?, 64, 48)`, []any{videoID, videoThumb}},
+			{`INSERT INTO ai_signals (file_id, clip_embedding, computed_at) VALUES (?, NULL, ?)`, []any{videoID, sessionTestV1Mtime.Unix()}},
+			// A photo with only a thumb row, and one whose preview cache
+			// file is gone.
+			{`DELETE FROM thumbs WHERE file_id = 1 AND tier = 'preview'`, nil},
+		} {
+			if _, err := db.ExecContext(ctx, q.sql, q.args...); err != nil {
+				t.Fatalf("%s: %v", q.sql, err)
+			}
+		}
+	}()
+	for _, p := range []string{"01/1-preview.jpg", "04/4-preview.jpg"} {
+		if err := os.Remove(filepath.Join(root, ".choix", "thumbs", filepath.FromSlash(p))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if o, msg := h.run(context.Background(), h.job(nil), id, JobFull); o != Done {
+		t.Fatalf("Run = %v %q; want Done", o, msg)
+	}
+	s, release := h.acquire(t, id)
+	defer release()
+	prints := jobTestPrints(t, s.Store)
+	inCluster := map[int64]bool{}
+	rows, err := s.Store.DB().QueryContext(context.Background(), `SELECT file_id FROM cluster_members`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var fid int64
+		if err := rows.Scan(&fid); err != nil {
+			t.Fatal(err)
+		}
+		inCluster[fid] = true
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		t.Fatal(err)
+	}
+	for _, fid := range []int64{1, 4, videoID} {
+		f, err := s.Store.Files().GetByID(fid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.ScanStatus != "analyzed" {
+			t.Errorf("file %d (%s) is %q (%s); want analyzed", fid, f.Path, f.ScanStatus, f.ErrMsg.String)
+		}
+		if prints[fid] == nil {
+			t.Errorf("file %d (%s) has no print stamped %s", fid, f.Path, analyze.PrintID)
+		}
+		if !inCluster[fid] {
+			t.Errorf("file %d (%s) is in no cluster", fid, f.Path)
+		}
+	}
+	if n := jobTestPending(t, s.Store); n != 0 {
+		t.Fatalf("pending for a print = %d; want 0", n)
 	}
 }
 
