@@ -187,12 +187,12 @@ PRAGMA user_version = 7;
 - `ai_signals.clip_embedding` joins the list of retired columns: never read, never written, never dropped.
 - Store API (`internal/store/ai_signals.go`, `files.go`), renamed from "embedding" to "print":
   - `AISignals{FileID int64; Print []float32; PrintID string; ComputedAt sql.NullInt64}`;
-  - `Upsert(AISignals)` writes `vision_print`, `vision_print_id`, `computed_at`;
+  - `UpsertPrint(fileID, print, printID)` writes `vision_print`, `vision_print_id`, `computed_at` (a nil print stores NULL with the id);
   - `GetByFileID(id)`;
   - `AllPrints(printID string) (map[int64][]float32, error)`: rows with a non-NULL print and that id;
   - `CountAnalyzedMissingPrint(printID)` and `BumpAnalyzedMissingPrint(printID)`: analyzed files with no `ai_signals` row, or with `vision_print_id` NULL or different. They replace the two `…MissingEmbedding` methods.
 - A stored blob whose length is not 3,072 bytes is treated as no print.
-- **A changed file loses its print.** `UpsertOnRescan` clears `vision_print` and `vision_print_id` in the same statement that clears the quality rating when a file's content changed. Without that, a file changed while grouping was off would keep a print of its old content under the current id. Picks are untouched.
+- **A changed file loses its print.** When a file's content changed, `UpsertOnRescan` clears `vision_print` and `vision_print_id` (in `ai_signals`) together with the quality rating (in `files`): two updates in one transaction, both rolled back if either fails. Without that, a file changed while grouping was off would keep a print of its old content under the current id. Picks are untouched.
 
 ### 5.4 Clustering
 
@@ -201,9 +201,9 @@ PRAGMA user_version = 7;
 - Similarity is the dot product of two unit vectors.
 - Start with every id alone. Repeatedly merge the two clusters with the highest linkage, where a pair's linkage is the **lowest** similarity between any member of one and any member of the other, while that linkage is **strictly greater** than the threshold. A tie in linkage goes to the pair whose smaller minimum id is smaller, then whose other minimum id is smaller.
 - Output ordering is unchanged: members ascending, clusters by smallest member.
-- **It is cancellable.** It checks `ctx` at least once per row of the similarity matrix and once per merge, and returns `ctx.Err()` within a second of cancellation. The grouper commits a bucket's clusters only after `Cluster` has returned without error, so a cancelled rebuild replaces nothing.
+- **It is cancellable.** It checks `ctx` at least once per row of the similarity matrix and once per merge, and returns `ctx.Err()` within a second of cancellation. The clock-skew estimate that precedes a cross-device rebuild compares pairs of prints too and is cancellable the same way. A rebuild writes clusters only after all of its clustering has returned without error, so a cancelled rebuild replaces nothing.
 - Any implementation that returns exactly these groups is acceptable. It must handle a bucket of 2,000 prints in under 5 s on the development machine, and a property test compares it with a naive version of the rule above on random inputs.
-- A bucket with more than 4,000 printed files is clustered in consecutive windows of 4,000 in the bucket's time order **[call]**, to bound memory at one similarity matrix of 4,000². Groups never span two windows.
+- A bucket with more than 4,000 printed files is clustered in consecutive windows of 4,000 in the bucket's time order **[call]**, to bound memory at one similarity matrix of 4,000². Groups never span two windows. Every path that clusters a bucket (the full rebuild, the cross-device rebuild, the single-bucket rebuild) uses the same windowing.
 
 Everything else in `internal/group` keeps its behaviour: time buckets, files without a print going to their bucket's fallback cluster, cross-device mode, `MergedDeviceKey`.
 
@@ -254,7 +254,7 @@ All arithmetic in float64.
 
 `files.quality_raw` stores `raw`. Changing any step, constant or weight **must** bump `quality.ScorerID`.
 
-`Measure` reports "not measurable" (all features zero, `ok` false) for a working copy with a side under 16 px, where the interior of step 3 would be empty. The scorer never reaches that case: it leaves a preview under 384 px on its short side unrated first.
+`Measure` reports "not measurable" (all features zero, `ok` false) for a working copy with a side under 17 px, where the interior of step 3 at σ = 2 (a border of 8 pixels on each side) would be empty. The scorer never reaches that case: it leaves a preview under 384 px on its short side unrated first.
 
 ### 6.3 Reference values
 
@@ -344,7 +344,7 @@ The UI loses everything that exists to show a download. Nothing new is added.
 ### 9.2 States
 
 - **Retired** (scenario deleted, number added to `docs/design/retired.json` and the change file's `retired:`): 11, 12, 13, 14, 15, 16, 17, 112, 120, 216, 228, 505, 506, 514, 515, 516, 517. Seventeen states.
-- **Changed:** every state whose rendered tree changes. Every Settings state and most Folder states re-hash even where the pixels are the same, because `SettingsScreen.tsx` and `FolderScreen.tsx` are hashed into them (`frontend/src/design/measured.ts`); so do the gallery states 803, 805 and 807. The exact list is whatever `task design:snapshot` re-hashes; all of it goes into the change file's `states:`.
+- **Changed:** every state whose rendered tree changes. Most Settings states and most Folder states re-hash even where the pixels are the same, because `SettingsScreen.tsx` and `FolderScreen.tsx` are hashed into them (`frontend/src/design/measured.ts`); so do the gallery states 803, 805 and 807. The exact list is whatever `task design:snapshot` re-hashes; all of it goes into the change file's `states:`.
 - `frontend/tools/state-inventory.ts` drops the "No. 10, both models downloading" not-a-state entry. `frontend/tools/flows/welcome.ts` is rewritten around the states that remain in its group (30–37, 40): every group with states needs a flow. The model parts of `flows/settings.ts` are deleted.
 - `docs/design/gate.json` is not changed.
 
@@ -395,7 +395,7 @@ Existing installs hold about 530 MB of model files in `<data dir>/models/`. On s
 - **Living documents are rewritten in place** so that none describes ONNX, CLIP, TOPIQ, a model download or CoreML as part of the app: `CLAUDE.md`, `README.md` (including the removal of the TOPIQ licence section), `v2.md`, `docs/release/uat.md`, `docs/release/signing-checklist.md`, `docs/release/sandbox-smoke.md`, and `docs/superpowers/specs/2026-11-11-choix-2-desktop-design.md` (its models section is replaced by a summary of this spec and a link to it).
 - **Historical documents keep their text** and get one line under the title, "Superseded in part by `2026-11-12-builtin-grouping-and-quality-design.md`: the models, ONNX Runtime and the download are gone.": `docs/superpowers/specs/2026-11-11-choix-2-spike-results.md`, `docs/superpowers/plans/2026-11-11-choix-2-engine-and-wails.md`, `docs/superpowers/plans/2026-11-11-design-prototype-and-gate.md`, `docs/plans/2026-11-11-quality-rating.md` **[call]**.
 - `docs/design/inventory.md` is regenerated.
-- After the change, `grep -riE 'onnx|topiq|coreml|hugging ?face'` over tracked files matches only: this spec, its plan, the four historical documents above, `internal/retired_test.go`, the old design change file `docs/design/changes/feat-choix-2-backend-9051c1.md`, and `internal/app/runtime/legacy.go` with its test (the file names it cleans up, §11). Tests that need "a rating by another scorer" use a made-up id, not the old one. `CLIP` as a word may also remain in names unrelated to the model (`clip.mov`, the CSS clip check).
+- After the change, `grep -riE 'onnx|topiq|coreml|hugging ?face'` over tracked files matches only: this spec, its plan, the four historical documents above, `internal/retired_test.go`, the old design change file `docs/design/changes/feat-choix-2-backend-9051c1.md`, `internal/app/runtime/legacy.go` with its test (the file names it cleans up, §11), and `cmd/choix/selfcheck_test.go` (it asserts the report has no `onnxRuntime` key). Tests that need "a rating by another scorer" use a made-up id, not the old one. `CLIP` as a word may also remain in names unrelated to the model (`clip.mov`, the CSS clip check).
 
 ## 14. Deferred
 
