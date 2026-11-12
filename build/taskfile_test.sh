@@ -3,8 +3,11 @@
 # prints `ok` on success.
 #
 #  1. `task --list-all` lists every task of the desktop build, and the UI
-#     track's tasks are still there.
-#  2. Nothing in Taskfile.yml builds for another architecture.
+#     track's tasks are still there; the retired runtime-library fetch task
+#     is gone.
+#  2. Nothing in Taskfile.yml builds for another architecture, fetches,
+#     bundles or signs the retired runtime library, or passes --dylib to
+#     bundle.sh.
 #  3. sign:developer-id, notarize, notarize:dmg and package:mas, run
 #     without their variables, exit 1 with "<task> needs <VAR> (<what>). See
 #     docs/release/signing-checklist.md." before running any command.
@@ -67,7 +70,7 @@ done
 list=$(task -d "$root" --list-all) || fail "task --list-all failed"
 # Lines look like "* design:snapshot:linux:   <desc>"; names have no spaces.
 names=$(printf '%s\n' "$list" | sed -n 's/^\* \([^ ]*\):\( .*\)\{0,1\}$/\1/p')
-for t in tools deps:onnxruntime frontend:bootstrap frontend:dist \
+for t in tools frontend:bootstrap frontend:dist \
 	bindings bindings:check dev dev:frontend dev:run run:server uat \
 	build package sign:dev sign:developer-id notarize dmg notarize:dmg \
 	verify:release package:mas \
@@ -75,10 +78,19 @@ for t in tools deps:onnxruntime frontend:bootstrap frontend:dist \
 	frontend:install test:frontend design:status; do
 	printf '%s\n' "$names" | grep -Fqx -- "$t" || fail "task --list-all does not list $t"
 done
+# The retired library's name, split so this file does not contain it.
+retired_lib="on""nxruntime"
+if printf '%s\n' "$names" | grep -Fqx -- "deps:$retired_lib"; then
+	fail "task --list-all still lists deps:$retired_lib"
+fi
 
 # --- 2. arm64 only.
 n=$(grep -c 'universal\|amd64\|x86_64' "$taskfile" || true)
 [ "$n" = 0 ] || fail "Taskfile.yml mentions another architecture on $n line(s)"
+# No retired runtime library: no fetch, no ORT_DYLIB, no environment
+# variable naming it, no --dylib, no Contents/Frameworks.
+n=$(grep -ci "${retired_lib%runtime}\\|ORT_DYLIB\\|--dylib\\|Contents/Frameworks" "$taskfile" || true)
+[ "$n" = 0 ] || fail "Taskfile.yml still mentions the retired runtime library on $n line(s)"
 
 # --- 3. The signing tasks' variable checks.
 
@@ -177,7 +189,7 @@ while :; do
 	fi
 	todo="$todo $(calls "$t" | tr '\n' ' ')"
 done
-for t in build package sign:dev frontend:bootstrap frontend:dist deps:onnxruntime; do
+for t in build package sign:dev frontend:bootstrap frontend:dist; do
 	case $seen in *" $t "*) ;; *) fail "the call graph of build/package misses $t (calls() is broken)" ;; esac
 done
 # (package is left out of the dry run: sign:dev's precondition needs a

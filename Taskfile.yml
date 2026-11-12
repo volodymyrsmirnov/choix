@@ -190,11 +190,6 @@ tasks:
       - cmd: |
           command -v bun >/dev/null || { echo "tools: bun is not installed (brew install oven-sh/bun/bun)" >&2; exit 1; }
 
-  deps:onnxruntime:
-    desc: Fetch the pinned ONNX Runtime library into build/.tools/onnxruntime (build time only, SHA-256 verified, skipped when up to date)
-    cmds:
-      - sh build/onnxruntime/fetch.sh
-
   frontend:bootstrap:
     desc: Write the placeholder page the Go embed needs, when missing (frontend/dist from build/frontend-stub)
     cmds:
@@ -250,11 +245,11 @@ tasks:
       - bun run dev
 
   dev:run:
-    desc: Run the app against the Vite dev server, with the fetched ONNX Runtime library (wails3 dev starts it)
+    desc: Run the app against the Vite dev server (wails3 dev starts it)
     deps: [frontend:bootstrap]
     env: *go-env
     cmds:
-      - FRONTEND_DEVSERVER_URL=http://127.0.0.1:9245 CHOIX_ONNXRUNTIME_DYLIB="{{.ROOT_DIR}}/{{.ORT_DYLIB}}" go run ./cmd/choix
+      - FRONTEND_DEVSERVER_URL=http://127.0.0.1:9245 go run ./cmd/choix
 
   run:server:
     desc: Run the server build (no window, test-support bindings) with its data in .tmp/data
@@ -268,14 +263,11 @@ tasks:
     deps: [frontend:bootstrap]
     env: *go-env
     cmds:
-      - cmd: |
-          set -e
-          if [ -f "{{.ORT_DYLIB}}" ]; then export CHOIX_ONNXRUNTIME_DYLIB="{{.ROOT_DIR}}/{{.ORT_DYLIB}}"; fi
-          go test -tags uat -timeout 4h -run TestUAT -v ./internal/e2e/ {{.CLI_ARGS}}
+      - go test -tags uat -timeout 4h -run TestUAT -v ./internal/e2e/ {{.CLI_ARGS}}
 
   build:
     desc: Build bin/Choix (production, version-stamped) and check that it is arm64 only
-    deps: [frontend:dist, deps:onnxruntime]
+    deps: [frontend:dist]
     env: *go-env
     cmds:
       - >-
@@ -295,20 +287,19 @@ tasks:
     desc: Build, assemble bin/Choix.app (build/darwin/bundle.sh) and sign it ad hoc (sign:dev)
     cmds:
       - task: build
-      - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.VERSION}} --build {{.BUILD}} --dylib {{.ORT_DYLIB}}
+      - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.VERSION}} --build {{.BUILD}}
       - task: sign:dev
 
   sign:dev:
-    desc: 'Sign bin/Choix.app ad hoc for local runs: sandboxed, without the hardened runtime (spike S6)'
+    desc: 'Sign bin/Choix.app ad hoc for local runs: sandboxed, without the hardened runtime'
     preconditions:
       - sh: test -d bin/Choix.app
         msg: no bin/Choix.app; run task package
     cmds:
-      # Signed ad hoc, the hardened runtime's library validation refuses the
-      # bundled ONNX Runtime ("different Team IDs", spike S6), so there is no
-      # --options runtime here; sign:developer-id adds it. The library is
-      # signed before the app that seals it.
-      - codesign --force --sign - bin/Choix.app/Contents/Frameworks/libonnxruntime.dylib
+      # No --options runtime here; sign:developer-id adds it. Its original
+      # reason (library validation refusing a bundled library signed ad hoc)
+      # is gone with that library; turning the hardened runtime on for ad
+      # hoc builds is a pending follow-up.
       - codesign --force --sign - --entitlements build/darwin/entitlements.plist bin/Choix.app
       - codesign --verify --strict bin/Choix.app
 
@@ -322,7 +313,6 @@ tasks:
       - sh: test -d bin/Choix.app
         msg: no bin/Choix.app; run task package
     cmds:
-      - codesign --force --sign "$CHOIX_SIGN_IDENTITY" --options runtime --timestamp bin/Choix.app/Contents/Frameworks/libonnxruntime.dylib
       - codesign --force --sign "$CHOIX_SIGN_IDENTITY" --options runtime --timestamp --entitlements build/darwin/entitlements.plist bin/Choix.app
       - codesign --verify --strict bin/Choix.app
 
@@ -524,12 +514,11 @@ tasks:
         msg: 'package:mas needs a release tag vX.Y.Z at or before HEAD for a numeric version; git describe gave {{.VERSION}}'
     cmds:
       - task: build
-      - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.MAS_VERSION}} --build {{.BUILD}} --dylib {{.ORT_DYLIB}}
+      - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.MAS_VERSION}} --build {{.BUILD}}
       - cp "$CHOIX_MAS_PROFILE" bin/Choix.app/Contents/embedded.provisionprofile
       # [{][{] rather than two literal braces, which Task would read as a template.
       - sed -e "s/[{][{]TEAM_ID[}][}]/$CHOIX_TEAM_ID/g" build/darwin/entitlements.mas.plist.tmpl > bin/entitlements.mas.plist
       - plutil -lint -s bin/entitlements.mas.plist
-      - codesign --force --sign "$CHOIX_MAS_APP_IDENTITY" bin/Choix.app/Contents/Frameworks/libonnxruntime.dylib
       - codesign --force --sign "$CHOIX_MAS_APP_IDENTITY" --entitlements bin/entitlements.mas.plist bin/Choix.app
       - codesign --verify --strict bin/Choix.app
       - productbuild --component bin/Choix.app /Applications --sign "$CHOIX_MAS_INSTALLER_IDENTITY" bin/Choix-{{.VERSION}}.pkg
@@ -542,7 +531,6 @@ tasks:
       # The second go test runs the packages whose tests need the server build.
       - cmd: |
           set -e
-          if [ -f "{{.ORT_DYLIB}}" ]; then export CHOIX_ONNXRUNTIME_DYLIB="{{.ROOT_DIR}}/{{.ORT_DYLIB}}"; fi
           go test -race -count=1 {{.CLI_ARGS}} ./...
           go test -race -count=1 -tags server {{.CLI_ARGS}} ./internal/app/testsupport/ ./internal/app/menu/
 
@@ -601,4 +589,3 @@ vars:
   COMMIT:
     sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
   WAILS_VERSION: v3.1.0
-  ORT_DYLIB: build/.tools/onnxruntime/lib/libonnxruntime.dylib

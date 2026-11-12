@@ -12,9 +12,9 @@
 #      selectors of Wails' mac_private_api_darwin.go is in it. A tool that
 #      fails or prints nothing fails its check.
 #   3. The sandboxed self-check (CHOIX_SELFCHECK=1, run inside the app's
-#      container) reports "sandboxed":true, the pinned ONNX Runtime version,
-#      "bookmarkRoundTrip":true, "trashCheck":true and no provider error
-#      ("skipped: model missing" is not an error).
+#      container) reports "sandboxed":true, a Vision feature print
+#      ("featurePrint":"ok", "length":768, "revision":2), "quality":"ok",
+#      "bookmarkRoundTrip":true and "trashCheck":true.
 #   --head-only stops here and needs no photo folder.
 #   4. The source folder is chosen by rule — the smallest folder (in bytes)
 #      under $CHOIX_UAT_ROOT with at least 50 media files, counted
@@ -413,33 +413,27 @@ check_private_selectors() {
 	}
 }
 
-# check_selfcheck <report.json> <onnx runtime version>: the report reads
-# "sandboxed":true, "onnxRuntime":"<version>", "bookmarkRoundTrip":true,
-# "trashCheck":true, and neither provider is empty or an error.
+# check_selfcheck <report.json>: the report reads "sandboxed":true, a
+# vision object with "featurePrint":"ok", "length":768 and "revision":2,
+# "quality":"ok", "bookmarkRoundTrip":true and "trashCheck":true. Each
+# check is "<key path>|<compact JSON the report must contain>".
 check_selfcheck() {
 	[ -s "$1" ] || {
 		problem "self-check printed no report"
 		return 1
 	}
 	sc_status=0
-	for sc_want in '"sandboxed":true' "\"onnxRuntime\":\"$2\"" '"bookmarkRoundTrip":true' '"trashCheck":true'; do
+	for sc_check in 'sandboxed|"sandboxed":true' \
+		'vision.featurePrint|"featurePrint":"ok"' 'vision.length|"length":768' 'vision.revision|"revision":2' \
+		'quality|"quality":"ok"' 'bookmarkRoundTrip|"bookmarkRoundTrip":true' 'trashCheck|"trashCheck":true'; do
+		sc_key=${sc_check%%|*}
+		sc_want=${sc_check#*|}
 		if grep -Fq -- "$sc_want" "$1"; then
 			continue
 		fi
-		sc_key=${sc_want#\"}
-		sc_key=${sc_key%%\"*}
 		sc_val=$(plutil -extract "$sc_key" raw -o - "$1" 2>/dev/null) || sc_val='(missing)'
 		problem "self-check: $sc_key is '$sc_val', want ${sc_want#*:}"
 		sc_status=1
-	done
-	for sc_p in clip quality; do
-		sc_val=$(plutil -extract "providers.$sc_p" raw -o - "$1" 2>/dev/null) || sc_val=''
-		case $sc_val in
-		'' | error*)
-			problem "self-check: providers.$sc_p is '$sc_val'"
-			sc_status=1
-			;;
-		esac
 	done
 	return "$sc_status"
 }
@@ -661,13 +655,11 @@ main() {
 	say "2. static checks: ok (four entitlements; system libraries only; -tags=production; no private-API selector)"
 
 	# --- 3. The sandboxed self-check.
-	ort=$(sed -n 's/^ORT_VERSION=//p' "$root/build/onnxruntime/pin.env" | tail -n 1)
-	[ -n "$ort" ] || die "3. no ORT_VERSION in build/onnxruntime/pin.env"
 	set +e
 	CHOIX_SELFCHECK=1 "$exe" >"$work/selfcheck.json" 2>"$work/selfcheck.err"
 	code=$?
 	set -e
-	check_selfcheck "$work/selfcheck.json" "$ort" || {
+	check_selfcheck "$work/selfcheck.json" || {
 		tail -n 20 "$work/selfcheck.err" | redact >&2
 		die "3. self-check: FAIL"
 	}
@@ -675,9 +667,7 @@ main() {
 		tail -n 20 "$work/selfcheck.err" | redact >&2
 		die "3. self-check exited $code"
 	}
-	clip=$(plutil -extract providers.clip raw -o - "$work/selfcheck.json")
-	quality=$(plutil -extract providers.quality raw -o - "$work/selfcheck.json")
-	say "3. self-check: ok (sandboxed; onnxRuntime $ort; bookmark round trip; trash check; providers: clip $clip, quality $quality)"
+	say "3. self-check: ok (sandboxed; Vision feature print; quality formula; bookmark round trip; trash check)"
 
 	if [ "$head_only" = yes ]; then
 		check_home_choix

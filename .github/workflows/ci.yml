@@ -48,18 +48,8 @@ jobs:
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
-      # The pinned ONNX Runtime library (build time only; fetch.sh verifies its SHA-256).
-      - name: Cache ONNX Runtime
-        uses: actions/cache@v4
-        with:
-          path: build/.tools/onnxruntime
-          key: onnxruntime-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/onnxruntime/pin.env') }}
-
       - name: Install the build tools (wails3)
         run: task tools
-
-      - name: Fetch ONNX Runtime
-        run: task deps:onnxruntime
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -92,17 +82,11 @@ jobs:
         run: go install gotest.tools/gotestsum@v1.13.0
 
       # The race-detector run of task test, with a JUnit report and coverage.
-      # The ONNX tests use the fetched runtime; no model is downloaded, so the
-      # tests that need one skip.
       - name: Test with coverage
-        env:
-          CHOIX_ONNXRUNTIME_DYLIB: ${{ github.workspace }}/build/.tools/onnxruntime/lib/libonnxruntime.dylib
         run: gotestsum --junitfile test-results.xml -- -race -coverprofile=coverage.out -covermode=atomic ./...
 
       # The second go test of task test: keep this package list equal to it.
       - name: Test the server-tagged packages
-        env:
-          CHOIX_ONNXRUNTIME_DYLIB: ${{ github.workspace }}/build/.tools/onnxruntime/lib/libonnxruntime.dylib
         run: go test -race -count=1 -tags server ./internal/app/testsupport/ ./internal/app/menu/
 
       - name: Test report
@@ -152,12 +136,10 @@ jobs:
         run: |
           sh build/taskfile_test.sh
           sh build/darwin/bundle_test.sh
-          sh build/onnxruntime/fetch_test.sh
 
       # The binding-level end-to-end specs (frontend/e2e/api) against the
       # server build, on port 8090/8091 with throw-away data directories.
-      # Chromium is installed by the step above; the model settings are off
-      # in the E2E config, so nothing is downloaded.
+      # Chromium is installed by the step above.
       - name: End-to-end tests (server build)
         run: task test:e2e
 
@@ -176,14 +158,14 @@ jobs:
               sys.exit("the signed entitlements differ from build/darwin/entitlements.plist: want %r" % sorted(want))
           EOF
 
-      # The shipped build ignores CHOIX_DATA_DIR and CHOIX_ONNXRUNTIME_DYLIB.
-      # No model is installed on the runner, so both providers report
-      # "skipped: model missing", which is not a failure.
+      # The shipped build ignores CHOIX_DATA_DIR. The report carries one
+      # Vision feature print and the quality formula's score of a generated
+      # image.
       - name: Self-check of the sandboxed bundle
         run: |
           out=$(CHOIX_SELFCHECK=1 bin/Choix.app/Contents/MacOS/Choix)
           echo "$out"
-          for want in '"sandboxed":true' '"onnxRuntime":"1.25.0"' '"bookmarkRoundTrip":true' '"trashCheck":true'; do
+          for want in '"sandboxed":true' '"featurePrint":"ok"' '"length":768' '"revision":2' '"quality":"ok"' '"bookmarkRoundTrip":true' '"trashCheck":true'; do
             case $out in
             *"$want"*) ;;
             *) echo "self-check: no $want in the report" >&2; exit 1 ;;

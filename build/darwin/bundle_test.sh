@@ -61,11 +61,10 @@ tmp=$(mktemp -d "${tmproot%/}/choix bundle test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
 
-# --- Inputs: a dummy binary and dylib, one carrying an extended attribute.
+# --- Input: a dummy binary carrying an extended attribute.
 mkdir "$tmp/in put"
 printf '#!/bin/sh\necho choix\n' >"$tmp/in put/choix bin"
 chmod 755 "$tmp/in put/choix bin"
-printf 'not really a dylib\n' >"$tmp/in put/libonnxruntime.dylib"
 xattr -w com.apple.quarantine '0081;00000000;test;' "$tmp/in put/choix bin"
 
 app="$tmp/out dir/Choix.app"
@@ -73,19 +72,19 @@ mkdir -p "$app/Contents/Stale"
 printf 'stale\n' >"$app/Contents/Stale/file"
 
 sh "$bundle" --binary "$tmp/in put/choix bin" --out "$app" \
-	--version 2.0.0 --build 42 --dylib "$tmp/in put/libonnxruntime.dylib" >/dev/null ||
+	--version 2.0.0 --build 42 >/dev/null ||
 	fail "bundle.sh exited non-zero"
 
-# --- Exactly the five files (the stale one is gone), no symlinks.
+# --- Exactly the four files (the stale one is gone), no Frameworks
+# directory, no symlinks.
 got=$(cd "$app" && find . -type f | LC_ALL=C sort)
-want=$(printf '%s\n' ./Contents/Frameworks/libonnxruntime.dylib ./Contents/Info.plist \
+want=$(printf '%s\n' ./Contents/Info.plist \
 	./Contents/MacOS/Choix ./Contents/PkgInfo ./Contents/Resources/choix.icns | LC_ALL=C sort)
 expect_eq "bundle files" "$got" "$want"
+[ ! -e "$app/Contents/Frameworks" ] || fail "bundle has a Contents/Frameworks directory"
 [ -z "$(find "$app" -type l)" ] || fail "bundle contains a symlink"
 [ -x "$app/Contents/MacOS/Choix" ] || fail "Contents/MacOS/Choix is not executable"
 cmp -s "$app/Contents/MacOS/Choix" "$tmp/in put/choix bin" || fail "binary not copied verbatim"
-cmp -s "$app/Contents/Frameworks/libonnxruntime.dylib" "$tmp/in put/libonnxruntime.dylib" ||
-	fail "dylib not copied verbatim"
 cmp -s "$app/Contents/Resources/choix.icns" "$here/../../assets/icon/choix.icns" ||
 	fail "icon is not assets/icon/choix.icns"
 expect_eq "PkgInfo" "$(cat "$app/Contents/PkgInfo")" 'APPL????'
@@ -177,26 +176,28 @@ keep="$tmp/keep me"
 mkdir "$keep"
 printf 'precious\n' >"$keep/file"
 if sh "$bundle" --binary "$tmp/in put/choix bin" --out "$keep" --version 2.0.0 \
-	--build 42 --dylib "$tmp/in put/libonnxruntime.dylib" 2>/dev/null; then
+	--build 42 2>/dev/null; then
 	fail "bundle.sh accepted an --out that does not end in .app"
 fi
 [ -f "$keep/file" ] || fail "bundle.sh removed a non-.app --out"
 
 if sh "$bundle" 2>/dev/null; then fail "bundle.sh accepted no arguments"; fi
+# --dylib is gone: the bundle carries no library.
+printf 'not really a dylib\n' >"$tmp/in put/lib.dylib"
 if sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/x.app" --version 2.0.0 \
-	--build 42 2>/dev/null; then
-	fail "bundle.sh accepted a missing --dylib"
+	--build 42 --dylib "$tmp/in put/lib.dylib" 2>/dev/null; then
+	fail "bundle.sh accepted --dylib"
 fi
-if sh "$bundle" --binary "$tmp/nope" --out "$tmp/y.app" --version 2.0.0 --build 42 \
-	--dylib "$tmp/in put/libonnxruntime.dylib" 2>/dev/null; then
+[ ! -e "$tmp/x.app" ] || fail "bundle.sh wrote a bundle when given --dylib"
+if sh "$bundle" --binary "$tmp/nope" --out "$tmp/y.app" --version 2.0.0 --build 42 2>/dev/null; then
 	fail "bundle.sh accepted a missing binary"
 fi
 if sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/z.app" --version '2.0</string>' \
-	--build 42 --dylib "$tmp/in put/libonnxruntime.dylib" 2>/dev/null; then
+	--build 42 2>/dev/null; then
 	fail "bundle.sh accepted a version that would break the plist"
 fi
 if sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/w.app" --version 2.0.0 \
-	--build 42 --dylib "$tmp/in put/libonnxruntime.dylib" --bogus 1 2>/dev/null; then
+	--build 42 --bogus 1 2>/dev/null; then
 	fail "bundle.sh accepted an unknown flag"
 fi
 
