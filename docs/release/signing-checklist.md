@@ -16,7 +16,7 @@ A signing task started without one of its variables stops before doing anything,
 | 3 | A **notarytool keychain profile** (App Store Connect API key or Apple ID with an app-specific password, stored in the keychain) | `xcrun notarytool store-credentials <profile-name>` | `notarize`, `notarize:dmg` |
 | 4 | An **Apple Distribution** (Mac App Distribution) certificate, with its private key, in the login keychain | Certificates → Apple Distribution | `package:mas` |
 | 5 | A **Mac Installer Distribution** certificate, with its private key, in the login keychain | Certificates → Mac Installer Distribution | `package:mas` |
-| 6 | An explicit **App ID** for `com.github.volodymyrsmirnov.choix` and an **App Store Connect app record** for it (platform macOS) | Identifiers → App IDs; App Store Connect → Apps → New App | `package:mas` |
+| 6 | An explicit **App ID** for `tech.inkhorn.choix` and an **App Store Connect app record** for it (platform macOS) | Identifiers → App IDs; App Store Connect → Apps → New App | `package:mas` |
 | 7 | A **Mac App Store provisioning profile** (distribution, macOS) for that App ID, downloaded as a `.provisionprofile` file | Profiles → Mac App Store Connect | `package:mas` |
 
 `security find-identity -v -p codesigning` lists the signing identities in your keychains (items 2 and 4); item 5 is
@@ -45,7 +45,7 @@ order:
 1. `task package` — builds `bin/Choix`, assembles `bin/Choix.app` (no bundled library) and signs it ad hoc. Needs no
    variable.
 2. `task sign:developer-id` — re-signs the app with `CHOIX_SIGN_IDENTITY`, `--options runtime --timestamp` and
-   `build/darwin/entitlements.plist` (the four sandbox entitlements).
+   `build/darwin/entitlements.plist` (the three sandbox entitlements).
 3. `task notarize` — zips the app, submits it with `xcrun notarytool submit --wait --keychain-profile
    "$CHOIX_NOTARY_PROFILE"`, fails unless Apple answers `Accepted` (printing the notary log when it does not), and
    staples the ticket to `bin/Choix.app`.
@@ -83,14 +83,23 @@ reports `"sandboxed":true`, `"featurePrint":"ok"` and `"quality":"ok"` on the in
   job, naming it, before anything is built, signed or published.
 - **Run workflow** on the Actions tab (`workflow_dispatch`): a dry run. It builds the ad hoc signed app (artifact
   `Choix-app`) and, when the five signing secrets are set, signs and notarizes it and makes the notarized disk image
-  (artifact `Choix-dmg`). It never creates a release and never touches the tap. Without the signing secrets (as in
-  a fork) it only builds, and the run summary says signing was skipped.
+  (artifact `Choix-dmg`); when the six Mac App Store secrets are set, it also builds the Mac App Store package
+  (artifact `Choix-mas-pkg`). It never creates a release, never touches the tap and never uploads to App Store
+  Connect. Without the signing secrets (as in a fork) it only builds, and the run summary says what was skipped.
 
 **What a release run does.** `gate` checks the tag and the secrets; `build` runs `task package VERSION=<version>`;
 `sign` imports the certificate into a throwaway keychain, takes the first valid "Developer ID Application" identity
 in it as `CHOIX_SIGN_IDENTITY` (its SHA-1 hash, masked with `::add-mask::`; no name or Team ID is written to the log), stores the API key there
 as the notarytool profile `choix-release` (`CHOIX_NOTARY_PROFILE`), runs `task sign:developer-id notarize dmg
 notarize:dmg verify:release`, and deletes the keychain, the `.p12` and the `.p8` at the end whatever happened;
+`mas` imports the Apple Distribution and Mac Installer Distribution certificates into a second throwaway keychain,
+takes the first valid "Apple Distribution" identity as `CHOIX_MAS_APP_IDENTITY` and the first valid "Mac Installer
+Distribution" (or "3rd Party Mac Developer Installer") identity as `CHOIX_MAS_INSTALLER_IDENTITY` (both by SHA-1
+hash, masked), decodes the provisioning profile to a temporary file (`CHOIX_MAS_PROFILE`), sets `CHOIX_TEAM_ID`
+(masked), runs `task package:mas VERSION=<version>` with productbuild's signer line redacted, uploads
+`Choix-<version>.pkg` as the artifact `Choix-mas-pkg` (never to the GitHub release), and deletes the keychain, both
+`.p12` files and the profile at the end whatever happened; the release does not wait for it. On a dry run `<version>`
+is `git describe`'s, and with no `vX.Y.Z` tag at or before `HEAD` the job stops with a notice instead of failing;
 `release` runs `gh release create v<version> Choix-<version>-arm64.dmg --title "Choix <version>" --generate-notes`
 (the only job that can write to the repository); `homebrew` calls the tap's reusable workflow
 (`volodymyrsmirnov/homebrew-tap/.github/workflows/update.yml@main`), which writes `Casks/choix.rb` with the new
@@ -107,10 +116,17 @@ version and SHA-256 and pushes it.
 | `APPSTORE_ISSUER_ID` | That team's issuer ID (a UUID) | The same page, above the keys |
 | `APPSTORE_PRIVATE_KEY` | The key's `AuthKey_<id>.p8`, base64-encoded | The `.p8` downloads once, when the key is made; `base64 -i AuthKey_<id>.p8 \| gh secret set APPSTORE_PRIVATE_KEY` |
 | `TAP_GITHUB_TOKEN` | A token that can push to `volodymyrsmirnov/homebrew-tap` (already set) | A fine-grained personal access token for that repository with Contents: read and write |
+| `MAS_APP_CERTIFICATE` | The Apple Distribution certificate (item 4) with its private key, as a `.p12`, base64-encoded | Keychain Access → My Certificates → select it (with its key) → Export → `.p12` with a password; then `base64 -i AppleDistribution.p12 \| gh secret set MAS_APP_CERTIFICATE` |
+| `MAS_APP_CERTIFICATE_PWD` | That `.p12`'s export password | `gh secret set MAS_APP_CERTIFICATE_PWD` (prompts) |
+| `MAS_INSTALLER_CERTIFICATE` | The Mac Installer Distribution certificate (item 5) with its private key, as a `.p12`, base64-encoded | The same export for that certificate; then `base64 -i MacInstaller.p12 \| gh secret set MAS_INSTALLER_CERTIFICATE` |
+| `MAS_INSTALLER_CERTIFICATE_PWD` | That `.p12`'s export password | `gh secret set MAS_INSTALLER_CERTIFICATE_PWD` (prompts) |
+| `MAS_PROVISIONING_PROFILE` | The Mac App Store provisioning profile (item 7), base64-encoded | `base64 -i Choix_Mac_App_Store.provisionprofile \| gh secret set MAS_PROVISIONING_PROFILE` |
+| `APPLE_TEAM_ID` | The 10-character Team ID (`CHOIX_TEAM_ID`) | `gh secret set APPLE_TEAM_ID` (prompts); it is shown under Membership |
 
-Delete the exported `.p12` and the `.p8` from disk once the secrets are set (keep the `.p8` somewhere safe if you
-want it for local notarization: Apple does not let you download it again). The Mac App Store package is not built in
-CI: `task package:mas` runs locally with the variables above.
+Delete the exported `.p12` files and the `.p8` from disk once the secrets are set (keep the `.p8` somewhere safe if
+you want it for local notarization: Apple does not let you download it again). CI builds the Mac App Store package as
+the workflow artifact `Choix-mas-pkg`; uploading it to App Store Connect stays manual (see "Mac App Store" below).
+`task package:mas` also runs locally with the variables above.
 
 **Rehearsing a release locally,** with the certificate in your login keychain:
 
@@ -126,12 +142,19 @@ CI: `task package:mas` runs locally with the variables above.
 
 ## Mac App Store
 
+The App Store Connect record and its listing text are in [`app-store.md`](app-store.md).
+
 1. `task package:mas` — builds, assembles `bin/Choix.app`, copies `CHOIX_MAS_PROFILE` to
    `Contents/embedded.provisionprofile`, renders `build/darwin/entitlements.mas.plist.tmpl` with `CHOIX_TEAM_ID`
-   (the four sandbox entitlements plus the application and team identifiers), signs the app with
+   (the three sandbox entitlements plus the application and team identifiers), signs the app with
    `CHOIX_MAS_APP_IDENTITY`, and writes `bin/Choix-<version>.pkg` with `productbuild --component bin/Choix.app
    /Applications --sign "$CHOIX_MAS_INSTALLER_IDENTITY"`.
 2. Upload the `.pkg` to App Store Connect with Apple's Transporter app, then submit the build for review there.
+
+The release workflow runs step 1 for every release (and for a dry run when the Mac App Store secrets are set) and
+keeps `Choix-<version>.pkg` as the workflow artifact `Choix-mas-pkg`; it is not attached to the GitHub release. Step 2
+stays manual: download the artifact from the run (Actions → the run → Artifacts), unzip it and upload the `.pkg` with
+Transporter.
 
 App Store Connect needs a numeric version, so `package:mas` takes it from the last release tag (`vX.Y.Z` at or before
 `HEAD`, without the `v` and `git describe`'s suffix) and stops when there is none; the build number is the commit
@@ -142,7 +165,8 @@ again for a local build.
 
 - Never commit a certificate, private key, provisioning profile, API key, keychain profile secret or Team ID.
 - Never add a temporary-exception entitlement or `com.apple.security.cs.disable-library-validation`: the entitlements
-  are exactly the four in `build/darwin/entitlements.plist` (development and Developer ID builds), and for the Mac App
-  Store those four plus the application and team identifiers in `build/darwin/entitlements.mas.plist.tmpl`.
+  are exactly the three in `build/darwin/entitlements.plist` (development and Developer ID builds), and for the Mac App
+  Store those three plus the application and team identifiers in `build/darwin/entitlements.mas.plist.tmpl`. There
+  is no network entitlement: Choix makes no network request.
 - Never sign with `--deep`. The bundle holds no nested code to sign; if one is ever added, sign it on its own, before
   the app that seals it.

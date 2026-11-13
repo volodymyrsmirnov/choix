@@ -181,7 +181,7 @@ expect_refused "photo folder inside TMPDIR" "$overlap"
 uat="$ovl/scratch/.." smoke_tmp="$ovl"
 run_smoke
 expect_refused "TMPDIR is the photo folder" "$overlap"
-in_container="$tmp/home/Library/Containers/com.github.volodymyrsmirnov.choix/Data/tmp"
+in_container="$tmp/home/Library/Containers/tech.inkhorn.choix/Data/tmp"
 mkdir -p "$in_container"
 uat=- smoke_tmp=$in_container
 run_smoke --head-only
@@ -207,7 +207,7 @@ uat="$tmp/no such folder" smoke_tmp="$tmp/tmp"
 run_smoke --head-only
 expect_refused "head only: CHOIX_UAT_ROOT set but missing" "CHOIX_UAT_ROOT is not an existing folder"
 # The photo folder and the container overlap.
-photos_in_container="$tmp/home/Library/Containers/com.github.volodymyrsmirnov.choix/Data/photos"
+photos_in_container="$tmp/home/Library/Containers/tech.inkhorn.choix/Data/photos"
 media "$photos_in_container/Trip Gamma" 50 10
 uat=$photos_in_container smoke_tmp="$tmp/tmp"
 run_smoke --head-only
@@ -292,13 +292,13 @@ expect_eq "choose_folder, nested" "$(choose_folder "$corpus")" "$corpus/Nested/I
 check "choose_folder, none" fail choose_folder "$few"
 expect_eq "media_count skips hidden and picks" "$(media_count "$corpus/Mixed")" 10
 
-# Entitlements: exactly the four, all true.
+# Entitlements: exactly the three, all true.
 check "entitlements.plist" pass check_entitlements "$entitlements"
-sed -e 's#<key>com.apple.security.network.client</key>#<key>com.apple.security.network.server</key><true/>&#' \
-	"$entitlements" >"$tmp/five.plist"
-check "five entitlements" fail check_entitlements "$tmp/five.plist"
-sed -e '/network.client/{N;d;}' "$entitlements" >"$tmp/three.plist"
-check "three entitlements" fail check_entitlements "$tmp/three.plist"
+sed -e 's#<key>com.apple.security.app-sandbox</key>#<key>com.apple.security.network.client</key><true/>&#' \
+	"$entitlements" >"$tmp/four.plist"
+check "four entitlements (network.client)" fail check_entitlements "$tmp/four.plist"
+sed -e '/bookmarks.app-scope/{N;d;}' "$entitlements" >"$tmp/two.plist"
+check "two entitlements" fail check_entitlements "$tmp/two.plist"
 awk '/app-sandbox/ { print; getline; print "\t<false/>"; next } { print }' \
 	"$entitlements" >"$tmp/false.plist"
 check "a false entitlement" fail check_entitlements "$tmp/false.plist"

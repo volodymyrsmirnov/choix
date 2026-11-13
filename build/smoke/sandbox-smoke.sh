@@ -5,7 +5,7 @@
 #   sandbox-smoke.sh [--head-only]
 #
 #   1. `task package` builds and ad hoc signs bin/Choix.app.
-#   2. Static checks on bin/Choix.app: exactly the four sandbox
+#   2. Static checks on bin/Choix.app: exactly the three sandbox
 #      entitlements; the executable links nothing outside /usr/lib, /System,
 #      @rpath and @executable_path; it was built with -tags=production and
 #      neither private_mac_apis nor server; none of the private-API
@@ -63,7 +63,7 @@
 set -eu
 
 prog=sandbox-smoke
-bundle_id=com.github.volodymyrsmirnov.choix
+bundle_id=tech.inkhorn.choix
 min_media=50
 scan_timeout=3600
 
@@ -73,11 +73,10 @@ corpus_canon=''
 src_canon=''
 home_canon=''
 
-# The four entitlements of build/darwin/entitlements.plist, all true.
+# The three entitlements of build/darwin/entitlements.plist, all true.
 want_entitlements='com.apple.security.app-sandbox
 com.apple.security.files.bookmarks.app-scope
-com.apple.security.files.user-selected.read-write
-com.apple.security.network.client'
+com.apple.security.files.user-selected.read-write'
 
 # Selectors only Wails' mac_private_api_darwin.go (build tag
 # private_mac_apis) sends.
@@ -341,7 +340,7 @@ run_tool() {
 	}
 }
 
-# check_entitlements <plist>: exactly the four entitlements, each true.
+# check_entitlements <plist>: exactly the three entitlements, each true.
 check_entitlements() {
 	ce_json=$(plutil -convert json -o - "$1" 2>/dev/null) || {
 		problem "entitlements: not a property list"
@@ -350,7 +349,7 @@ check_entitlements() {
 	ce_got=$(printf '%s' "$ce_json" | tr -d '{}\n' | tr ',' '\n' | LC_ALL=C sort)
 	ce_want=$(printf '%s\n' "$want_entitlements" | sed -e 's/^.*$/"&":true/' | LC_ALL=C sort)
 	[ "$ce_got" = "$ce_want" ] || {
-		problem "entitlements: got $(printf '%s' "$ce_got" | tr '\n' ' '); want the four sandbox entitlements, each true"
+		problem "entitlements: got $(printf '%s' "$ce_got" | tr '\n' ' '); want the three sandbox entitlements, each true"
 		return 1
 	}
 }
@@ -652,7 +651,7 @@ main() {
 	run_tool "$work/goversion.txt" "$work/goversion.err" go version -m "$exe" || die "2. go version -m: FAIL"
 	check_build_tags "$work/goversion.txt" || die "2. build tags: FAIL"
 	check_private_selectors "$exe" "$work" || die "2. private-API selectors: FAIL"
-	say "2. static checks: ok (four entitlements; system libraries only; -tags=production; no private-API selector)"
+	say "2. static checks: ok (three entitlements; system libraries only; -tags=production; no private-API selector)"
 
 	# --- 3. The sandboxed self-check.
 	set +e
