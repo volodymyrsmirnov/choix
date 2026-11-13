@@ -200,4 +200,18 @@ if sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/w.app" --version 2.
 	fail "bundle.sh accepted an unknown flag"
 fi
 
+# --- Every file and directory of the bundle is readable by everyone, even
+# when the caller's umask is strict (the release workflow's signing steps
+# run under umask 077). A Mac App Store package installs the app as root, and
+# App Store Connect rejects one holding a file only root can read (90255).
+(
+	umask 077
+	sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/strict.app" --version 2.0.0 \
+		--build 42 >/dev/null
+) || fail "bundle.sh exited non-zero under umask 077"
+unreadable=$(find "$tmp/strict.app" ! -perm -o+r -print)
+expect_eq "bundle files readable by others under umask 077" "$unreadable" ""
+untraversable=$(find "$tmp/strict.app" -type d ! -perm -o+x -print)
+expect_eq "bundle directories searchable by others under umask 077" "$untraversable" ""
+
 echo ok

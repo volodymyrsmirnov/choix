@@ -10,8 +10,12 @@
 #   Contents/Resources/choix.icns   (from assets/icon/choix.icns)
 #   Contents/Info.plist             (Info.plist.tmpl with VERSION and BUILD)
 #   Contents/PkgInfo                (APPL????)
-# and its extended attributes are cleared.
+# and its extended attributes are cleared. Everything in it is readable by
+# everyone, whatever the caller's umask: a Mac App Store package installs the
+# app as root, and App Store Connect rejects one holding a file only root can
+# read (90255).
 set -eu
+umask 022
 
 prog=bundle.sh
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
