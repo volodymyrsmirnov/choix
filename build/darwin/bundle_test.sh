@@ -128,17 +128,18 @@ if (plist_bool_key "$strent" com.apple.security.app-sandbox) >/dev/null 2>&1; th
 	fail "plist_bool_key accepted <string>true</string>"
 fi
 
-# --- Entitlements: exactly the three sandbox keys, all boolean true.
+# --- Entitlements: exactly the four sandbox keys, all boolean true.
 ent_keys=$(printf '%s\n' com.apple.security.app-sandbox \
 	com.apple.security.files.user-selected.read-write \
-	com.apple.security.files.bookmarks.app-scope | LC_ALL=C sort)
+	com.apple.security.files.bookmarks.app-scope \
+	com.apple.security.network.client | LC_ALL=C sort)
 ent="$here/entitlements.plist"
 expect_eq "entitlements.plist keys" "$(plist_keys "$ent")" "$ent_keys"
 for k in $ent_keys; do
 	expect_eq "entitlements.plist $k" "$(plist_bool_key "$ent" "$k")" true
 done
 
-# --- MAS entitlements: the same three plus the two team identifiers.
+# --- MAS entitlements: the same four plus the two team identifiers.
 team=ABCDE12345
 mas="$tmp/entitlements.mas.plist"
 sed -e "s/{{TEAM_ID}}/$team/g" "$here/entitlements.mas.plist.tmpl" >"$mas"
@@ -199,5 +200,19 @@ if sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/w.app" --version 2.
 	--build 42 --bogus 1 2>/dev/null; then
 	fail "bundle.sh accepted an unknown flag"
 fi
+
+# --- Every file and directory of the bundle is readable by everyone, even
+# when the caller's umask is strict (the release workflow's signing steps
+# run under umask 077). A Mac App Store package installs the app as root, and
+# App Store Connect rejects one holding a file only root can read (90255).
+(
+	umask 077
+	sh "$bundle" --binary "$tmp/in put/choix bin" --out "$tmp/strict.app" --version 2.0.0 \
+		--build 42 >/dev/null
+) || fail "bundle.sh exited non-zero under umask 077"
+unreadable=$(find "$tmp/strict.app" ! -perm -o+r -print)
+expect_eq "bundle files readable by others under umask 077" "$unreadable" ""
+untraversable=$(find "$tmp/strict.app" -type d ! -perm -o+x -print)
+expect_eq "bundle directories searchable by others under umask 077" "$untraversable" ""
 
 echo ok

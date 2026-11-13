@@ -515,12 +515,22 @@ tasks:
     cmds:
       - task: build
       - sh build/darwin/bundle.sh --binary bin/Choix --out bin/Choix.app --version {{.MAS_VERSION}} --build {{.BUILD}}
-      - cp "$CHOIX_MAS_PROFILE" bin/Choix.app/Contents/embedded.provisionprofile
+      # install -m, not cp: cp keeps the source's mode, and the release
+      # workflow decodes the profile under umask 077.
+      - install -m 0644 "$CHOIX_MAS_PROFILE" bin/Choix.app/Contents/embedded.provisionprofile
       # [{][{] rather than two literal braces, which Task would read as a template.
       - sed -e "s/[{][{]TEAM_ID[}][}]/$CHOIX_TEAM_ID/g" build/darwin/entitlements.mas.plist.tmpl > bin/entitlements.mas.plist
       - plutil -lint -s bin/entitlements.mas.plist
       - codesign --force --sign "$CHOIX_MAS_APP_IDENTITY" --entitlements bin/entitlements.mas.plist bin/Choix.app
       - codesign --verify --strict bin/Choix.app
+      # The package installs the app as root: App Store Connect rejects one
+      # holding a file or folder only root can read (90255).
+      - cmd: |
+          bad=$(find bin/Choix.app \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -print)
+          if [ -n "$bad" ]; then
+            printf 'package:mas: not readable by everyone:\n%s\n' "$bad" >&2
+            exit 1
+          fi
       - productbuild --component bin/Choix.app /Applications --sign "$CHOIX_MAS_INSTALLER_IDENTITY" bin/Choix-{{.VERSION}}.pkg
 
   test:

@@ -41,7 +41,7 @@ CHOIX_UAT_ROOT=<your photo folder> task smoke:sandbox    # steps 1–7
 
 What `bin/Choix.app` is: built with `-tags production`, arm64, minimum macOS 14.0, no bundled library (no
 `Contents/Frameworks`), signed ad hoc by `sign:dev` **without** the hardened runtime (turning it on for ad hoc builds
-is a pending follow-up; the Developer ID build has it), with exactly the three entitlements of
+is a pending follow-up; the Developer ID build has it), with exactly the four entitlements of
 `build/darwin/entitlements.plist`.
 
 ### What the script checks
@@ -49,7 +49,7 @@ is a pending follow-up; the Developer ID build has it), with exactly the three e
 | Step | What | Passes when |
 |---|---|---|
 | 1 | `task package` | it succeeds |
-| 2 | Static checks on `bin/Choix.app` | `codesign -d --entitlements -` lists exactly the three entitlements, each true; `otool -L` on the executable names nothing outside `/usr/lib`, `/System`, `@rpath`, `@executable_path`; `go version -m` shows `-tags=production` without `private_mac_apis` or `server`; `strings` finds none of `setGroupIdentifier:`, `setGroupSpacing:`, `developerExtrasEnabled` (the selectors of Wails' `mac_private_api_darwin.go`) |
+| 2 | Static checks on `bin/Choix.app` | `codesign -d --entitlements -` lists exactly the four entitlements, each true; `otool -L` on the executable names nothing outside `/usr/lib`, `/System`, `@rpath`, `@executable_path`; `go version -m` shows `-tags=production` without `private_mac_apis` or `server`; `strings` finds none of `setGroupIdentifier:`, `setGroupSpacing:`, `developerExtrasEnabled` (the selectors of Wails' `mac_private_api_darwin.go`) |
 | 3 | `CHOIX_SELFCHECK=1` run of the executable (sandboxed, in the app's container) | the report has `"sandboxed":true`, a `vision` object with `"featurePrint":"ok"`, `"length":768` and `"revision":2`, `"quality":"ok"`, `"bookmarkRoundTrip":true` and `"trashCheck":true`, and the self-check exits 0 |
 | 4 | Manifest of the original, `cp -cR` clone | the clone exists |
 | 5 | Launch, add the clone through the open panel | `folder-1` appears in `library.db` |
@@ -109,7 +109,7 @@ One row per run: the date, the build (`git describe` of the commit packaged), th
 
 ## The network entitlement
 
-Choix makes no network request (hard rule 6) and carries no network entitlement: the owner removed
-`com.apple.security.network.client` from every build in November 2026. If a packaged build ever shows a blank or white
-window, check `log show --last 10m --predicate 'process == "sandboxd"'` for a `deny` line for Choix before anything
-else, and record what was seen here.
+Choix makes no network request (hard rule 6), but `com.apple.security.network.client` is required: the sandboxed
+WKWebView needs it to load the app's own pages. 2.2.0 shipped without it, and its window was blank on launch; 2.2.1
+restored it. Do not remove it. Any change to the entitlements is checked by launching the packaged app (`task
+package`, then open `bin/Choix.app`) and confirming the window renders the Library.
