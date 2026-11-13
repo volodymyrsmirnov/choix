@@ -128,17 +128,18 @@ if (plist_bool_key "$strent" com.apple.security.app-sandbox) >/dev/null 2>&1; th
 	fail "plist_bool_key accepted <string>true</string>"
 fi
 
-# --- Entitlements: exactly the three sandbox keys, all boolean true.
+# --- Entitlements: exactly the four sandbox keys, all boolean true.
 ent_keys=$(printf '%s\n' com.apple.security.app-sandbox \
 	com.apple.security.files.user-selected.read-write \
-	com.apple.security.files.bookmarks.app-scope | LC_ALL=C sort)
+	com.apple.security.files.bookmarks.app-scope \
+	com.apple.security.network.client | LC_ALL=C sort)
 ent="$here/entitlements.plist"
 expect_eq "entitlements.plist keys" "$(plist_keys "$ent")" "$ent_keys"
 for k in $ent_keys; do
 	expect_eq "entitlements.plist $k" "$(plist_bool_key "$ent" "$k")" true
 done
 
-# --- MAS entitlements: the same three plus the two team identifiers.
+# --- MAS entitlements: the same four plus the two team identifiers.
 team=ABCDE12345
 mas="$tmp/entitlements.mas.plist"
 sed -e "s/{{TEAM_ID}}/$team/g" "$here/entitlements.mas.plist.tmpl" >"$mas"

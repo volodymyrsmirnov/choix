@@ -45,7 +45,7 @@ order:
 1. `task package` — builds `bin/Choix`, assembles `bin/Choix.app` (no bundled library) and signs it ad hoc. Needs no
    variable.
 2. `task sign:developer-id` — re-signs the app with `CHOIX_SIGN_IDENTITY`, `--options runtime --timestamp` and
-   `build/darwin/entitlements.plist` (the three sandbox entitlements).
+   `build/darwin/entitlements.plist` (the four sandbox entitlements).
 3. `task notarize` — zips the app, submits it with `xcrun notarytool submit --wait --keychain-profile
    "$CHOIX_NOTARY_PROFILE"`, fails unless Apple answers `Accepted` (printing the notary log when it does not), and
    staples the ticket to `bin/Choix.app`.
@@ -146,7 +146,7 @@ The App Store Connect record and its listing text are in [`app-store.md`](app-st
 
 1. `task package:mas` — builds, assembles `bin/Choix.app`, copies `CHOIX_MAS_PROFILE` to
    `Contents/embedded.provisionprofile`, renders `build/darwin/entitlements.mas.plist.tmpl` with `CHOIX_TEAM_ID`
-   (the three sandbox entitlements plus the application and team identifiers), signs the app with
+   (the four sandbox entitlements plus the application and team identifiers), signs the app with
    `CHOIX_MAS_APP_IDENTITY`, and writes `bin/Choix-<version>.pkg` with `productbuild --component bin/Choix.app
    /Applications --sign "$CHOIX_MAS_INSTALLER_IDENTITY"`.
 2. Upload the `.pkg` to App Store Connect with Apple's Transporter app, then submit the build for review there.
@@ -165,8 +165,9 @@ again for a local build.
 
 - Never commit a certificate, private key, provisioning profile, API key, keychain profile secret or Team ID.
 - Never add a temporary-exception entitlement or `com.apple.security.cs.disable-library-validation`: the entitlements
-  are exactly the three in `build/darwin/entitlements.plist` (development and Developer ID builds), and for the Mac App
-  Store those three plus the application and team identifiers in `build/darwin/entitlements.mas.plist.tmpl`. There
-  is no network entitlement: Choix makes no network request.
+  are exactly the four in `build/darwin/entitlements.plist` (development and Developer ID builds), and for the Mac App
+  Store those four plus the application and team identifiers in `build/darwin/entitlements.mas.plist.tmpl`.
+  `com.apple.security.network.client` stays although Choix makes no network request: the sandboxed WKWebView needs
+  it to load the app's pages (2.2.0 shipped without it and showed a blank window).
 - Never sign with `--deep`. The bundle holds no nested code to sign; if one is ever added, sign it on its own, before
   the app that seals it.

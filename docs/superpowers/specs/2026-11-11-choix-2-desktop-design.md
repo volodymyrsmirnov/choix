@@ -273,11 +273,10 @@ Rules:
 
 - Entitlements (both builds): `com.apple.security.app-sandbox`,
   `com.apple.security.files.user-selected.read-write`,
-  `com.apple.security.files.bookmarks.app-scope`. There is no network
-  entitlement: the app makes no network request, and the owner removed
-  `com.apple.security.network.client` in November 2026. The Mac App Store
-  build adds only the two identifiers its provisioning profile requires
-  (`com.apple.application-identifier`, `com.apple.developer.team-identifier`).
+  `com.apple.security.files.bookmarks.app-scope`,
+  `com.apple.security.network.client` (required by the sandboxed
+  WKWebView, though the app makes no network request; 2.2.0 shipped
+  without it and showed a blank window, `docs/release/sandbox-smoke.md`).
 - When the user picks or drops a folder, the app creates an **app-scoped
   security-scoped bookmark** and stores it in the library database. Wails
   has no API for this; `internal/platform/darwin/bookmark` implements
