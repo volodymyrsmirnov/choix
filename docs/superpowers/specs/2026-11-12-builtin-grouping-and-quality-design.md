@@ -105,7 +105,7 @@ The eight hard rules in `CLAUDE.md` stay, with these edits:
 - **Rule 4 (cancellation).** The exception "one ONNX session creation or one inference is awaited" is deleted. A Vision feature-print request is a native call like an ImageIO call: it runs detached through `platform.Detach`, holds a native slot until it really returns, returns bytes and writes nothing.
 - **Rule 5 (platform).** The deployment target stays macOS 14.0. The reason becomes: the Vision feature print revision the app pins (revision 2) needs macOS 14.
 - **Rule 6 (downloads)** is replaced by: **"The app makes no network request."** Nothing is downloaded at run time or at build time for the app's own function. `net/http` appears only where it serves the webview (`internal/app/media`, `cmd/choix`), as `internal/retired_test.go` pins.
-- **Rule 8 (sandbox).** Unchanged, including the four entitlements. The rationale for `network.client` becomes "unused; removal pending the owner's check of the packaged app" (§14).
+- **Rule 8 (sandbox).** Unchanged, including the four entitlements. The rationale for `network.client` becomes "unused; removal pending the owner's check of the packaged app" (§14). *Since done: the owner removed `network.client` in November 2026, and rule 8 now lists three entitlements.*
 
 ## 5. Visual grouping
 
@@ -412,7 +412,7 @@ Existing installs hold about 530 MB of model files in `<data dir>/models/`. On s
 
 ## 14. Deferred
 
-- **Removing `com.apple.security.network.client`.** The app no longer needs it, but removing an entitlement changes the sandbox the webview runs in, and only a look at the packaged, sandboxed app proves the UI still loads. `docs/release/sandbox-smoke.md` gets a short runbook for the owner: remove the key from both entitlement files, `task package`, launch, confirm the window renders and a folder scans, then update hard rule 8, the smoke script and the tests.
+- **Removing `com.apple.security.network.client`.** The app no longer needs it, but removing an entitlement changes the sandbox the webview runs in, and only a look at the packaged, sandboxed app proves the UI still loads. `docs/release/sandbox-smoke.md` gets a short runbook for the owner: remove the key from both entitlement files, `task package`, launch, confirm the window renders and a folder scans, then update hard rule 8, the smoke script and the tests. *Done in November 2026: the owner removed it from every build.*
 - **Hardened runtime for ad hoc builds.**
 - **A quality presentation that fits what the score means** (flags such as soft, noisy, dark, blown out; or a mark relative to the group).
 - **Face checks, subject-aware sharpness, the aesthetics score.** Vision can do them; the benchmark found no gain for the quality score from saliency or aesthetics.
