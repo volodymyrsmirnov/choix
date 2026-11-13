@@ -2,7 +2,8 @@
 
 The App Store Connect record for Choix and the text it carries. Keep this file in step with App
 Store Connect when the listing changes. Nothing here is secret; the Team ID, certificates and
-the review contact's phone number stay out of the repository.
+provisioning profile stay out of the repository. Only the company, INKHORN TECH - FZCO, is named in
+the listing.
 
 ## Record
 
@@ -19,10 +20,11 @@ the review contact's phone number stay out of the repository.
 | Age rating | 4+ (every questionnaire answer "No" or "None") |
 | Content rights | Contains no third-party content |
 | App Privacy | Data Not Collected |
-| Privacy policy | <https://github.com/volodymyrsmirnov/choix/blob/main/PRIVACY.md> |
-| Support URL | <https://github.com/volodymyrsmirnov/choix/issues> |
-| Marketing URL | <https://github.com/volodymyrsmirnov/choix> |
-| Copyright | 2026 Volodymyr Smirnov |
+| Privacy policy | <https://inkhorn.tech/privacy-policy/> |
+| Support URL | <https://inkhorn.tech/> |
+| Marketing URL | none |
+| Copyright | 2026 INKHORN TECH - FZCO |
+| App Review contact | INKHORN TECH - FZCO, hey@inkhorn.tech (phone in App Store Connect); no sign-in |
 | Version | 2.2.0, matching the release tag `v2.2.0` that `task package:mas` stamps into the build |
 | Screenshots | Five, 2880 × 1800: Library, cluster grid, Focus, Compare, Settings |
 
@@ -71,13 +73,14 @@ Requires a Mac with Apple silicon and macOS 14 or later.
 ## Notes for App Review
 
 ```
-Choix needs no account and makes no network requests.
+No sign-in is needed: Choix has no accounts and makes no network requests.
 
-To try it:
+To review Choix you need a folder that contains photos or images (JPEG, HEIC, PNG, TIFF, or camera RAW such as DNG); videos (MOV, MP4) work too. Choix works only on folders the user chooses.
+
 1. Launch Choix. The Library is empty.
-2. Click Add Folder (⌘O) and choose any folder that contains photos (JPEG, HEIC or RAW) or videos.
-3. Choix scans the folder in the background. Open it to see its photos grouped into clusters of similar shots.
+2. Click Add Folder (⌘O) and choose a folder of photos in the system file picker, or drop the folder onto the window.
+3. Choix scans the folder in the background and groups its photos into clusters of similar shots. Open the folder to see them.
 4. Select a photo and press Space to pick it (X rejects, ⌘Z undoes). The picked photo is copied into a "picks" subfolder of the chosen folder; File > Open Picks Folder (⌘P) shows it in Finder.
 
-Choix only ever reads the original files. Inside a chosen folder it writes only its ".choix" working folder (thumbnails and a small database) and the "picks" folder, through the security-scoped bookmark made when the user chose the folder. Removing a folder from the Library only forgets it.
+Choix only reads the original files. Inside the chosen folder it writes only its ".choix" working folder (thumbnails and a small database) and the "picks" folder, using the security-scoped bookmark created when the user chose the folder. Removing a folder from the Library only forgets it.
 ```
