@@ -13,7 +13,7 @@ unset FORCE_COLOR CLICOLOR_FORCE
 
 here=$(cd "$(dirname "$0")" && pwd)
 bundle="$here/bundle.sh"
-bundle_id=com.github.volodymyrsmirnov.choix
+bundle_id=tech.inkhorn.choix
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2

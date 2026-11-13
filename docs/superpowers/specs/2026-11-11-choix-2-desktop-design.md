@@ -382,7 +382,7 @@ Specified in `2026-11-12-builtin-grouping-and-quality-design.md`; in short:
   presentational component; `frontend/src/app/` holds the containers that
   feed them from bindings and events; `frontend/prototype/` is the second
   build entry (§15).
-- Bundle identifier: placeholder `com.github.volodymyrsmirnov.choix`
+- Bundle identifier: `tech.inkhorn.choix` (from 2.2.0; 2.0.0 and 2.1.0 shipped as `com.github.volodymyrsmirnov.choix`)
   **[call]**, to be confirmed in the signing conversation. Product name
   `Choix`. Deployment target macOS 14 (the Vision feature print revision the
   app pins, revision 2, needs it; the first choice was macOS 13).

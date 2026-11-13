@@ -499,7 +499,7 @@ tasks:
         sh: |
           [ -n "${CHOIX_MAS_APP_IDENTITY:-}" ] || { echo "package:mas needs CHOIX_MAS_APP_IDENTITY (the Apple Distribution signing identity for Mac App Store apps). See docs/release/signing-checklist.md." >&2; exit 1; }
           [ -n "${CHOIX_MAS_INSTALLER_IDENTITY:-}" ] || { echo "package:mas needs CHOIX_MAS_INSTALLER_IDENTITY (the Mac Installer Distribution signing identity). See docs/release/signing-checklist.md." >&2; exit 1; }
-          [ -n "${CHOIX_MAS_PROFILE:-}" ] || { echo "package:mas needs CHOIX_MAS_PROFILE (the path of the Mac App Store provisioning profile for com.github.volodymyrsmirnov.choix). See docs/release/signing-checklist.md." >&2; exit 1; }
+          [ -n "${CHOIX_MAS_PROFILE:-}" ] || { echo "package:mas needs CHOIX_MAS_PROFILE (the path of the Mac App Store provisioning profile for tech.inkhorn.choix). See docs/release/signing-checklist.md." >&2; exit 1; }
           [ -n "${CHOIX_TEAM_ID:-}" ] || { echo "package:mas needs CHOIX_TEAM_ID (the 10-character Apple Developer Team ID). See docs/release/signing-checklist.md." >&2; exit 1; }
       # App Store Connect needs a numeric CFBundleShortVersionString: the
       # last release tag, without its "v" and git describe's suffix.

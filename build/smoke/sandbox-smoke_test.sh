@@ -181,7 +181,7 @@ expect_refused "photo folder inside TMPDIR" "$overlap"
 uat="$ovl/scratch/.." smoke_tmp="$ovl"
 run_smoke
 expect_refused "TMPDIR is the photo folder" "$overlap"
-in_container="$tmp/home/Library/Containers/com.github.volodymyrsmirnov.choix/Data/tmp"
+in_container="$tmp/home/Library/Containers/tech.inkhorn.choix/Data/tmp"
 mkdir -p "$in_container"
 uat=- smoke_tmp=$in_container
 run_smoke --head-only
@@ -207,7 +207,7 @@ uat="$tmp/no such folder" smoke_tmp="$tmp/tmp"
 run_smoke --head-only
 expect_refused "head only: CHOIX_UAT_ROOT set but missing" "CHOIX_UAT_ROOT is not an existing folder"
 # The photo folder and the container overlap.
-photos_in_container="$tmp/home/Library/Containers/com.github.volodymyrsmirnov.choix/Data/photos"
+photos_in_container="$tmp/home/Library/Containers/tech.inkhorn.choix/Data/photos"
 media "$photos_in_container/Trip Gamma" 50 10
 uat=$photos_in_container smoke_tmp="$tmp/tmp"
 run_smoke --head-only

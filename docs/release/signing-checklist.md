@@ -16,7 +16,7 @@ A signing task started without one of its variables stops before doing anything,
 | 3 | A **notarytool keychain profile** (App Store Connect API key or Apple ID with an app-specific password, stored in the keychain) | `xcrun notarytool store-credentials <profile-name>` | `notarize`, `notarize:dmg` |
 | 4 | An **Apple Distribution** (Mac App Distribution) certificate, with its private key, in the login keychain | Certificates → Apple Distribution | `package:mas` |
 | 5 | A **Mac Installer Distribution** certificate, with its private key, in the login keychain | Certificates → Mac Installer Distribution | `package:mas` |
-| 6 | An explicit **App ID** for `com.github.volodymyrsmirnov.choix` and an **App Store Connect app record** for it (platform macOS) | Identifiers → App IDs; App Store Connect → Apps → New App | `package:mas` |
+| 6 | An explicit **App ID** for `tech.inkhorn.choix` and an **App Store Connect app record** for it (platform macOS) | Identifiers → App IDs; App Store Connect → Apps → New App | `package:mas` |
 | 7 | A **Mac App Store provisioning profile** (distribution, macOS) for that App ID, downloaded as a `.provisionprofile` file | Profiles → Mac App Store Connect | `package:mas` |
 
 `security find-identity -v -p codesigning` lists the signing identities in your keychains (items 2 and 4); item 5 is
@@ -125,6 +125,8 @@ CI: `task package:mas` runs locally with the variables above.
    the notarized image. Nothing is published by either.
 
 ## Mac App Store
+
+The App Store Connect record and its listing text are in [`app-store.md`](app-store.md).
 
 1. `task package:mas` — builds, assembles `bin/Choix.app`, copies `CHOIX_MAS_PROFILE` to
    `Contents/embedded.provisionprofile`, renders `build/darwin/entitlements.mas.plist.tmpl` with `CHOIX_TEAM_ID`

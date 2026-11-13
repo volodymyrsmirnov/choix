@@ -30,8 +30,8 @@ func TestSandboxed(t *testing.T) {
 			t.Error("Sandboxed() = true with the variable unset")
 		}
 
-		t.Setenv(key, "com.github.volodymyrsmirnov.choix")
-		if got := sandboxContainerID(); got != "com.github.volodymyrsmirnov.choix" {
+		t.Setenv(key, "tech.inkhorn.choix")
+		if got := sandboxContainerID(); got != "tech.inkhorn.choix" {
 			t.Fatalf("libc getenv = %q: os.Setenv did not reach libc", got)
 		}
 		if !Sandboxed() {

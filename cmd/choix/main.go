@@ -66,7 +66,7 @@ func run() int {
 		Assets:       application.AssetOptions{Handler: shellAssets()},
 		Mac:          application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID:               "com.github.volodymyrsmirnov.choix",
+			UniqueID:               "tech.inkhorn.choix",
 			OnSecondInstanceLaunch: shell.Focus,
 		},
 		// Read only by Wails' `server`-tagged files; the desktop build ignores it and opens no listener.

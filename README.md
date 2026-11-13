@@ -38,8 +38,14 @@ GitHub Releases and update the cask
 - **Disk image** — download `Choix-<version>-arm64.dmg` from
   [GitHub Releases](https://github.com/volodymyrsmirnov/choix/releases), open it and drag
   Choix to Applications. It is signed with a Developer ID and notarized by Apple.
-- **Mac App Store** — planned, not available yet: the same sandboxed app, free.
-  `task package:mas` builds the package.
+- **Mac App Store** — planned, not available yet: the same sandboxed app, free, listed as
+  "Choix: Photo Culling". `task package:mas` builds the package.
+
+**Upgrading from 2.0 or 2.1.** From 2.2.0 the bundle identifier is `tech.inkhorn.choix`
+(it was `com.github.volodymyrsmirnov.choix`), and macOS gives the app a new sandbox
+container. The Library and the settings therefore start empty after the update: add your
+folders again. Each folder's clusters, thumbnails and picks are kept, because they live in the
+folder's own `.choix` and `picks` folders, so nothing is scanned again.
 
 ## First launch
 
@@ -152,7 +158,7 @@ imported: a sandboxed app cannot read them.
 
 | Data | Location |
 |---|---|
-| Settings (`config.toml`) | `~/Library/Application Support/Choix/` — inside `~/Library/Containers/com.github.volodymyrsmirnov.choix/Data/…` when sandboxed |
+| Settings (`config.toml`) | `~/Library/Application Support/Choix/` — inside `~/Library/Containers/tech.inkhorn.choix/Data/…` when sandboxed |
 | Library (folders, bookmarks, cached stats, preview strips) | same directory: `library.db` + `previews/<folder-id>/<n>.jpg` |
 | Logs | `~/Library/Logs/Choix/` (container-relative when sandboxed) |
 | Per-folder state | `<folder>/.choix/state.db`, `<folder>/.choix/thumbs/` |

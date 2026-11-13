@@ -359,7 +359,7 @@ Saving `bucket_size_sec`, `visual_similarity`, `cross_device_merging` or `visual
 
 | Data | Location |
 |---|---|
-| Settings (`config.toml`), `library.db`, preview strips (`previews/<folder-id>/<n>.jpg`) | `~/Library/Application Support/Choix/`, inside `~/Library/Containers/com.github.volodymyrsmirnov.choix/Data/` when sandboxed |
+| Settings (`config.toml`), `library.db`, preview strips (`previews/<folder-id>/<n>.jpg`) | `~/Library/Application Support/Choix/`, inside `~/Library/Containers/tech.inkhorn.choix/Data/` when sandboxed |
 | Logs (`choix.log`) | `~/Library/Logs/Choix/`, container-relative when sandboxed |
 | Per-folder state | `<folder>/.choix/state.db`, `<folder>/.choix/thumbs/` |
 | Picks | `<folder>/picks/` (or the folder's picks directory) |

@@ -63,7 +63,7 @@
 set -eu
 
 prog=sandbox-smoke
-bundle_id=com.github.volodymyrsmirnov.choix
+bundle_id=tech.inkhorn.choix
 min_media=50
 scan_timeout=3600
 
